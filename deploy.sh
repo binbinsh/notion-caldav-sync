@@ -5,9 +5,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 CONFIG_PATH="$ROOT_DIR/wrangler.toml"
 TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
+HELPERS_PATH="$ROOT_DIR/scripts/deploy_helpers.py"
 STATE_NAMESPACE_NAME="notion-caldav-sync-STATE"  # Change if you prefer a different namespace title.
 
 cd "$ROOT_DIR"
+
+reuse_namespace_from_config() {
+  if [ -n "${CLOUDFLARE_STATE_NAMESPACE:-}" ]; then
+    return 1
+  fi
+  if [ ! -f "$CONFIG_PATH" ]; then
+    return 1
+  fi
+  existing_id=$(
+    python3 "$HELPERS_PATH" wrangler-toml "$CONFIG_PATH" 2>/dev/null || true
+  )
+  if [ -n "$existing_id" ]; then
+    CLOUDFLARE_STATE_NAMESPACE="$existing_id"
+    export CLOUDFLARE_STATE_NAMESPACE
+    echo "Reusing STATE namespace id from wrangler.toml: $CLOUDFLARE_STATE_NAMESPACE"
+    return 0
+  fi
+  return 1
+}
 
 if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
   echo "CLOUDFLARE_ACCOUNT_ID is required for Wrangler operations." >&2
@@ -22,77 +42,7 @@ fi
 # Helper to discover namespace ID via Wrangler CLI
 discover_namespace_id() {
   if list_json=$(uv run -- pywrangler kv namespace list 2>/dev/null); then
-    LIST_JSON="$list_json" python3 - "$STATE_NAMESPACE_NAME" <<'PY'
-import json
-import os
-import sys
-
-title = sys.argv[1]
-raw = os.environ.get("LIST_JSON", "")
-if not raw:
-    sys.exit(0)
-
-buffer = raw.strip()
-if not buffer:
-    sys.exit(0)
-
-def extract_json(blob):
-    """Best-effort extraction of the JSON payload from Wrangler's noisy output."""
-    # Fast path: try the entire blob first.
-    try:
-        return json.loads(blob)
-    except json.JSONDecodeError:
-        pass
-
-    # Remove common log noise (INFO lines, banners, unicode art, etc.).
-    cleaned_lines = []
-    for line in blob.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if any(stripped.startswith(prefix) for prefix in ("INFO ", "⛅️", "🌀", "✘", "───────────────────", "Resource location:")):
-            continue
-        cleaned_lines.append(line)
-    cleaned_blob = "\n".join(cleaned_lines).strip()
-    if not cleaned_blob:
-        raise ValueError
-
-    # Try parsing the cleaned blob.
-    try:
-        return json.loads(cleaned_blob)
-    except json.JSONDecodeError:
-        pass
-
-    # Fall back to slicing between the first opening bracket/brace and the matching closing char.
-    for opener, closer in (("[", "]"), ("{", "}")):
-        start = cleaned_blob.find(opener)
-        end = cleaned_blob.rfind(closer)
-        if start == -1 or end == -1 or end <= start:
-            continue
-        segment = cleaned_blob[start : end + 1]
-        try:
-            return json.loads(segment)
-        except json.JSONDecodeError:
-            continue
-    raise ValueError
-
-try:
-    payload = extract_json(buffer)
-except Exception:
-    sys.exit(0)
-
-if isinstance(payload, list):
-    entries = payload
-else:
-    entries = payload.get("result", [])
-
-for entry in entries:
-    if entry.get("title") == title:
-        namespace_id = entry.get("id")
-        if namespace_id:
-            print(namespace_id)
-            break
-PY
+    printf '%s' "$list_json" | python3 "$HELPERS_PATH" namespace-list "$STATE_NAMESPACE_NAME" || true
   fi
 }
 
@@ -100,6 +50,10 @@ PY
 ensure_namespace() {
   if [ -n "${CLOUDFLARE_STATE_NAMESPACE:-}" ]; then
     echo "STATE namespace already set: $CLOUDFLARE_STATE_NAMESPACE"
+    return
+  fi
+
+  if reuse_namespace_from_config; then
     return
   fi
 
@@ -111,7 +65,7 @@ ensure_namespace() {
     return
   fi
 
-  echo "Creating STATE namespace '$STATE_NAMESPACE_NAME' via pywrangler ..."
+  echo "Creating STATE namespace \"$STATE_NAMESPACE_NAME\" via pywrangler ..."
   if ! output=$(uv run -- pywrangler kv namespace create "$STATE_NAMESPACE_NAME" 2>&1); then
     echo "$output"
     if echo "$output" | grep -q "already exists"; then
@@ -129,24 +83,7 @@ ensure_namespace() {
     exit 1
   fi
   CLOUDFLARE_STATE_NAMESPACE=$(
-    printf '%s\n' "$output" | python3 - <<'PY'
-import json
-import sys
-
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    result = payload.get("result") or {}
-    namespace_id = result.get("id")
-    if namespace_id:
-        print(namespace_id)
-        break
-PY
+    printf "%s\n" "$output" | python3 "$HELPERS_PATH" namespace-create || true
   )
   if [ -z "$CLOUDFLARE_STATE_NAMESPACE" ]; then
     echo "Unable to parse namespace id. Please set CLOUDFLARE_STATE_NAMESPACE manually."
@@ -173,10 +110,10 @@ echo "STATE namespace title: $STATE_NAMESPACE_NAME"
 echo "STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
 
 echo "Setting up secrets..."
-printf '%s' "${APPLE_ID:?APPLE_ID must be set}" | uv run -- pywrangler secret put APPLE_ID
-printf '%s' "${APPLE_APP_PASSWORD:?APPLE_APP_PASSWORD must be set}" | uv run -- pywrangler secret put APPLE_APP_PASSWORD
-printf '%s' "${NOTION_TOKEN:?NOTION_TOKEN must be set}" | uv run -- pywrangler secret put NOTION_TOKEN
-printf '%s' "${ADMIN_TOKEN:?ADMIN_TOKEN must be set}" | uv run -- pywrangler secret put ADMIN_TOKEN
+printf "%s" "${APPLE_ID:?APPLE_ID must be set}" | uv run -- pywrangler secret put APPLE_ID
+printf "%s" "${APPLE_APP_PASSWORD:?APPLE_APP_PASSWORD must be set}" | uv run -- pywrangler secret put APPLE_APP_PASSWORD
+printf "%s" "${NOTION_TOKEN:?NOTION_TOKEN must be set}" | uv run -- pywrangler secret put NOTION_TOKEN
+printf "%s" "${ADMIN_TOKEN:?ADMIN_TOKEN must be set}" | uv run -- pywrangler secret put ADMIN_TOKEN
 
 # Deploy the Worker (creates notion-caldav-sync if missing)
 uv run -- pywrangler deploy --name notion-caldav-sync
