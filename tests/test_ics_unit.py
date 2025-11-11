@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from icalendar import Calendar
 
 from src.app.constants import status_to_emoji
-from src.app.ics import build_event
+from src.app.ics import build_event, DEFAULT_TIMED_EVENT_DURATION
 
 
 def _first_event(ics: str):
@@ -92,3 +92,26 @@ def test_build_event_timed_uses_utc_and_reminder():
     trigger = alarms[0].decoded("trigger")
     assert isinstance(trigger, timedelta)
     assert trigger == timedelta(minutes=-30)
+
+
+def test_build_event_timed_without_end_defaults_duration():
+    status_emoji = status_to_emoji("Todo")
+    ics = build_event(
+        notion_id="task-no-end",
+        title="Plan in 1 hour",
+        status_emoji=status_emoji,
+        status_name="Todo",
+        start_iso="2024-06-01T10:00:00-04:00",
+        end_iso=None,
+        reminder_iso=None,
+        description=None,
+        category=None,
+        color=None,
+        url=None,
+    )
+    event = _first_event(ics)
+    dtstart = event.get("dtstart").dt
+    dtend = event.get("dtend").dt
+    assert isinstance(dtstart, datetime) and isinstance(dtend, datetime)
+    assert dtstart.tzinfo and dtend.tzinfo
+    assert dtend - dtstart == DEFAULT_TIMED_EVENT_DURATION

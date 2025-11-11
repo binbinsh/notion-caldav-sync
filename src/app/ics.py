@@ -16,6 +16,9 @@ except ImportError:
     )
 
 
+DEFAULT_TIMED_EVENT_DURATION = timedelta(minutes=0)
+
+
 def _compose_description(
     *,
     category: Optional[str],
@@ -142,7 +145,9 @@ def build_event(
             event.add('dtstart', to_utc(start))
             if end_iso:
                 end = dtparser.isoparse(end_iso)
-                event.add('dtend', to_utc(end))
+            else:
+                end = start + DEFAULT_TIMED_EVENT_DURATION
+            event.add('dtend', to_utc(end))
         else:
             d = dtparser.isoparse(start_iso).date()
             event.add('dtstart', d)
