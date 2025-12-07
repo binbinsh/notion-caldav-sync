@@ -59,13 +59,18 @@ The script ensures `wrangler.toml` matches your KV namespace, prompts for secret
    - **Subscribed events:** select every **Page**, **Database**, and **Data source** entry; leave **Comment** and **File upload** unchecked
 6. Save the integration and copy the generated secret into `.env` as `NOTION_TOKEN`.
 
-When Notion first performs the webhook verification handshake, the worker automatically persists the provided verification token into KV and uses it for all future signature checks—no manual secret management required. If you click **Resend token** inside Notion’s webhook UI, you’ll see `(log) [Webhook] Stored verification token from Notion` in the worker logs; fetch the new `webhook_verification_token` at `/admin/settings` to confirm it updated.
+When Notion first performs the webhook verification handshake, the worker automatically persists the provided verification token into KV and uses it for all future signature checks—no manual secret management required. If you click **Resend token** inside Notion’s webhook UI, you’ll see `(log) [Webhook] Stored verification token from Notion` in the worker logs; fetch the new `webhook_verification_token` via `/admin/status` (JSON) to confirm it updated.
 
 ## Useful HTTP endpoints
-- Manual sync: `curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/full-sync`
-- Get settings: `curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/settings`
-- Debug info: `curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/debug`
-
+- Admin status page (HTML only): `https://<worker-url>/admin/status?token=$ADMIN_TOKEN`
+  - Use the form buttons on the page to view status, run full sync, and save settings.
+  - No JSON/POST API is exposed for external callers; all actions flow through the page.
+  - Admin token is required via query `?token=` or `X-Admin-Token` header.
+- Notion webhook: `https://<worker-url>/webhook/notion`
+  - Subscribed events: Page, Database, Data source.
+  - Verification token is persisted automatically and visible via `/admin/status` page data.
+  - Webhook with database/data_source events triggers a background full sync.
+}
 ## Testing
 All tests hit live APIs, so use staging credentials.
 ```bash

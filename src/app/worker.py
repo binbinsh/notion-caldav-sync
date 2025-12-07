@@ -19,6 +19,179 @@ class Default(WorkerEntrypoint):
         )
         return token == bindings.admin_token
 
+    @staticmethod
+    async def _collect_status(bindings, *, include_debug: bool = False):
+        try:
+            from app.engine import ensure_calendar as ensure_calendar_state, full_sync_due
+        except ImportError:
+            from engine import ensure_calendar as ensure_calendar_state, full_sync_due  # type: ignore
+        try:
+            from app.stores import load_settings, load_webhook_token
+        except ImportError:
+            from stores import load_settings, load_webhook_token  # type: ignore
+
+        status = {
+            "settings": {},
+            "webhook": {},
+        }
+
+        calendar_state = None
+        calendar_error = None
+        try:
+            calendar_state = await ensure_calendar_state(bindings)
+        except Exception as exc:  # pragma: no cover - surfaced via status payload
+            calendar_error = str(exc)
+
+        if calendar_state:
+            settings = calendar_state
+        else:
+            settings = await load_settings(bindings.state)
+
+        if calendar_error:
+            merged = dict(settings or {})
+            merged["error"] = calendar_error
+            settings = merged
+
+        webhook_token = await load_webhook_token(bindings.state)
+
+        debug_info = None
+        if include_debug:
+            debug_info = {}
+            try:
+                from js import XMLHttpRequest
+
+                debug_info["has_XMLHttpRequest"] = True
+                debug_info["XMLHttpRequest_type"] = str(type(XMLHttpRequest))
+            except ImportError as e:
+                debug_info["has_XMLHttpRequest"] = False
+                debug_info["XMLHttpRequest_error"] = str(e)
+
+            try:
+                from js import fetch
+
+                debug_info["has_fetch"] = True
+                debug_info["fetch_type"] = str(type(fetch))
+            except ImportError as e:
+                debug_info["has_fetch"] = False
+                debug_info["fetch_error"] = str(e)
+
+            try:
+                import pyodide_http
+
+                debug_info["pyodide_http_version"] = pyodide_http.__version__
+                debug_info["pyodide_http_should_patch"] = pyodide_http.should_patch()
+            except Exception as e:
+                debug_info["pyodide_http_error"] = str(e)
+
+        status["settings"] = settings or {}
+        status["webhook"] = {
+            "has_verification_token": bool(webhook_token),
+            "verification_token": webhook_token,
+        }
+        try:
+            status["full_sync_due"] = full_sync_due(settings or {})
+        except Exception:
+            status["full_sync_due"] = None
+        if debug_info is not None:
+            status["debug"] = debug_info
+        return status
+
+    @staticmethod
+    def _render_status_page(status_payload: dict) -> str:
+        settings = status_payload.get("settings") or {}
+        webhook = status_payload.get("webhook") or {}
+        full_sync_due = status_payload.get("full_sync_due")
+        last_action = (status_payload.get("last_action") or {}).get("action")
+        serialized = json.dumps(status_payload, indent=2)
+
+        cal_name = settings.get("calendar_name") or ""
+        cal_color = settings.get("calendar_color") or ""
+        cal_tz = settings.get("calendar_timezone") or ""
+        date_only_tz = settings.get("date_only_timezone") or ""
+        full_sync_interval = settings.get("full_sync_interval_minutes") or ""
+        last_full_sync = settings.get("last_full_sync") or ""
+        webhook_has = "yes" if webhook.get("has_verification_token") else "no"
+        webhook_token = webhook.get("verification_token") or ""
+
+        debug = status_payload.get("debug") or {}
+        debug_xhr = (
+            debug.get("XMLHttpRequest_type")
+            if debug.get("has_XMLHttpRequest")
+            else debug.get("XMLHttpRequest_error")
+        ) or ""
+        debug_fetch = (
+            debug.get("fetch_type") if debug.get("has_fetch") else debug.get("fetch_error")
+        ) or ""
+        if debug.get("pyodide_http_version"):
+            debug_pyodide = f"{debug.get('pyodide_http_version')} (should_patch={debug.get('pyodide_http_should_patch')})"
+        else:
+            debug_pyodide = debug.get("pyodide_http_error") or ""
+
+        return f"""<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'/>
+  <title>Notion → CalDAV Admin Status</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, sans-serif; margin: 24px; line-height: 1.5; }}
+    h1 {{ margin-top: 0; }}
+    section {{ border: 1px solid #ddd; padding: 16px; margin-bottom: 16px; border-radius: 8px; }}
+    label {{ display: block; margin-top: 8px; font-weight: 600; }}
+    input {{ width: 320px; padding: 6px; margin-top: 4px; }}
+    button {{ margin-right: 8px; padding: 8px 12px; }}
+    pre {{ background: #111; color: #0f0; padding: 12px; border-radius: 6px; overflow-x: auto; }}
+    .meta {{ color: #444; font-size: 13px; }}
+  </style>
+</head>
+<body>
+  <h1>Admin Status</h1>
+  <p class='meta'>This page replaces /admin/full-sync, /admin/settings, and /admin/debug. All actions are performed via the forms below.</p>
+
+  <section>
+    <h2>Actions</h2>
+    <form method="POST">
+      <input type="hidden" name="action" value="full_sync" />
+      <button type="submit">Run full sync</button>
+      {('<span class="meta">Last action: ' + last_action + '</span>') if last_action else ''}
+    </form>
+  </section>
+
+  <section>
+    <h2>Settings</h2>
+    <form method="POST">
+      <input type="hidden" name="action" value="save_settings" />
+      <label>Calendar name <input name="calendar_name" value="{cal_name}" placeholder="Notion Tasks" /></label>
+      <label>Calendar color <input name="calendar_color" value="{cal_color}" placeholder="blue" /></label>
+      <label>Calendar timezone <input name="calendar_timezone" value="{cal_tz}" placeholder="America/Los_Angeles" /></label>
+      <label>Date-only timezone <input name="date_only_timezone" value="{date_only_tz}" placeholder="UTC" /></label>
+      <label>Full sync interval (minutes) <input name="full_sync_interval_minutes" type="number" min="1" value="{full_sync_interval}" /></label>
+      <div style='margin-top:12px;'>
+        <button type="submit">Save settings</button>
+      </div>
+      <div class='meta'>Last full sync: {last_full_sync} | Full sync due? {full_sync_due}</div>
+    </form>
+  </section>
+
+  <section>
+    <h2>Webhook</h2>
+    <div class='meta'>Verification token present: {webhook_has}</div>
+    <div class='meta'>Verification token: {webhook_token}</div>
+  </section>
+
+  <section>
+    <h2>Debug</h2>
+    <div class='meta'>XMLHttpRequest: {debug_xhr}</div>
+    <div class='meta'>fetch: {debug_fetch}</div>
+    <div class='meta'>pyodide-http: {debug_pyodide}</div>
+  </section>
+
+  <section>
+    <h2>Raw status</h2>
+    <pre>{serialized}</pre>
+  </section>
+</body>
+</html>"""
+
     async def fetch(self, request):
         """
         Handle HTTP requests to the worker.
@@ -46,107 +219,71 @@ class Default(WorkerEntrypoint):
 
         if path.endswith("/webhook/notion") and method == "POST":
             return await webhook_handle(request, self.env)
-        
-        if path.endswith("/admin/full-sync") and method == "POST":
+
+        if path.endswith("/admin/status"):
             try:
                 from app.config import get_bindings  # type: ignore
                 from app.engine import run_full_sync  # type: ignore
+                from app.stores import update_settings  # type: ignore
             except ImportError:
                 from config import get_bindings  # type: ignore
                 from engine import run_full_sync  # type: ignore
-            bindings = get_bindings(self.env)
-            if not self._has_valid_admin_token(request, query, bindings):
-                return Response("Unauthorized", status=401)
-            result = await run_full_sync(bindings)
-            return Response(json.dumps(result), headers={"Content-Type": "application/json"})
+                from stores import update_settings  # type: ignore
 
-        if path.endswith("/admin/settings"):
-            try:
-                from app.config import get_bindings  # type: ignore
-                from app.stores import load_settings, update_settings  # type: ignore
-            except ImportError:
-                from config import get_bindings  # type: ignore
-                from stores import load_settings, update_settings  # type: ignore
             bindings = get_bindings(self.env)
             if not self._has_valid_admin_token(request, query, bindings):
                 return Response("Unauthorized", status=401)
+
             if method == "GET":
-                try:
-                    from app.engine import ensure_calendar as ensure_calendar_state  # type: ignore
-                except ImportError:
-                    from engine import ensure_calendar as ensure_calendar_state  # type: ignore
-                try:
-                    document = await ensure_calendar_state(bindings)
-                    return Response(json.dumps(document), headers={"Content-Type": "application/json"})
-                except RuntimeError as exc:
-                    fallback = await load_settings(bindings.state)
-                    payload = dict(fallback)
-                    payload["error"] = str(exc)
-                    return Response(json.dumps(payload), status=500, headers={"Content-Type": "application/json"})
-            if method in {"POST", "PUT"}:
-                try:
-                    payload = await request.json()
-                except Exception:
-                    payload = {}
-                updates = {}
-                if "calendar_name" in payload:
-                    updates["calendar_name"] = str(payload["calendar_name"]).strip() or None
-                if "calendar_color" in payload:
-                    updates["calendar_color"] = str(payload["calendar_color"]).strip() or None
-                if "calendar_timezone" in payload:
-                    updates["calendar_timezone"] = str(payload["calendar_timezone"]).strip() or None
-                if "date_only_timezone" in payload:
-                    updates["date_only_timezone"] = str(payload["date_only_timezone"]).strip() or None
-                if "full_sync_interval_minutes" in payload:
+                status_payload = await self._collect_status(bindings, include_debug=True)
+                html = self._render_status_page(status_payload)
+                return Response(html, headers={"Content-Type": "text/html; charset=utf-8"})
+
+            if method == "POST":
+                form = await request.form_data()
+                action = str(form.get("action") or "").strip().lower()
+                last_action = {"action": action or "unknown"}
+
+                if action == "full_sync":
                     try:
-                        minutes = int(payload["full_sync_interval_minutes"])
-                        if minutes <= 0:
-                            raise ValueError
-                        updates["full_sync_interval_minutes"] = minutes
-                    except Exception:
-                        return Response("Invalid full_sync_interval_minutes", status=400)
-                document = await update_settings(bindings.state, **updates)
-                return Response(json.dumps(document), headers={"Content-Type": "application/json"})
+                        result = await run_full_sync(bindings)
+                        last_action["result"] = result
+                    except Exception as exc:
+                        return Response(f"Full sync failed: {exc}", status=500)
+
+                elif action == "save_settings":
+                    updates = {}
+                    if "calendar_name" in form:
+                        updates["calendar_name"] = str(form.get("calendar_name") or "").strip() or None
+                    if "calendar_color" in form:
+                        updates["calendar_color"] = str(form.get("calendar_color") or "").strip() or None
+                    if "calendar_timezone" in form:
+                        updates["calendar_timezone"] = str(form.get("calendar_timezone") or "").strip() or None
+                    if "date_only_timezone" in form:
+                        updates["date_only_timezone"] = str(form.get("date_only_timezone") or "").strip() or None
+                    if "full_sync_interval_minutes" in form:
+                        raw = form.get("full_sync_interval_minutes")
+                        try:
+                            minutes = int(raw) if raw not in (None, "") else None
+                            if minutes is not None and minutes <= 0:
+                                raise ValueError
+                            if minutes is not None:
+                                updates["full_sync_interval_minutes"] = minutes
+                        except Exception:
+                            return Response("Invalid full_sync_interval_minutes", status=400)
+                    try:
+                        await update_settings(bindings.state, **updates)
+                    except Exception as exc:
+                        return Response(f"Invalid settings: {exc}", status=400)
+                else:
+                    return Response("Invalid action", status=400)
+
+                status_payload = await self._collect_status(bindings, include_debug=True)
+                status_payload["last_action"] = last_action
+                html = self._render_status_page(status_payload)
+                return Response(html, headers={"Content-Type": "text/html; charset=utf-8"})
+
             return Response("Method Not Allowed", status=405)
-        
-        # Debug endpoint to check JS APIs and pyodide-http status
-        if path.endswith("/admin/debug") and method == "GET":
-            try:
-                from app.config import get_bindings  # type: ignore
-            except ImportError:
-                from config import get_bindings  # type: ignore
-            bindings = get_bindings(self.env)
-            if not self._has_valid_admin_token(request, query, bindings):
-                return Response("Unauthorized", status=401)
-            debug_info = {}
-            
-            # Check for XMLHttpRequest
-            try:
-                from js import XMLHttpRequest
-                debug_info["has_XMLHttpRequest"] = True
-                debug_info["XMLHttpRequest_type"] = str(type(XMLHttpRequest))
-            except ImportError as e:
-                debug_info["has_XMLHttpRequest"] = False
-                debug_info["XMLHttpRequest_error"] = str(e)
-            
-            # Check for fetch
-            try:
-                from js import fetch
-                debug_info["has_fetch"] = True
-                debug_info["fetch_type"] = str(type(fetch))
-            except ImportError as e:
-                debug_info["has_fetch"] = False
-                debug_info["fetch_error"] = str(e)
-            
-            # Check pyodide-http status
-            try:
-                import pyodide_http
-                debug_info["pyodide_http_version"] = pyodide_http.__version__
-                debug_info["pyodide_http_should_patch"] = pyodide_http.should_patch()
-            except Exception as e:
-                debug_info["pyodide_http_error"] = str(e)
-            
-            return Response(json.dumps(debug_info, indent=2), headers={"Content-Type": "application/json"})
 
         return Response("", headers={"Content-Type": "text/plain"}, status=404)
 
