@@ -120,3 +120,4 @@ uv run -- pywrangler deploy --name notion-caldav-sync
 
 echo "Deployment complete."
 echo "Visit your worker URL and trigger /webhook/notion or wait for cron to initialize calendars."
+echo "Notes: Bi-directional sync is now enabled. CalDAV delta polling (RFC6578 sync token + ETag) is stored in KV as caldav_rfc6578_token; a stale token auto-falls back to full fetch. Mapping + indexes live in STATE KV; webhook verification token is persisted automatically."

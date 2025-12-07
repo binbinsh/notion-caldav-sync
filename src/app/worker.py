@@ -29,10 +29,15 @@ class Default(WorkerEntrypoint):
             from app.stores import load_settings, load_webhook_token
         except ImportError:
             from stores import load_settings, load_webhook_token  # type: ignore
+        try:
+            from app.logger import get_recent_logs
+        except ImportError:
+            from logger import get_recent_logs  # type: ignore
 
         status = {
             "settings": {},
             "webhook": {},
+            "recent_logs": [],
         }
 
         calendar_state = None
@@ -92,6 +97,10 @@ class Default(WorkerEntrypoint):
             status["full_sync_due"] = full_sync_due(settings or {})
         except Exception:
             status["full_sync_due"] = None
+        try:
+            status["recent_logs"] = get_recent_logs(50)
+        except Exception:
+            status["recent_logs"] = []
         if debug_info is not None:
             status["debug"] = debug_info
         return status
@@ -183,6 +192,11 @@ class Default(WorkerEntrypoint):
     <div class='meta'>XMLHttpRequest: {debug_xhr}</div>
     <div class='meta'>fetch: {debug_fetch}</div>
     <div class='meta'>pyodide-http: {debug_pyodide}</div>
+  </section>
+
+  <section>
+    <h2>Recent logs</h2>
+    <pre>{"\n".join(status_payload.get("recent_logs") or [])}</pre>
   </section>
 
   <section>
@@ -314,4 +328,5 @@ class Default(WorkerEntrypoint):
         if not settings or full_sync_due(settings):
             await run_full_sync(bindings)
         else:
-            print("[sync] scheduled run skipped (full sync interval not reached)")
+            from app.logger import log
+            log("[sync] scheduled run skipped (full sync interval not reached)")

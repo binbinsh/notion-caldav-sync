@@ -6,6 +6,9 @@ try:
 except ImportError:  # pragma: no cover
     from logger import log  # type: ignore
 
+# loguru convenience alias
+LOG = log
+
 try:
     from .constants import (
         TITLE_PROPERTY,
@@ -79,6 +82,15 @@ def _rich_text_to_plain(value: Any) -> Optional[str]:
     return None
 
 
+def _plain_to_rich_text(value: Optional[str]) -> list:
+    if value is None:
+        return []
+    stripped = str(value).strip()
+    if not stripped:
+        return []
+    return [{"type": "text", "text": {"content": stripped}}]
+
+
 def extract_database_title(meta: Dict) -> Optional[str]:
     if not isinstance(meta, dict):
         return None
@@ -140,7 +152,7 @@ async def list_databases(token: str, api_version: str) -> List[Dict[str, str]]:
             break
         next_cursor = data.get("next_cursor")
         if not next_cursor:
-            print("[notion] missing next_cursor in search response despite has_more; stopping pagination")
+            log("[notion] missing next_cursor in search response despite has_more; stopping pagination")
             break
     return results
 
@@ -184,13 +196,15 @@ async def get_database_properties(token: str, api_version: str, database_id: str
     return data.get("properties") or {}
 
 
-async def query_database_pages(token: str, api_version: str, database_id: str) -> List[Dict]:
+async def query_database_pages(token: str, api_version: str, database_id: str, *, filter_body: Optional[Dict[str, Any]] = None) -> List[Dict]:
     pages: List[Dict] = []
     next_cursor: Optional[str] = None
     while True:
-        body = {
+        body: Dict[str, Any] = {
             "page_size": NOTION_DS_PAGE_SIZE,
         }
+        if filter_body:
+            body.update(filter_body)
         if next_cursor:
             body["start_cursor"] = next_cursor
         url = f"https://api.notion.com/v1/data_sources/{database_id}/query"
@@ -206,9 +220,99 @@ async def query_database_pages(token: str, api_version: str, database_id: str) -
             break
         next_cursor = data.get("next_cursor")
         if not next_cursor:
-            print("[notion] missing next_cursor in database query despite has_more; stopping pagination")
+            log("[notion] missing next_cursor in database query despite has_more; stopping pagination")
             break
     return pages
+
+
+def notion_request(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Pass-through builder so callers can hand to http_json."""
+    return request
+
+
+async def create_page_http(token: str, api_version: str, database_id: str, task: TaskInfo) -> Dict[str, Any]:
+    req = create_page(token, api_version, database_id, task)
+    return await http_json(
+        req["url"],
+        method=req["method"],
+        headers=req["headers"],
+        body=req["body"],
+    )
+
+
+async def update_page_http(token: str, api_version: str, page_id: str, task: TaskInfo) -> Dict[str, Any]:
+    req = update_page(token, api_version, page_id, task)
+    return await http_json(
+        req["url"],
+        method=req["method"],
+        headers=req["headers"],
+        body=req["body"],
+    )
+
+
+def build_last_edited_filter(since_iso: str) -> Dict[str, Any]:
+    return {
+        "filter": {
+            "property": "last_edited_time",
+            "date": {"on_or_after": since_iso},
+        }
+    }
+
+
+def build_page_id_filter(page_ids: List[str]) -> Dict[str, Any]:
+    return {
+        "filter": {
+            "or": [
+                {"property": "id", "equals": pid}
+                for pid in page_ids
+            ]
+        }
+    }
+
+
+def build_status_filter(status_names: List[str]) -> Dict[str, Any]:
+    return {
+        "filter": {
+            "or": [
+                {"property": STATUS_PROPERTY, "status": {"equals": name}}
+                for name in status_names
+            ]
+        }
+    }
+
+
+def build_date_window_filter(start_iso: str, end_iso: Optional[str] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "filter": {
+            "and": [
+                {"property": DATE_PROPERTY, "date": {"on_or_after": start_iso}},
+            ]
+        }
+    }
+    if end_iso:
+        payload["filter"]["and"].append({"property": DATE_PROPERTY, "date": {"on_or_before": end_iso}})
+    return payload
+
+
+def build_property_prune(properties: List[str]) -> Dict[str, Any]:
+    return {"filter_properties": properties}
+
+
+def build_slim_query_payload(since_iso: Optional[str]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "page_size": NOTION_DS_PAGE_SIZE,
+        "filter_properties": [
+            TITLE_PROPERTY,
+            STATUS_PROPERTY,
+            DATE_PROPERTY,
+            REMINDER_PROPERTY,
+            CATEGORY_PROPERTY,
+            DESCRIPTION_PROPERTY,
+        ],
+    }
+    if since_iso:
+        payload.update(build_last_edited_filter(since_iso))
+    return payload
 
 
 async def get_page(token: str, api_version: str, page_id: str) -> Dict:
@@ -217,6 +321,32 @@ async def get_page(token: str, api_version: str, page_id: str) -> Dict:
         headers=_headers(token, api_version),
     )
     return response.get("json") or {}
+
+
+def build_page_partial(task: TaskInfo) -> Dict[str, Any]:
+    # Partial builder for conflict-resolution writes
+    return {
+        "properties": build_page_properties_from_task(task),
+    }
+
+
+def build_patch_request(token: str, api_version: str, page_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "url": f"https://api.notion.com/v1/pages/{page_id}",
+        "method": "PATCH",
+        "headers": _headers(token, api_version),
+        "body": json.dumps(payload),
+    }
+
+
+async def patch_page_http(token: str, api_version: str, page_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    req = build_patch_request(token, api_version, page_id, payload)
+    return await http_json(
+        req["url"],
+        method=req["method"],
+        headers=req["headers"],
+        body=req["body"],
+    )
 
 
 def _extract_title_from_prop(prop: Dict) -> str:
@@ -266,6 +396,9 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
     if isinstance(description_prop, dict) and description_prop.get("type") == "rich_text" and description_prop.get("rich_text"):
         description = description_prop["rich_text"][0].get("plain_text", "")
 
+    parent = page.get("parent") or {}
+    database_id = parent.get("data_source_id") or parent.get("database_id")
+
     return TaskInfo(
         notion_id=page.get("id"),
         title=title,
@@ -276,4 +409,82 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
         category=category,
         description=description,
         url=page.get("url"),
+        database_id=database_id,
+        last_edited_time=page.get("last_edited_time"),
     )
+
+
+def _encode_date(value: Optional[str]) -> Optional[Dict[str, Optional[str]]]:
+    if value is None:
+        return None
+    v = str(value).strip()
+    if not v:
+        return None
+    return {"start": v}
+
+
+def build_page_properties_from_task(task: TaskInfo) -> Dict[str, Any]:
+    props: Dict[str, Any] = {}
+    if task.title is not None:
+        props[TITLE_PROPERTY] = {
+            "type": "title",
+            "title": _plain_to_rich_text(task.title),
+        }
+    if task.status is not None:
+        props[STATUS_PROPERTY] = {
+            "type": "status",
+            "status": {"name": task.status},
+        }
+    if task.start_date is not None or task.end_date is not None:
+        props[DATE_PROPERTY] = {
+            "type": "date",
+            "date": {"start": task.start_date, "end": task.end_date},
+        }
+    if task.reminder is not None:
+        encoded = _encode_date(task.reminder)
+        if encoded:
+            props[REMINDER_PROPERTY] = {"type": "date", "date": encoded}
+    if task.category is not None:
+        props[CATEGORY_PROPERTY] = {
+            "type": "select",
+            "select": {"name": task.category},
+        }
+    if task.description is not None:
+        props[DESCRIPTION_PROPERTY] = {
+            "type": "rich_text",
+            "rich_text": _plain_to_rich_text(task.description),
+        }
+    return props
+
+
+def _headers(token: str, api_version: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": api_version,
+        "Content-Type": "application/json",
+    }
+
+
+def create_page(token: str, api_version: str, database_id: str, task: TaskInfo) -> Dict[str, Any]:
+    body = {
+        "parent": {"database_id": database_id},
+        "properties": build_page_properties_from_task(task),
+    }
+    return {
+        "url": f"https://api.notion.com/v1/pages",
+        "method": "POST",
+        "headers": _headers(token, api_version),
+        "body": json.dumps(body),
+    }
+
+
+def update_page(token: str, api_version: str, page_id: str, task: TaskInfo) -> Dict[str, Any]:
+    body = {
+        "properties": build_page_properties_from_task(task),
+    }
+    return {
+        "url": f"https://api.notion.com/v1/pages/{page_id}",
+        "method": "PATCH",
+        "headers": _headers(token, api_version),
+        "body": json.dumps(body),
+    }

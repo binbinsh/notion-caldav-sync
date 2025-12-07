@@ -7,7 +7,12 @@
 
 Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker is the simplest way to surface every dated Notion task inside a dedicated iCloud calendar. Webhooks keep updates nearly instant, and a cron-powered rewrite regularly reconciles the two so Apple Calendar always reflects the latest Notion truth.
 
-The design goal is **Reliability first**. every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
+The design goal is **Reliability first**. Every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
+- Bi-directional sync: Notion ↔ iCloud Calendar with mapping state in KV.
+- Delta-first CalDAV polling (RFC6578 sync token + ETag) with full-fetch fallback if the token is stale.
+- Notion writes use the 2025-09-03 API; conflict resolution prefers the newer Notion `last_edited_time` when both sides changed, otherwise CalDAV updates apply if the Notion hash is unchanged.
+- CalDAV deletions drop the mapping; Notion pages are not deleted from CalDAV-side changes.
+- KV (`STATE`) stores mapping records/indexes, `caldav_rfc6578_token`, legacy `caldav_sync_token`, webhook token, and calendar metadata.
 
 ## Requirements
 - Python 3.12+, [uv](https://github.com/astral-sh/uv), and Cloudflare’s `pywrangler` CLI.
@@ -61,6 +66,12 @@ The script ensures `wrangler.toml` matches your KV namespace, prompts for secret
 
 When Notion first performs the webhook verification handshake, the worker automatically persists the provided verification token into KV and uses it for all future signature checks—no manual secret management required. If you click **Resend token** inside Notion’s webhook UI, you’ll see `(log) [Webhook] Stored verification token from Notion` in the worker logs; fetch the new `webhook_verification_token` via `/admin/status` (JSON) to confirm it updated.
 
+## Sync behavior (bi-directional)
+- Notion → Calendar: Webhooks push updates immediately; the cron rewrite reconciles and heals drift to keep calendars identical to Notion.
+- CalDAV → Notion: Cron prefers RFC6578 `sync-collection` using the stored CalDAV sync token + ETag to fetch only changes; it falls back to a full fetch if the token is stale.
+- Conflict handling: Per-side hashes plus Notion `last_edited_time`. CalDAV changes apply when the Notion hash is unchanged since the last sync; if both changed, the newer Notion edit wins. Unchanged hashes are skipped.
+- State: The `STATE` KV holds mapping records + indexes, `caldav_rfc6578_token`, legacy `caldav_sync_token`, webhook verification token, and calendar metadata. CalDAV deletions drop the mapping only; Notion pages are not deleted from CalDAV-side changes.
+
 ## Useful HTTP endpoints
 - Admin status page (HTML only): `https://<worker-url>/admin/status?token=$ADMIN_TOKEN`
   - Use the form buttons on the page to view status, run full sync, and save settings.
@@ -70,7 +81,7 @@ When Notion first performs the webhook verification handshake, the worker automa
   - Subscribed events: Page, Database, Data source.
   - Verification token is persisted automatically and visible via `/admin/status` page data.
   - Webhook with database/data_source events triggers a background full sync.
-}
+
 ## Testing
 All tests hit live APIs, so use staging credentials.
 ```bash

@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse, urljoin
+
+from .logger import log
+
+SYNC_NS = "DAV:"  # RFC6578 sync-collection
+CAL_NS = "urn:ietf:params:xml:ns:caldav"
+DAV_NS = "DAV:"
+NSMAP = {"d": DAV_NS, "cal": CAL_NS}
 
 try:  # pragma: no cover - lxml unavailable inside Workers
     from lxml import etree  # type: ignore
@@ -141,7 +148,7 @@ async def _apply_calendar_color(calendar_href: str, color: Optional[str], bindin
         if status >= 400:
             raise ValueError(f"status {status}")
     except Exception as exc:
-        print(f"[calendar] failed to enforce calendar color: {exc}")
+        log(f"[calendar] failed to enforce calendar color: {exc}")
         return None
     return normalized
 
@@ -241,6 +248,76 @@ async def _list_events_via_caldav(calendar_href: str, apple_id: str, apple_app_p
     return events
 
 
+async def _report_sync_collection(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    sync_token: Optional[str],
+) -> Tuple[Optional[str], List[Dict[str, Optional[str]]], List[str]]:
+    """Return (next_sync_token, changed_resources, deleted_hrefs).
+
+    changed_resources: list of {href, etag}
+    deleted_hrefs: list of hrefs (tombstones)
+    """
+    target = calendar_href if calendar_href.endswith("/") else f"{calendar_href}/"
+    sync_token_el = f"<d:sync-token>{sync_token}</d:sync-token>" if sync_token else ""
+    body = (
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        "<d:sync-collection xmlns:d=\"DAV:\" xmlns:cal=\"urn:ietf:params:xml:ns:caldav\">"
+        "<d:sync-level>1</d:sync-level>"
+        f"{sync_token_el}"
+        "<d:prop><d:getetag/></d:prop>"
+        "</d:sync-collection>"
+    )
+    headers = {"Depth": "1", "Content-Type": "application/xml; charset=utf-8"}
+    try:
+        status, _, payload = await http_request(
+            "REPORT",
+            target,
+            apple_id,
+            apple_app_password,
+            headers=headers,
+            body=body,
+        )
+    except Exception as exc:
+        log(f"[calendar] sync-collection failed: {exc}")
+        return None, [], []
+    if status == 404:
+        # sync token invalid; caller should full resync
+        return None, [], []
+    if status >= 400 or not payload:
+        return None, [], []
+    try:
+        root = etree.fromstring(payload)
+    except Exception:
+        return None, [], []
+    ns = {"d": DAV_NS}
+    next_token = None
+    token_node = root.find(".//d:sync-token", namespaces=ns)
+    if token_node is not None and token_node.text:
+        next_token = token_node.text.strip()
+    changed: List[Dict[str, Optional[str]]] = []
+    deleted: List[str] = []
+    for resp in root.findall("d:response", namespaces=ns):
+        href_node = resp.find("d:href", namespaces=ns)
+        if href_node is None or not href_node.text:
+            continue
+        href_text = href_node.text
+        status_node = resp.find(".//d:status", namespaces=ns)
+        is_deleted = False
+        if status_node is not None and status_node.text:
+            if " 404" in status_node.text or "Not Found" in status_node.text:
+                is_deleted = True
+        if is_deleted:
+            deleted.append(urljoin(target, href_text))
+            continue
+        etag_node = resp.find(".//d:getetag", namespaces=ns)
+        etag = etag_node.text if etag_node is not None else None
+        full_href = href_text if href_text.startswith("http") else urljoin(target, href_text)
+        changed.append({"href": full_href, "etag": etag})
+    return next_token, changed, deleted
+
+
 async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
     target = calendar_href if calendar_href.endswith("/") else f"{calendar_href}/"
     body = (
@@ -260,7 +337,7 @@ async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_p
             body=body,
         )
     except Exception as exc:
-        print(f"[calendar] PROPFIND failed: {exc}")
+        log(f"[calendar] PROPFIND failed: {exc}")
         return []
     if status >= 400 or not payload:
         return []
@@ -290,6 +367,64 @@ async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_p
     return events
 
 
+async def _fetch_ics_bulk(changed: List[Dict[str, Optional[str]]], apple_id: str, apple_app_password: str) -> List[Dict[str, Any]]:
+    if not changed:
+        return []
+    results: List[Dict[str, Any]] = []
+    for item in changed:
+        href = item.get("href")
+        if not href:
+            continue
+        try:
+            status, _, payload = await http_request(
+                "GET",
+                href,
+                apple_id,
+                apple_app_password,
+            )
+        except Exception:
+            continue
+        if status >= 400 or not payload:
+            continue
+        ics_text = payload.decode("utf-8", errors="ignore")
+        results.append(
+            {
+                "href": href,
+                "etag": item.get("etag"),
+                "ics": ics_text,
+            }
+        )
+    return results
+
+
+async def list_events_delta(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    sync_token: Optional[str],
+) -> Tuple[Optional[str], List[Dict[str, Any]], List[str]]:
+    """Delta listing using RFC6578. Returns (next_sync_token, changed_with_ics, deleted_hrefs).
+
+    If sync_token is None or server rejects, falls back to full list with ICS for each.
+    """
+    if http_request is None:
+        log("[calendar] http_request unavailable; returning empty delta")
+        return None, [], []
+    if sync_token:
+        next_token, changed_meta, deleted = await _report_sync_collection(
+            calendar_href, apple_id, apple_app_password, sync_token
+        )
+        # If token invalid, fall back to full
+        if next_token is not None or changed_meta or deleted:
+            changed_with_ics = await _fetch_ics_bulk(changed_meta, apple_id, apple_app_password)
+            return next_token, changed_with_ics, deleted
+    # Fallback full
+    events = await list_events(calendar_href, apple_id, apple_app_password)
+    full_meta = [{"href": ev.get("href"), "etag": ev.get("etag") } for ev in events if ev.get("href")]
+    changed_with_ics = await _fetch_ics_bulk(full_meta, apple_id, apple_app_password)
+    return None, changed_with_ics, []
+
+
 async def list_events(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
     if HAS_NATIVE_WEBDAV:
         return await _list_events_via_webdav(calendar_href, apple_id, apple_app_password)
@@ -299,6 +434,251 @@ async def list_events(calendar_href: str, apple_id: str, apple_app_password: str
 
 
 async def put_event(event_url: str, ics: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+        await http_request(
+            "PUT",
+            event_url,
+            apple_id,
+            apple_app_password,
+            headers=headers,
+            body=ics,
+            expect_body=False,
+        )
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot PUT events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+    client.put(event_url, ics, headers)
+
+
+async def delete_event(event_url: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        try:
+            await http_request(
+                "DELETE",
+                event_url,
+                apple_id,
+                apple_app_password,
+                expect_body=False,
+            )
+        except Exception:
+            pass
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot DELETE events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    try:
+        client.request(event_url, "DELETE")
+    except caldav_error.DAVError:
+        pass
+
+
+async def list_events_delta(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    sync_token: Optional[str],
+) -> Tuple[Optional[str], List[Dict[str, Any]], List[str]]:
+    """Delta listing using RFC6578. Returns (next_sync_token, changed_with_ics, deleted_hrefs).
+
+    If sync_token is None or server rejects, falls back to full list with ICS for each.
+    """
+    if http_request is None:
+        log("[calendar] http_request unavailable; returning empty delta")
+        return None, [], []
+    if sync_token:
+        next_token, changed_meta, deleted = await _report_sync_collection(
+            calendar_href, apple_id, apple_app_password, sync_token
+        )
+        # If token invalid, fall back to full
+        if next_token is not None or changed_meta or deleted:
+            changed_with_ics = await _fetch_ics_bulk(changed_meta, apple_id, apple_app_password)
+            return next_token, changed_with_ics, deleted
+    # Fallback full
+    events = await list_events(calendar_href, apple_id, apple_app_password)
+    full_meta = [{"href": ev.get("href"), "etag": ev.get("etag") } for ev in events if ev.get("href")]
+    changed_with_ics = await _fetch_ics_bulk(full_meta, apple_id, apple_app_password)
+    return None, changed_with_ics, []
+
+
+async def list_events(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
+    if HAS_NATIVE_WEBDAV:
+        return await _list_events_via_webdav(calendar_href, apple_id, apple_app_password)
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot list events without WebDAV runtime")
+    return await _list_events_via_caldav(calendar_href, apple_id, apple_app_password)
+
+
+async def put_event(event_url: str, ics: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+        await http_request(
+            "PUT",
+            event_url,
+            apple_id,
+            apple_app_password,
+            headers=headers,
+            body=ics,
+            expect_body=False,
+        )
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot PUT events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+    client.put(event_url, ics, headers)
+
+
+async def delete_event(event_url: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        try:
+            await http_request(
+                "DELETE",
+                event_url,
+                apple_id,
+                apple_app_password,
+                expect_body=False,
+            )
+        except Exception:
+            pass
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot DELETE events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    try:
+        client.request(event_url, "DELETE")
+    except caldav_error.DAVError:
+        pass
+
+
+async def list_events(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
+    if HAS_NATIVE_WEBDAV:
+        return await _list_events_via_webdav(calendar_href, apple_id, apple_app_password)
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot list events without WebDAV runtime")
+    return await _list_events_via_caldav(calendar_href, apple_id, apple_app_password)
+
+
+async def put_event(event_url: str, ics: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+        await http_request(
+            "PUT",
+            event_url,
+            apple_id,
+            apple_app_password,
+            headers=headers,
+            body=ics,
+            expect_body=False,
+        )
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot PUT events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+    client.put(event_url, ics, headers)
+
+
+async def delete_event(event_url: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        try:
+            await http_request(
+                "DELETE",
+                event_url,
+                apple_id,
+                apple_app_password,
+                expect_body=False,
+            )
+        except Exception:
+            pass
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot DELETE events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    try:
+        client.request(event_url, "DELETE")
+    except caldav_error.DAVError:
+        pass
+
+
+async def list_events_delta(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    sync_token: Optional[str],
+) -> Tuple[Optional[str], List[Dict[str, Any]], List[str]]:
+    """Delta listing using RFC6578. Returns (next_sync_token, changed_with_ics, deleted_hrefs).
+
+    If sync_token is None or server rejects, falls back to full list with ICS for each.
+    """
+    if http_request is None:
+        log("[calendar] http_request unavailable; returning empty delta")
+        return None, [], []
+    if sync_token:
+        next_token, changed_meta, deleted = await _report_sync_collection(
+            calendar_href, apple_id, apple_app_password, sync_token
+        )
+        # If token invalid, fall back to full
+        if next_token is not None or changed_meta or deleted:
+            changed_with_ics = await _fetch_ics_bulk(changed_meta, apple_id, apple_app_password)
+            return next_token, changed_with_ics, deleted
+    # Fallback full
+    events = await list_events(calendar_href, apple_id, apple_app_password)
+    full_meta = [{"href": ev.get("href"), "etag": ev.get("etag") } for ev in events if ev.get("href")]
+    changed_with_ics = await _fetch_ics_bulk(full_meta, apple_id, apple_app_password)
+    return None, changed_with_ics, []
+
+
+async def list_events(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
+    if HAS_NATIVE_WEBDAV:
+        return await _list_events_via_webdav(calendar_href, apple_id, apple_app_password)
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot list events without WebDAV runtime")
+    return await _list_events_via_caldav(calendar_href, apple_id, apple_app_password)
+
+
+async def put_event(event_url: str, ics: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+        await http_request(
+            "PUT",
+            event_url,
+            apple_id,
+            apple_app_password,
+            headers=headers,
+            body=ics,
+            expect_body=False,
+        )
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot PUT events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
+    client.put(event_url, ics, headers)
+
+
+async def delete_event(event_url: str, apple_id: str, apple_app_password: str) -> None:
+    if HAS_NATIVE_WEBDAV:
+        try:
+            await http_request(
+                "DELETE",
+                event_url,
+                apple_id,
+                apple_app_password,
+                expect_body=False,
+            )
+        except Exception:
+            pass
+        return
+    if not HAS_CALDAV:
+        raise RuntimeError("caldav library unavailable; cannot DELETE events without WebDAV runtime")
+    client = _client_for(event_url, apple_id, apple_app_password)
+    try:
+        client.request(event_url, "DELETE")
+    except caldav_error.DAVError:
+        pass
     if HAS_NATIVE_WEBDAV:
         headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
         await http_request(
@@ -415,7 +795,7 @@ async def ensure_calendar(bindings: Bindings, *, _reset_attempted: bool = False)
     if _reset_attempted:
         raise RuntimeError("Unable to determine calendar_href; verify iCloud credentials and remove manual KV overrides.")
 
-    print("[calendar] missing calendar_href after ensure; resetting stored calendar metadata")
+    log("[calendar] missing calendar_href after ensure; resetting stored calendar metadata")
     await update_settings(
         bindings.state,
         calendar_href=None,

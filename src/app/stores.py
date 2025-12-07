@@ -1,5 +1,4 @@
-"""KV helpers for worker settings (one key per field)."""
-
+"""KV helpers for worker settings (one key per field) plus sync mapping state."""
 from __future__ import annotations
 
 import json
@@ -8,6 +7,11 @@ from typing import Any, Dict, List, Optional
 SETTINGS_KEY = "settings"  # legacy monolithic blob
 SETTINGS_VALUE_PREFIX = "settings:value:"
 WEBHOOK_TOKEN_FIELD = "webhook_verification_token"
+MAPPING_PREFIX = "mapping:record:"
+MAPPING_INDEX_NOTION_PREFIX = "mapping:index:notion:"
+MAPPING_INDEX_CALDAV_PREFIX = "mapping:index:caldav:"
+SYNC_TOKEN_FIELD = "caldav_sync_token"
+CALDAV_SYNC_TOKEN_FIELD = "caldav_rfc6578_token"
 
 
 def _field_key(name: str) -> str:
@@ -64,7 +68,6 @@ async def _kv_list(ns, prefix: str) -> List[str]:
         except Exception:
             break
         list_complete = True
-        entries: List[Any]
         if isinstance(payload, dict):
             entries = payload.get("keys") or payload.get("result") or []
             cursor = (
@@ -180,6 +183,32 @@ async def update_settings(ns, **updates) -> Dict[str, Any]:
     return await load_settings(ns)
 
 
+async def load_sync_token(ns) -> Optional[str]:
+    settings = await load_settings(ns)
+    token = settings.get(SYNC_TOKEN_FIELD)
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    return None
+
+
+async def persist_sync_token(ns, token: Optional[str]) -> Dict[str, Any]:
+    normalized = token.strip() if isinstance(token, str) else None
+    return await update_settings(ns, **{SYNC_TOKEN_FIELD: normalized})
+
+
+async def load_caldav_sync_token(ns) -> Optional[str]:
+    settings = await load_settings(ns)
+    token = settings.get(CALDAV_SYNC_TOKEN_FIELD)
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    return None
+
+
+async def persist_caldav_sync_token(ns, token: Optional[str]) -> Dict[str, Any]:
+    normalized = token.strip() if isinstance(token, str) else None
+    return await update_settings(ns, **{CALDAV_SYNC_TOKEN_FIELD: normalized})
+
+
 def _normalize_token(value: Any) -> Optional[str]:
     if isinstance(value, str):
         token = value.strip()
@@ -199,3 +228,120 @@ async def persist_webhook_token(ns, token: str) -> Dict[str, Any]:
     if not normalized:
         raise ValueError("webhook token must be a non-empty string")
     return await update_settings(ns, **{WEBHOOK_TOKEN_FIELD: normalized})
+
+
+# Mapping state -----------------------------------------------------------------
+
+
+def _mapping_key(sync_id: str) -> str:
+    return f"{MAPPING_PREFIX}{sync_id}"
+
+
+def _index_notion_key(notion_page_id: str) -> str:
+    return f"{MAPPING_INDEX_NOTION_PREFIX}{notion_page_id}"
+
+
+def _index_caldav_key(caldav_uid: str) -> str:
+    return f"{MAPPING_INDEX_CALDAV_PREFIX}{caldav_uid}"
+
+
+async def load_mapping_record(ns, sync_id: str) -> Optional[Dict[str, Any]]:
+    raw = await _kv_get(ns, _mapping_key(sync_id))
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+async def _persist_index(ns, key: str, sync_id: str) -> None:
+    await _kv_put(ns, key, sync_id)
+
+
+async def _delete_index(ns, key: str) -> None:
+    await _kv_delete(ns, key)
+
+
+async def save_mapping_record(ns, record: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist mapping record and maintain notion/caldav indexes."""
+    if not ns:
+        return record
+    sync_id = record.get("sync_id")
+    if not sync_id:
+        return record
+    payload = json.dumps(record, ensure_ascii=False)
+    await _kv_put(ns, _mapping_key(sync_id), payload)
+    notion_id = record.get("notion_page_id")
+    if notion_id:
+        await _persist_index(ns, _index_notion_key(notion_id), sync_id)
+    caldav_uid = record.get("caldav_uid")
+    if caldav_uid:
+        await _persist_index(ns, _index_caldav_key(caldav_uid), sync_id)
+    return record
+
+
+async def delete_mapping_record(ns, record: Dict[str, Any]) -> None:
+    if not ns:
+        return
+    sync_id = record.get("sync_id")
+    if not sync_id:
+        return
+    await _kv_delete(ns, _mapping_key(sync_id))
+    notion_id = record.get("notion_page_id")
+    if notion_id:
+        await _delete_index(ns, _index_notion_key(notion_id))
+    caldav_uid = record.get("caldav_uid")
+    if caldav_uid:
+        await _delete_index(ns, _index_caldav_key(caldav_uid))
+
+
+async def load_mapping_by_notion(ns, notion_page_id: str) -> Optional[Dict[str, Any]]:
+    if not notion_page_id:
+        return None
+    sync_id = await _kv_get(ns, _index_notion_key(notion_page_id))
+    if not sync_id:
+        return None
+    return await load_mapping_record(ns, sync_id)
+
+
+async def load_mapping_by_caldav(ns, caldav_uid: str) -> Optional[Dict[str, Any]]:
+    if not caldav_uid:
+        return None
+    sync_id = await _kv_get(ns, _index_caldav_key(caldav_uid))
+    if not sync_id:
+        return None
+    return await load_mapping_record(ns, sync_id)
+
+
+async def list_mappings(ns) -> List[Dict[str, Any]]:
+    if not ns:
+        return []
+    keys = await _kv_list(ns, MAPPING_PREFIX)
+    records: List[Dict[str, Any]] = []
+    for key in keys:
+        raw = await _kv_get(ns, key)
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+    return records
+
+
+async def reset_mappings(ns) -> None:
+    """Delete all mapping records and indexes (use sparingly)."""
+    if not ns:
+        return
+    keys = await _kv_list(ns, MAPPING_PREFIX)
+    for key in keys:
+        await _kv_delete(ns, key)
+    idx_keys = await _kv_list(ns, MAPPING_INDEX_NOTION_PREFIX)
+    for key in idx_keys:
+        await _kv_delete(ns, key)
+    idx_caldav = await _kv_list(ns, MAPPING_INDEX_CALDAV_PREFIX)
+    for key in idx_caldav:
+        await _kv_delete(ns, key)

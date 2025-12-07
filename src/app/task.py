@@ -14,3 +14,5 @@ class TaskInfo:
     reminder: Optional[str] = None
     description: Optional[str] = None
     database_name: str = ""
+    database_id: Optional[str] = None
+    last_edited_time: Optional[str] = None

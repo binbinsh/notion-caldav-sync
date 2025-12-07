@@ -1,18 +1,57 @@
-"""Logging helper that maps to Cloudflare's console when available."""
+"""Logging helper backed by loguru with in-memory buffer for admin status."""
 
 from __future__ import annotations
 
-from typing import Any
+import sys
+from collections import deque
+from typing import Any, List
 
-try:  # pragma: no cover - only available inside Workers runtime
-    from js import console  # type: ignore
-except ImportError:  # pragma: no cover
-    console = None  # type: ignore
+from loguru import logger
+
+_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+_BUFFER = deque(maxlen=200)
+_CONFIGURED = False
 
 
-def log(message: Any) -> None:
-    text = str(message)
-    if console is not None:
-        console.log(text)
-    else:
-        print(text, flush=True)
+def _configure_logger() -> None:
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        format=_FORMAT,
+        colorize=False,
+        enqueue=False,
+        backtrace=False,
+        diagnose=False,
+    )
+
+    def _buffer_sink(message):
+        try:
+            text = message if isinstance(message, str) else message if isinstance(message, bytes) else str(message)
+        except Exception:
+            text = str(message)
+        _BUFFER.append(str(text).rstrip("\n"))
+
+    logger.add(
+        _buffer_sink,
+        format=_FORMAT,
+        colorize=False,
+        enqueue=False,
+        backtrace=False,
+        diagnose=False,
+    )
+    _CONFIGURED = True
+
+
+def log(message: Any, *, level: str = "INFO") -> None:
+    _configure_logger()
+    logger.log(level, message)
+
+
+def get_recent_logs(limit: int = 100) -> List[str]:
+    _configure_logger()
+    if limit <= 0:
+        return []
+    return list(_BUFFER)[-limit:]

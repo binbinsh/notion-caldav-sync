@@ -7,6 +7,8 @@ from requests.adapters import BaseAdapter
 from requests.models import Response as RequestsResponse
 from requests.structures import CaseInsensitiveDict
 
+from .logger import log
+
 
 def _await_promise_blocking(promise):
     """
@@ -131,7 +133,8 @@ def patch_requests_with_fetch():
     """
     import requests
     
-    print("[FetchAdapter] Patching requests to use Cloudflare fetch API...")
+    from .logger import log
+    log("[FetchAdapter] Patching requests to use Cloudflare fetch API...")
     
     # Save original init
     if not hasattr(requests.sessions.Session, '_cf_original_init'):
@@ -146,4 +149,4 @@ def patch_requests_with_fetch():
     
     requests.sessions.Session.__init__ = new_init
     
-    print("[FetchAdapter] ✅ Requests patched with CloudflareFetchAdapter")
+    log("[FetchAdapter] Requests patched with CloudflareFetchAdapter")

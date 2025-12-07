@@ -12,7 +12,6 @@
 
 ## Python Instructions
 - Always use `uv` for python package manager. The `.venv` is located in the project root.
-- Prefer using typer instead of argparse.
 - Prefer using loguru instead of logging.
 
 ## The Architect's Decree

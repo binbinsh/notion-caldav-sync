@@ -42,12 +42,13 @@ if JS_RUNTIME and not HAS_NATIVE_WEBDAV:
             from fetch_adapter import patch_requests_with_fetch
             patch_requests_with_fetch()
         except Exception as e:
-            print(f"[Init] ⚠️  Fetch adapter not available: {e}")
+            from .logger import log
+            log(f"[Init] Fetch adapter not available: {e}")
             # Fallback to pyodide-http (for local dev)
             try:
                 import pyodide_http
                 pyodide_http.patch_all()
-                print("[Init] Fallback to pyodide-http")
+                log("[Init] Fallback to pyodide-http")
             except Exception:
                 pass
 

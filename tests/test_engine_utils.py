@@ -12,8 +12,223 @@ from src.app.engine import (
     _status_for_task,
     handle_webhook_tasks,
     _collect_tasks,
+    _sync_decide,
+    SyncDecision,
 )  # type: ignore
 from src.app.task import TaskInfo
+
+
+@pytest.mark.asyncio
+async def test_sync_decide_conflict_prefers_newer_notion(monkeypatch: pytest.MonkeyPatch):
+    # mapping exists; both changed; notion last_edited_time newer
+    mapping = {
+        "sync_id": "s1",
+        "notion_hash": "old_notion",
+        "caldav_hash": "old_caldav",
+    }
+    notion = TaskInfo(
+        notion_id="n1",
+        title="N",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    notion.last_edited_time = "2025-01-02T00:00:00+00:00"
+    caldav = TaskInfo(
+        notion_id="n1",
+        title="C",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    caldav.last_edited_time = "2025-01-01T00:00:00+00:00"
+
+    # hashes differ on both sides
+    def _hash_task_payload(task):
+        return f"hash-{task.title}"
+
+    monkeypatch.setattr("src.app.engine._hash_task_payload", _hash_task_payload)
+
+    decision = await _sync_decide(mapping, notion, caldav, caldav_etag="etag1")
+    assert isinstance(decision, SyncDecision)
+    assert decision.action == "update_caldav"
+    assert decision.detail.startswith("Conflict")
+    assert decision.task is notion
+
+
+@pytest.mark.asyncio
+async def test_sync_decide_conflict_prefers_caldav_when_newer(monkeypatch: pytest.MonkeyPatch):
+    mapping = {
+        "sync_id": "s1",
+        "notion_hash": "old_notion",
+        "caldav_hash": "old_caldav",
+    }
+    notion = TaskInfo(
+        notion_id="n1",
+        title="N",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    notion.last_edited_time = "2025-01-01T00:00:00+00:00"
+    caldav = TaskInfo(
+        notion_id="n1",
+        title="C",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    caldav.last_edited_time = "2025-02-01T00:00:00+00:00"
+
+    def _hash_task_payload(task):
+        return f"hash-{task.title}"
+
+    monkeypatch.setattr("src.app.engine._hash_task_payload", _hash_task_payload)
+
+    decision = await _sync_decide(mapping, notion, caldav, caldav_etag="etag1")
+    assert decision.action == "update_notion"
+    assert decision.detail.startswith("Conflict")
+    assert decision.task is caldav
+
+
+@pytest.mark.asyncio
+async def test_sync_decide_caldav_changed_only(monkeypatch: pytest.MonkeyPatch):
+    mapping = {
+        "sync_id": "s1",
+        "notion_hash": "hash-N",
+        "caldav_hash": "old_caldav",
+        "notion_last_edited": "2024-12-31T00:00:00+00:00",
+    }
+    notion = TaskInfo(
+        notion_id="n1",
+        title="N",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    notion.last_edited_time = "2025-01-01T00:00:00+00:00"
+    caldav = TaskInfo(
+        notion_id="n1",
+        title="C",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    caldav.last_edited_time = "2025-01-01T00:00:00+00:00"
+
+    def _hash_task_payload(task):
+        return f"hash-{task.title}"
+
+    monkeypatch.setattr("src.app.engine._hash_task_payload", _hash_task_payload)
+
+    decision = await _sync_decide(mapping, notion, caldav, caldav_etag="etag1")
+    assert decision.action == "update_notion"
+    assert decision.detail.startswith("CalDAV changed")
+    assert decision.task is caldav
+
+
+@pytest.mark.asyncio
+async def test_sync_decide_notion_changed_only(monkeypatch: pytest.MonkeyPatch):
+    mapping = {
+        "sync_id": "s1",
+        "notion_hash": "hash-N",
+        "caldav_hash": "hash-C",
+        "notion_last_edited": "2024-12-31T00:00:00+00:00",
+    }
+    notion = TaskInfo(
+        notion_id="n1",
+        title="N_new",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    notion.last_edited_time = "2025-01-01T00:00:00+00:00"
+    caldav = TaskInfo(
+        notion_id="n1",
+        title="C",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    caldav.last_edited_time = "2025-01-01T00:00:00+00:00"
+
+    def _hash_task_payload(task):
+        # notion changed, caldav unchanged vs mapping
+        return f"hash-{task.title}"
+
+    monkeypatch.setattr("src.app.engine._hash_task_payload", _hash_task_payload)
+
+    decision = await _sync_decide(mapping, notion, caldav, caldav_etag="etag1")
+    assert decision.action == "update_caldav"
+    assert decision.detail.startswith("Notion changed")
+    assert decision.task is notion
+
+
+@pytest.mark.asyncio
+async def test_sync_decide_noop_when_hashes_same(monkeypatch: pytest.MonkeyPatch):
+    mapping = {
+        "sync_id": "s1",
+        "notion_hash": "hash_n",
+        "caldav_hash": "hash_c",
+    }
+    notion = TaskInfo(
+        notion_id="n1",
+        title="N",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    notion.last_edited_time = "2025-01-01T00:00:00+00:00"
+    caldav = TaskInfo(
+        notion_id="n1",
+        title="C",
+        status="In progress",
+        start_date="2024-01-01T10:00:00Z",
+        end_date=None,
+        reminder=None,
+        category=None,
+        description=None,
+    )
+    caldav.last_edited_time = "2025-01-01T00:00:00+00:00"
+
+    def _hash_task_payload(task):
+        if task.title == "N":
+            return "hash_n"
+        return "hash_c"
+
+    monkeypatch.setattr("src.app.engine._hash_task_payload", _hash_task_payload)
+
+    decision = await _sync_decide(mapping, notion, caldav, caldav_etag="etag1")
+    assert decision.action == "noop"
+    assert decision.detail == "no changes"
+    assert decision.task is None or decision.task in (notion, caldav)
 
 
 def test_full_sync_due_handles_missing_and_recent_values():
