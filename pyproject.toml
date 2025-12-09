@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "notion-caldav-sync"
-version = "0.1.0"
+version = "1.0.0"
 description = "Notion → iCloud Calendar sync worker"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,7 +15,6 @@ dependencies = [
   "python-dateutil>=2.9.0",
   "httpx>=0.27.0",
   "requests>=2.32.0",
-  "loguru>=0.7.2",
 ]
 
 [dependency-groups]

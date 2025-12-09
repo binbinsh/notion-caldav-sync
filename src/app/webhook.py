@@ -13,10 +13,36 @@ try:
     from .logger import log
     from .stores import load_webhook_token, persist_webhook_token
 except ImportError:
-    from config import get_bindings  # type: ignore
-    from engine import handle_webhook_tasks, run_full_sync  # type: ignore
-    from logger import log  # type: ignore
-    from stores import load_webhook_token, persist_webhook_token  # type: ignore
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    _MODULE_DIR = Path(__file__).resolve().parent
+
+    def _load_local(module_name: str):
+        module_path = _MODULE_DIR / f"{module_name}.py"
+        spec_name = f"_app_local_{module_name}"
+        spec = importlib.util.spec_from_file_location(spec_name, module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Unable to load local module {module_name!r}")
+        module = sys.modules.get(spec_name)
+        if module is None:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec_name] = module
+            spec.loader.exec_module(module)
+        return module
+
+    _config = _load_local("config")
+    _engine = _load_local("engine")
+    _logger = _load_local("logger")
+    _stores = _load_local("stores")
+
+    get_bindings = _config.get_bindings
+    handle_webhook_tasks = _engine.handle_webhook_tasks
+    run_full_sync = _engine.run_full_sync
+    log = _logger.log
+    load_webhook_token = _stores.load_webhook_token
+    persist_webhook_token = _stores.persist_webhook_token
 
 
 _PAGE_ID_KEYS = {"page_id", "pageId"}
@@ -228,5 +254,16 @@ async def handle(request, env, ctx=None):
     page_ids: List[str] = _collect_page_ids(data)
     _log_payload(raw, data, page_ids)
     await handle_webhook_tasks(bindings, page_ids)
+    # Record last webhook use
+    try:
+        from app.stores import persist_webhook_last_used
+    except ImportError:
+        from stores import persist_webhook_last_used  # type: ignore
+    try:
+        await persist_webhook_last_used(bindings.state)
+    except Exception:
+        pass
     response_body = json.dumps({"ok": True, "updated": page_ids})
     return Response(response_body, headers={"Content-Type": "application/json"})
+
+

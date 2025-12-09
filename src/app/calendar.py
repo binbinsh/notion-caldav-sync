@@ -7,7 +7,10 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse, urljoin
 
-from .logger import log
+try:
+    from .logger import log
+except ImportError:  # pragma: no cover
+    from logger import log  # type: ignore
 
 SYNC_NS = "DAV:"  # RFC6578 sync-collection
 CAL_NS = "urn:ietf:params:xml:ns:caldav"

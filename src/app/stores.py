@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 SETTINGS_KEY = "settings"  # legacy monolithic blob
 SETTINGS_VALUE_PREFIX = "settings:value:"
 WEBHOOK_TOKEN_FIELD = "webhook_verification_token"
+WEBHOOK_LAST_USED_FIELD = "webhook_last_used"
 MAPPING_PREFIX = "mapping:record:"
 MAPPING_INDEX_NOTION_PREFIX = "mapping:index:notion:"
 MAPPING_INDEX_CALDAV_PREFIX = "mapping:index:caldav:"
@@ -227,7 +229,21 @@ async def persist_webhook_token(ns, token: str) -> Dict[str, Any]:
     normalized = _normalize_token(token)
     if not normalized:
         raise ValueError("webhook token must be a non-empty string")
-    return await update_settings(ns, **{WEBHOOK_TOKEN_FIELD: normalized})
+    now_iso = datetime.now(timezone.utc).isoformat()
+    return await update_settings(ns, **{WEBHOOK_TOKEN_FIELD: normalized, WEBHOOK_LAST_USED_FIELD: now_iso})
+
+
+async def persist_webhook_last_used(ns) -> Dict[str, Any]:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    return await update_settings(ns, **{WEBHOOK_LAST_USED_FIELD: now_iso})
+
+
+async def load_webhook_last_used(ns) -> Optional[str]:
+    settings = await load_settings(ns)
+    ts = settings.get(WEBHOOK_LAST_USED_FIELD)
+    if isinstance(ts, str) and ts.strip():
+        return ts.strip()
+    return None
 
 
 # Mapping state -----------------------------------------------------------------

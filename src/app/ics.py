@@ -209,7 +209,20 @@ def parse_ics_minimal(ics_text: str) -> Dict[str, Optional[str]]:
             is_placeholder = '1'
         categories_prop = comp.get('categories')
         if categories_prop:
-            if isinstance(categories_prop, list):
+            # icalendar returns vCategory object, need to convert to string properly
+            if hasattr(categories_prop, 'cats'):
+                # vCategory object has a 'cats' attribute containing the list
+                cats = categories_prop.cats
+                if cats:
+                    category = str(cats[0])
+            elif hasattr(categories_prop, 'to_ical'):
+                # Fallback: use to_ical() and decode
+                raw = categories_prop.to_ical()
+                if isinstance(raw, bytes):
+                    raw = raw.decode('utf-8')
+                # Categories are comma-separated, take the first one
+                category = raw.split(',')[0].strip() if raw else None
+            elif isinstance(categories_prop, list):
                 if categories_prop:
                     category = str(categories_prop[0])
             else:
@@ -230,7 +243,14 @@ def parse_ics_minimal(ics_text: str) -> Dict[str, Optional[str]]:
             if isinstance(val, datetime):
                 end_date = to_utc(val).isoformat()
             else:
-                end_date = val.isoformat()
+                # For all-day events, DTEND is exclusive (next day after event ends)
+                # Subtract one day to get the actual end date
+                from datetime import date as date_type
+                if isinstance(val, date_type):
+                    actual_end = val - timedelta(days=1)
+                    end_date = actual_end.isoformat()
+                else:
+                    end_date = val.isoformat()
         desc = comp.get('description')
         if desc:
             text = str(desc)

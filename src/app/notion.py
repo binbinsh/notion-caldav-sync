@@ -196,6 +196,144 @@ async def get_database_properties(token: str, api_version: str, database_id: str
     return data.get("properties") or {}
 
 
+def find_property_names(props: Dict[str, dict]) -> Dict[str, Any]:
+    """Find the actual property names in a database for each property type.
+
+    Returns a dict mapping logical names (title, status, date, etc.) to actual property names.
+    Also includes 'status_options' with the available status option names.
+    """
+    result: Dict[str, Any] = {}
+
+    for name, prop in props.items():
+        if not isinstance(prop, dict):
+            continue
+        prop_type = prop.get("type")
+
+        # Title property (there should be exactly one)
+        if prop_type == "title" and "title" not in result:
+            result["title"] = name
+
+        # Status property - also extract available options
+        if prop_type == "status" and "status" not in result:
+            result["status"] = name
+            # Extract status options for mapping
+            status_config = prop.get("status") or {}
+            options = status_config.get("options") or []
+            groups = status_config.get("groups") or []
+            # Collect all option names
+            option_names = [opt.get("name") for opt in options if opt.get("name")]
+            for group in groups:
+                group_options = group.get("option_ids") or []
+                # Groups reference option IDs, options are already collected above
+            result["status_options"] = option_names
+
+        # Date property - prefer "Due date" or similar names
+        if prop_type == "date":
+            name_lower = name.lower()
+            if "date" not in result:
+                result["date"] = name
+            elif any(kw in name_lower for kw in ["due", "deadline", "到期", "日期"]):
+                result["date"] = name
+
+        # Select property for category
+        if prop_type == "select":
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ["category", "分类", "类别", "类型"]):
+                result["category"] = name
+
+        # Rich text for description
+        if prop_type == "rich_text":
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ["description", "desc", "描述", "备注", "说明"]):
+                result["description"] = name
+
+        # Date property for reminder
+        if prop_type == "date":
+            name_lower = name.lower()
+            if any(kw in name_lower for kw in ["reminder", "remind", "提醒"]):
+                result["reminder"] = name
+
+    return result
+
+
+def _map_status_to_option(status: str, available_options: List[str]) -> Optional[str]:
+    """Map a status name to an available option in the database.
+
+    Only matches if the status name exactly matches an available option (case-insensitive).
+    Returns None if no exact match is found - caller should skip updating status in that case.
+    """
+    if not status or not available_options:
+        return None
+
+    status_lower = status.strip().lower()
+
+    # Only exact match (case-insensitive)
+    for opt in available_options:
+        if opt.lower() == status_lower:
+            return opt
+
+    # No match found - return None so status update is skipped
+    return None
+
+
+def build_page_properties_with_names(
+    task: TaskInfo,
+    prop_names: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build properties payload using actual property names from the database."""
+    props: Dict[str, Any] = {}
+
+    # Title
+    if task.title is not None and "title" in prop_names:
+        props[prop_names["title"]] = {
+            "type": "title",
+            "title": _plain_to_rich_text(task.title),
+        }
+
+    # Status - map to available options
+    if task.status is not None and "status" in prop_names:
+        status_options = prop_names.get("status_options") or []
+        mapped_status = _map_status_to_option(task.status, status_options)
+        if mapped_status:
+            props[prop_names["status"]] = {
+                "type": "status",
+                "status": {"name": mapped_status},
+            }
+
+    # Date
+    if (task.start_date is not None or task.end_date is not None) and "date" in prop_names:
+        # If start and end are the same, don't set end (single-day event)
+        end_date = task.end_date
+        if task.start_date and task.end_date and task.start_date == task.end_date:
+            end_date = None
+        props[prop_names["date"]] = {
+            "type": "date",
+            "date": {"start": task.start_date, "end": end_date},
+        }
+
+    # Category
+    if task.category is not None and "category" in prop_names:
+        props[prop_names["category"]] = {
+            "type": "select",
+            "select": {"name": task.category},
+        }
+
+    # Description
+    if task.description is not None and "description" in prop_names:
+        props[prop_names["description"]] = {
+            "type": "rich_text",
+            "rich_text": _plain_to_rich_text(task.description),
+        }
+
+    # Reminder
+    if task.reminder is not None and "reminder" in prop_names:
+        encoded = _encode_date(task.reminder)
+        if encoded:
+            props[prop_names["reminder"]] = {"type": "date", "date": encoded}
+
+    return props
+
+
 async def query_database_pages(token: str, api_version: str, database_id: str, *, filter_body: Optional[Dict[str, Any]] = None) -> List[Dict]:
     pages: List[Dict] = []
     next_cursor: Optional[str] = None
@@ -240,14 +378,29 @@ async def create_page_http(token: str, api_version: str, database_id: str, task:
     )
 
 
-async def update_page_http(token: str, api_version: str, page_id: str, task: TaskInfo) -> Dict[str, Any]:
-    req = update_page(token, api_version, page_id, task)
-    return await http_json(
+async def update_page_http(token: str, api_version: str, page_id: str, task: TaskInfo, *, date_only: bool = False, prop_names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    if prop_names:
+        # Use dynamic property names from the actual database schema
+        body = {"properties": build_page_properties_with_names(task, prop_names)}
+        req = {
+            "url": f"https://api.notion.com/v1/pages/{page_id}",
+            "method": "PATCH",
+            "headers": _headers(token, api_version),
+            "body": json.dumps(body),
+        }
+    else:
+        req = update_page(token, api_version, page_id, task, date_only=date_only)
+    LOG(f"[notion] update_page request: url={req['url']}, body={req['body']}")
+    response = await http_json(
         req["url"],
         method=req["method"],
         headers=req["headers"],
         body=req["body"],
     )
+    LOG(f"[notion] update_page response: status={response.get('status')}, json_keys={list((response.get('json') or {}).keys())}")
+    if response.get("status") and response.get("status") >= 400:
+        LOG(f"[notion] update_page ERROR: {response.get('json')}", level="ERROR")
+    return response
 
 
 def build_last_edited_filter(since_iso: str) -> Dict[str, Any]:
@@ -423,18 +576,39 @@ def _encode_date(value: Optional[str]) -> Optional[Dict[str, Optional[str]]]:
     return {"start": v}
 
 
-def build_page_properties_from_task(task: TaskInfo) -> Dict[str, Any]:
+def build_page_properties_from_task(task: TaskInfo, *, date_only: bool = False) -> Dict[str, Any]:
+    """Build properties payload for Notion page update.
+
+    Args:
+        task: TaskInfo with the data to update
+        date_only: If True, only include date-related properties (safer for CalDAV->Notion sync
+                   since we don't know the actual property names in the target database)
+    """
     props: Dict[str, Any] = {}
-    if task.title is not None:
-        props[TITLE_PROPERTY] = {
-            "type": "title",
-            "title": _plain_to_rich_text(task.title),
-        }
-    if task.status is not None:
-        props[STATUS_PROPERTY] = {
-            "type": "status",
-            "status": {"name": task.status},
-        }
+
+    if not date_only:
+        if task.title is not None:
+            props[TITLE_PROPERTY] = {
+                "type": "title",
+                "title": _plain_to_rich_text(task.title),
+            }
+        if task.status is not None:
+            props[STATUS_PROPERTY] = {
+                "type": "status",
+                "status": {"name": task.status},
+            }
+        if task.category is not None:
+            props[CATEGORY_PROPERTY] = {
+                "type": "select",
+                "select": {"name": task.category},
+            }
+        if task.description is not None:
+            props[DESCRIPTION_PROPERTY] = {
+                "type": "rich_text",
+                "rich_text": _plain_to_rich_text(task.description),
+            }
+
+    # Date properties are always included when present
     if task.start_date is not None or task.end_date is not None:
         props[DATE_PROPERTY] = {
             "type": "date",
@@ -444,16 +618,7 @@ def build_page_properties_from_task(task: TaskInfo) -> Dict[str, Any]:
         encoded = _encode_date(task.reminder)
         if encoded:
             props[REMINDER_PROPERTY] = {"type": "date", "date": encoded}
-    if task.category is not None:
-        props[CATEGORY_PROPERTY] = {
-            "type": "select",
-            "select": {"name": task.category},
-        }
-    if task.description is not None:
-        props[DESCRIPTION_PROPERTY] = {
-            "type": "rich_text",
-            "rich_text": _plain_to_rich_text(task.description),
-        }
+
     return props
 
 
@@ -478,9 +643,9 @@ def create_page(token: str, api_version: str, database_id: str, task: TaskInfo) 
     }
 
 
-def update_page(token: str, api_version: str, page_id: str, task: TaskInfo) -> Dict[str, Any]:
+def update_page(token: str, api_version: str, page_id: str, task: TaskInfo, *, date_only: bool = False) -> Dict[str, Any]:
     body = {
-        "properties": build_page_properties_from_task(task),
+        "properties": build_page_properties_from_task(task, date_only=date_only),
     }
     return {
         "url": f"https://api.notion.com/v1/pages/{page_id}",

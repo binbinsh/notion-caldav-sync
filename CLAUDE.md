@@ -12,7 +12,6 @@
 
 ## Python Instructions
 - Always use `uv` for python package manager. The `.venv` is located in the project root.
-- Prefer using loguru instead of logging.
 
 ## The Architect's Decree
 - I want to move faster. Please execute the entire plan (Steps 1 through x) in a single pass right now. Do not stop to ask for confirmation between steps. I am comfortable reviewing a large set of changes.
