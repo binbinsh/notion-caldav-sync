@@ -332,6 +332,7 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
 async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
     if not page_ids:
         return
+    log(f"[sync] begin webhook batch len={len(page_ids)}")
     settings = await calendar_ensure(bindings)
     calendar_href = settings.get("calendar_href")
     if not calendar_href:
@@ -340,7 +341,11 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
     date_only_tz = _date_only_timezone(settings)
     for pid in page_ids:
         log(f"[sync] webhook update for page {pid}")
-        page = await get_page(bindings.notion_token, NOTION_VERSION, pid)
+        try:
+            page = await get_page(bindings.notion_token, NOTION_VERSION, pid)
+        except Exception as exc:
+            log(f"[sync] failed to fetch page {pid}: {exc}")
+            continue
         if not page or page.get("object") == "error":
             await _delete_task_event(bindings, calendar_href, pid)
             log(f"[sync] deleted event for {pid} (page missing)")
@@ -356,16 +361,24 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
             await _delete_task_event(bindings, calendar_href, task.notion_id)
             log(f"[sync] deleted event for {task.notion_id}")
             continue
-        db_title = await get_database_title(bindings.notion_token, NOTION_VERSION, database_id)
+        try:
+            db_title = await get_database_title(bindings.notion_token, NOTION_VERSION, database_id)
+        except Exception as exc:
+            log(f"[sync] failed to load database title for {database_id}: {exc}")
+            db_title = database_id
         task.database_name = db_title
-        await _write_task_event(
-            bindings,
-            calendar_href,
-            calendar_color,
-            task,
-            date_only_tz=date_only_tz,
-        )
-        log(f"[sync] wrote event for {task.notion_id}")
+        try:
+            await _write_task_event(
+                bindings,
+                calendar_href,
+                calendar_color,
+                task,
+                date_only_tz=date_only_tz,
+            )
+            log(f"[sync] wrote event for {task.notion_id}")
+        except Exception as exc:
+            log(f"[sync] failed to write event for {task.notion_id}: {exc}")
+    log(f"[sync] end webhook batch len={len(page_ids)}")
 
 
 async def ensure_calendar(bindings: Bindings) -> Dict[str, str]:

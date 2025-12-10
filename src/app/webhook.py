@@ -181,7 +181,8 @@ def _format_payload_for_log(raw: str, data: Any) -> str:
 def _log_payload(raw: str, data: Any, page_ids: Iterable[str]) -> None:
     snapshot = _format_payload_for_log(raw, data)
     pid_list = list(page_ids)
-    log(f"[Webhook] payload: {snapshot} :: page_ids={pid_list or []}")
+    event_types = _extract_event_types(data)
+    log(f"[Webhook] payload: {snapshot} :: event_types={event_types or []} :: page_ids={pid_list or []}")
 
 
 async def handle(request, env, ctx=None):
@@ -190,56 +191,76 @@ async def handle(request, env, ctx=None):
     ctx parameter is optional for compatibility with Python Workers API.
     """
     bindings = get_bindings(env)
-    raw = await request.text()
-
     try:
-        data = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        data = None
+        raw = await request.text()
+        log(f"[Webhook] received request; raw_len={len(raw)}")
 
-    verification_token = None
-    if isinstance(data, dict):
-        verification_token = data.get("verification_token")
+        try:
+            data = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            data = None
 
-    if verification_token:
-        verification_token = str(verification_token).strip()
-        if not verification_token:
-            return Response("Invalid verification_token", status=400)
-        await persist_webhook_token(bindings.state, verification_token)
-        log("[Webhook] Stored verification token from Notion")
-        response_body = json.dumps({"verification_token": verification_token})
+        verification_token = None
+        if isinstance(data, dict):
+            verification_token = data.get("verification_token")
+
+        if verification_token:
+            verification_token = str(verification_token).strip()
+            if not verification_token:
+                log("[Webhook] invalid verification_token in payload")
+                return Response("Invalid verification_token", status=400)
+            await persist_webhook_token(bindings.state, verification_token)
+            log("[Webhook] Stored verification token from Notion")
+            response_body = json.dumps({"verification_token": verification_token})
+            return Response(response_body, headers={"Content-Type": "application/json"})
+
+        if data is None:
+            log("[Webhook] ERROR: Invalid JSON")
+            return Response("Invalid JSON", status=400)
+
+        stored_token = await load_webhook_token(bindings.state)
+        if not stored_token:
+            seed = getattr(env, "WEBHOOK_VERIFICATION_TOKEN", "") or ""
+            seed = seed.strip()
+            if seed:
+                await persist_webhook_token(bindings.state, seed)
+                stored_token = seed
+
+        if not stored_token:
+            log("[Webhook] missing stored verification token; rejecting")
+            return Response("Unauthorized - Missing stored verification token", status=401)
+
+        sig = request.headers.get("X-Notion-Signature")
+        if not sig:
+            log("[Webhook] missing X-Notion-Signature header; rejecting")
+            return Response("Unauthorized - No signature", status=401)
+
+        calc = "sha256=" + hmac.new(stored_token.encode(), raw.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, sig):
+            log("[Webhook] invalid signature; rejecting")
+            return Response("Unauthorized - Invalid signature", status=401)
+
+        event_types = _extract_event_types(data)
+        log(f"[Webhook] event_types={event_types or []}")
+        if _needs_full_sync(event_types):
+            log("[Webhook] database/data_source event detected; running full sync")
+            _schedule_background_full_sync(bindings)
+
+        page_ids: List[str] = _collect_page_ids(data)
+        _log_payload(raw, data, page_ids)
+        if not page_ids:
+            log("[Webhook] no page_ids extracted; skipping webhook task handler")
+        else:
+            log(f"[Webhook] processing {len(page_ids)} page_ids via task handler")
+            try:
+                await handle_webhook_tasks(bindings, page_ids)
+                log(f"[Webhook] finished task handler for {len(page_ids)} page_ids")
+            except Exception as exc:
+                log(f"[Webhook] task handler error for page_ids={page_ids}: {exc}")
+                raise
+        response_body = json.dumps({"ok": True, "updated": page_ids})
+        log("[Webhook] responded ok")
         return Response(response_body, headers={"Content-Type": "application/json"})
-
-    if data is None:
-        log("[Webhook] ERROR: Invalid JSON")
-        return Response("Invalid JSON", status=400)
-
-    stored_token = await load_webhook_token(bindings.state)
-    if not stored_token:
-        seed = getattr(env, "WEBHOOK_VERIFICATION_TOKEN", "") or ""
-        seed = seed.strip()
-        if seed:
-            await persist_webhook_token(bindings.state, seed)
-            stored_token = seed
-
-    if not stored_token:
-        return Response("Unauthorized - Missing stored verification token", status=401)
-
-    sig = request.headers.get('X-Notion-Signature')
-    if not sig:
-        return Response("Unauthorized - No signature", status=401)
-
-    calc = 'sha256=' + hmac.new(stored_token.encode(), raw.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(calc, sig):
-        return Response("Unauthorized - Invalid signature", status=401)
-    
-    event_types = _extract_event_types(data)
-    if _needs_full_sync(event_types):
-        log("[Webhook] database/data_source event detected; running full sync")
-        _schedule_background_full_sync(bindings)
-
-    page_ids: List[str] = _collect_page_ids(data)
-    _log_payload(raw, data, page_ids)
-    await handle_webhook_tasks(bindings, page_ids)
-    response_body = json.dumps({"ok": True, "updated": page_ids})
-    return Response(response_body, headers={"Content-Type": "application/json"})
+    except Exception as exc:  # pragma: no cover - runtime logging
+        log(f"[Webhook] unhandled error: {exc}")
+        return Response("Internal Server Error", status=500)

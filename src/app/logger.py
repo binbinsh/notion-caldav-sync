@@ -12,7 +12,13 @@ except ImportError:  # pragma: no cover
 
 def log(message: Any) -> None:
     text = str(message)
+    # Try console.log (Workers) first, but also print to stdout so tail always captures something.
     if console is not None:
-        console.log(text)
-    else:
+        try:  # pragma: no cover - runtime-only
+            console.log(text)
+        except Exception:
+            pass
+    try:
         print(text, flush=True)
+    except Exception:
+        pass
