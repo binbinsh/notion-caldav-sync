@@ -249,7 +249,12 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
     status_prop = props.get(STATUS_PROPERTY) or {}
     status_data = status_prop.get("status") or {}
     status = status_data.get("name")
-    date_prop = props.get(DATE_PROPERTY) or {}
+    date_prop = {}
+    for name in DATE_PROPERTY:
+        candidate = props.get(name)
+        if isinstance(candidate, dict) and candidate.get("type") == "date":
+            date_prop = candidate
+            break
     date_value = date_prop.get("date") or {}
     start = date_value.get("start")
     end = date_value.get("end")

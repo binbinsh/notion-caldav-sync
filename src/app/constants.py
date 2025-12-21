@@ -1,9 +1,9 @@
-from typing import Iterable, Optional, Dict
+from typing import Optional, Dict
 
 
 TITLE_PROPERTY = "Title"
 STATUS_PROPERTY = "Status"
-DATE_PROPERTY = "Due date"
+DATE_PROPERTY = ["Due date", "Due", "Date", "Deadline"]
 REMINDER_PROPERTY = "Reminder"
 CATEGORY_PROPERTY = "Category"
 DESCRIPTION_PROPERTY = "Description"

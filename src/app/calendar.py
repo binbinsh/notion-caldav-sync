@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse, urljoin
 
 HAS_CALDAV = False
@@ -33,7 +33,7 @@ try:
         list_calendars,
         mkcalendar,
     )
-    from .stores import load_settings, save_settings, update_settings
+    from .stores import load_settings, update_settings
     from .webdav import HAS_NATIVE_WEBDAV, http_request
 except ImportError:  # pragma: no cover - flat module fallback
     import importlib.util
@@ -73,7 +73,6 @@ except ImportError:  # pragma: no cover - flat module fallback
     mkcalendar = _discovery.mkcalendar
 
     load_settings = _stores.load_settings
-    save_settings = _stores.save_settings
     update_settings = _stores.update_settings
     http_request = _webdav.http_request
     HAS_NATIVE_WEBDAV = _webdav.HAS_NATIVE_WEBDAV
@@ -366,15 +365,28 @@ async def remove_missing_events(
 
 
 async def ensure_calendar(bindings: Bindings, *, _reset_attempted: bool = False) -> Dict[str, str]:
-    """Ensure the dedicated Notion calendar exists and metadata is persisted in KV."""
+    """Ensure the dedicated Notion calendar exists and metadata is persisted in KV.
+
+    Cloudflare KV is eventually consistent, so avoid read-after-write checks that can
+    temporarily "lose" freshly stored values during webhook bursts.
+    """
     settings = await load_settings(bindings.state)
+    effective_settings: Dict[str, Any] = dict(settings)
+
     calendar_href = settings.get("calendar_href")
+    if isinstance(calendar_href, str):
+        calendar_href = calendar_href.strip() or None
+    else:
+        calendar_href = None
+
     calendar_name = settings.get("calendar_name") or DEFAULT_CALENDAR_NAME
     stored_color_raw = settings.get("calendar_color")
     stored_color = _normalize_calendar_color(stored_color_raw)
     calendar_color = stored_color or DEFAULT_CALENDAR_COLOR
     stored_timezone = settings.get("calendar_timezone")
     stored_date_override = settings.get("date_only_timezone")
+    full_sync_minutes = settings.get("full_sync_interval_minutes", DEFAULT_FULL_SYNC_MINUTES)
+
     created = False
     if not calendar_href:
         principal = await discover_principal(CALDAV_ORIGIN, bindings.apple_id, bindings.apple_app_password)
@@ -392,13 +404,16 @@ async def ensure_calendar(bindings: Bindings, *, _reset_attempted: bool = False)
                 bindings.apple_app_password,
             )
             created = True
-        settings = {
+
+        initial_updates = {
             "calendar_href": calendar_href,
             "calendar_name": calendar_name,
             "calendar_color": calendar_color,
-            "full_sync_interval_minutes": settings.get("full_sync_interval_minutes", DEFAULT_FULL_SYNC_MINUTES),
+            "full_sync_interval_minutes": full_sync_minutes,
         }
-        await save_settings(bindings.state, settings)
+        await update_settings(bindings.state, **initial_updates)
+        effective_settings.update(initial_updates)
+
     remote_color = None
     remote_timezone = None
     if calendar_href:
@@ -406,6 +421,7 @@ async def ensure_calendar(bindings: Bindings, *, _reset_attempted: bool = False)
         if created:
             applied_color = await _apply_calendar_color(calendar_href, calendar_color, bindings)
             remote_color = applied_color or remote_color
+
     desired_color = remote_color or stored_color or DEFAULT_CALENDAR_COLOR
     updates: Dict[str, Optional[str]] = {}
     if desired_color != stored_color_raw:
@@ -415,22 +431,13 @@ async def ensure_calendar(bindings: Bindings, *, _reset_attempted: bool = False)
     if remote_timezone and not stored_date_override:
         updates.setdefault("date_only_timezone", remote_timezone)
     if updates:
-        settings = await update_settings(bindings.state, **updates)
+        await update_settings(bindings.state, **updates)
+        effective_settings.update({k: v for k, v in updates.items() if v is not None})
 
-    final_settings = await load_settings(bindings.state)
-    if final_settings.get("calendar_href"):
-        return final_settings
+    if calendar_href:
+        effective_settings["calendar_href"] = calendar_href
+        return effective_settings  # type: ignore[return-value]
 
-    if _reset_attempted:
-        raise RuntimeError("Unable to determine calendar_href; verify iCloud credentials and remove manual KV overrides.")
-
-    print("[calendar] missing calendar_href after ensure; resetting stored calendar metadata")
-    await update_settings(
-        bindings.state,
-        calendar_href=None,
-        calendar_name=None,
-        calendar_color=None,
-        event_hashes=None,
-        last_full_sync=None,
+    raise RuntimeError(
+        "Unable to determine calendar_href; verify iCloud credentials and that the STATE KV binding is configured."
     )
-    return await ensure_calendar(bindings, _reset_attempted=True)
