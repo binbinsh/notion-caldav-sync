@@ -23,12 +23,12 @@ STATUS_CANONICAL_VARIANTS = {
     "Cancelled": ["Cancelled", "Discarded"],
 }
 
-STATUS_EMOJI = {
-    "Todo": "⬜",
-    "In progress": "⚙️",
-    "Completed": "✅",
-    "Overdue": "⚠️",
-    "Cancelled": "❌",
+STATUS_EMOJI = { 
+    "Todo": "○ ",
+    "In progress": "⊖ ",
+    "Completed": "✓⃝ ",
+    "Overdue": "⊜ ",
+    "Cancelled": "⊗ ",
 }
 
 EMOJI_STATUS = {emoji: canonical for canonical, emoji in STATUS_EMOJI.items()}
