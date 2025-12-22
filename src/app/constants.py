@@ -2,10 +2,10 @@ from typing import Optional, Dict
 
 
 TITLE_PROPERTY = "Title"
-STATUS_PROPERTY = "Status"
+STATUS_PROPERTY = [ "Status", "Task Status", "Progress" ]
 DATE_PROPERTY = ["Due date", "Due", "Date", "Deadline"]
-REMINDER_PROPERTY = "Reminder"
-CATEGORY_PROPERTY = "Category"
+REMINDER_PROPERTY = ["Reminder", "Notification"]
+CATEGORY_PROPERTY = ["Category", "Tags", "Tag", "Type", "Class"]
 DESCRIPTION_PROPERTY = "Description"
 
 CALDAV_ORIGIN = "https://caldav.icloud.com/"

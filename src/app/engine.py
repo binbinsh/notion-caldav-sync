@@ -158,7 +158,7 @@ def _date_only_timezone(settings: Optional[Dict[str, Any]]) -> tzinfo:
 def _description_for_task(task: TaskInfo) -> str:
     parts = [f"Source: {task.database_name or '-'}"]
     if task.category:
-        parts.append(f"Category: {task.category}")
+        parts.append(f"{task.category_name}: {task.category}")
     if task.description:
         parts.extend(["", task.description])
     return "\n".join(parts)

@@ -192,7 +192,7 @@ async def query_database_pages(token: str, api_version: str, database_id: str) -
             "page_size": NOTION_DS_PAGE_SIZE,
         }
         if next_cursor:
-            body["start_cursor"] = next_cursor
+            body["start_cursor"] = next_cursor # type: ignore
         url = f"https://api.notion.com/v1/data_sources/{database_id}/query"
         response = await http_json(
             url,
@@ -246,8 +246,13 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
                 break
     if not title:
         title = page.get("id") or "Untitled"
-    status_prop = props.get(STATUS_PROPERTY) or {}
-    status_data = status_prop.get("status") or {}
+    status_prop = {}
+    for name in STATUS_PROPERTY:
+        candidate = props.get(name)
+        if isinstance(candidate, dict) and candidate.get("type") in ("status", "select"):
+            status_prop = candidate
+            break
+    status_data = status_prop.get("status") or status_prop.get("select") or {}
     status = status_data.get("name")
     date_prop = {}
     for name in DATE_PROPERTY:
@@ -258,10 +263,22 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
     date_value = date_prop.get("date") or {}
     start = date_value.get("start")
     end = date_value.get("end")
-    reminder_prop = props.get(REMINDER_PROPERTY) or {}
+    reminder_prop = {}
+    for name in REMINDER_PROPERTY:
+        candidate = props.get(name)
+        if isinstance(candidate, dict) and candidate.get("type") == "date":
+            reminder_prop = candidate
+            break
     reminder_value = reminder_prop.get("date") or {}
     reminder = reminder_value.get("start")
-    category_prop = props.get(CATEGORY_PROPERTY) or {}
+    category_prop = {}
+    category_name = "Category"
+    for name in CATEGORY_PROPERTY:
+        candidate = props.get(name)
+        if isinstance(candidate, dict) and candidate.get("type") == "select":
+            category_prop = candidate
+            category_name = name
+            break
     category = None
     if isinstance(category_prop, dict) and category_prop.get("type") == "select":
         select_data = category_prop.get("select") or {}
@@ -272,13 +289,14 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
         description = description_prop["rich_text"][0].get("plain_text", "")
 
     return TaskInfo(
-        notion_id=page.get("id"),
+        notion_id=page.get("id"), # type: ignore
         title=title,
-        status=status,
+        status=status, # type: ignore
         start_date=start,
         end_date=end,
         reminder=reminder,
         category=category,
+        category_name=category_name,
         description=description,
         url=page.get("url"),
     )
