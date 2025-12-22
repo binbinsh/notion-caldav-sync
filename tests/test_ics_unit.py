@@ -16,7 +16,7 @@ def _first_event(ics: str):
 
 
 def test_build_event_all_day_expands_dates_and_description():
-    summary_emoji = status_to_emoji("Todo")
+    summary_emoji = status_to_emoji("Todo", style="emoji")
     ics = build_event(
         notion_id="task-123",
         title="Plan trip",
@@ -31,7 +31,7 @@ def test_build_event_all_day_expands_dates_and_description():
         url="https://www.notion.so/task123",
     )
     event = _first_event(ics)
-    assert str(event.get("summary")) == f"{summary_emoji}Plan trip"
+    assert str(event.get("summary")) == f"{summary_emoji} Plan trip"
     # All-day events show dtstart/dtend as dates, dtend defaults to next day
     assert str(event.get("dtstart").dt) == "2024-06-01"
     assert str(event.get("dtend").dt) == "2024-06-02"
@@ -44,7 +44,7 @@ def test_build_event_all_day_expands_dates_and_description():
 
 
 def test_build_event_all_day_range_adds_extra_day():
-    summary_emoji = status_to_emoji("Todo")
+    summary_emoji = status_to_emoji("Todo", style="emoji")
     ics = build_event(
         notion_id="task-range",
         title="Weekend trip",
@@ -65,7 +65,7 @@ def test_build_event_all_day_range_adds_extra_day():
 
 
 def test_build_event_timed_uses_utc_and_reminder():
-    status_emoji = status_to_emoji("In progress")
+    status_emoji = status_to_emoji("In progress", style="emoji")
     ics = build_event(
         notion_id="task-456",
         title="Demo",
@@ -80,7 +80,7 @@ def test_build_event_timed_uses_utc_and_reminder():
         url=None,
     )
     event = _first_event(ics)
-    assert str(event.get("summary")) == f"{status_emoji}Demo"
+    assert str(event.get("summary")) == f"{status_emoji} Demo"
     dtstart = event.get("dtstart").dt
     dtend = event.get("dtend").dt
     assert isinstance(dtstart, datetime) and isinstance(dtend, datetime)
@@ -95,7 +95,7 @@ def test_build_event_timed_uses_utc_and_reminder():
 
 
 def test_build_event_timed_without_end_defaults_duration():
-    status_emoji = status_to_emoji("Todo")
+    status_emoji = status_to_emoji("Todo", style="emoji")
     ics = build_event(
         notion_id="task-no-end",
         title="Plan in 1 hour",

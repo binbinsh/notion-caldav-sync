@@ -1,4 +1,6 @@
-from typing import Optional, Dict
+from __future__ import annotations
+
+from typing import Optional, Dict, Mapping
 
 
 TITLE_PROPERTY = "Title"
@@ -23,15 +25,27 @@ STATUS_CANONICAL_VARIANTS = {
     "Cancelled": ["Cancelled", "Discarded"],
 }
 
-STATUS_EMOJI = { 
-    "Todo": "○ ",
-    "In progress": "⊖ ",
-    "Completed": "✓⃝ ",
-    "Overdue": "⊜ ",
-    "Cancelled": "⊗ ",
+STATUS_EMOJI_SETS: dict[str, dict[str, str]] = {
+    "emoji": {
+        "Todo": "⬜",
+        "In progress": "⚙️",
+        "Completed": "✅",
+        "Overdue": "⚠️",
+        "Cancelled": "❌",
+    },
+    "symbol": {
+        "Todo": "○",
+        "In progress": "⊖",
+        "Completed": "✓⃝",
+        "Overdue": "⊜",
+        "Cancelled": "⊗",
+    },
 }
 
-EMOJI_STATUS = {emoji: canonical for canonical, emoji in STATUS_EMOJI.items()}
+EMOJI_STATUS: dict[str, str] = {}
+for emoji_set in STATUS_EMOJI_SETS.values():
+    for canonical, emoji in emoji_set.items():
+        EMOJI_STATUS[emoji.strip()] = canonical
 
 _STATUS_ALIAS_LOOKUP = {
     variant.strip().lower(): canonical
@@ -65,8 +79,26 @@ def normalize_status_name(status: Optional[str]) -> Optional[str]:
     return _STATUS_ALIAS_LOOKUP.get(key, status.strip())
 
 
-def status_to_emoji(status: Optional[str]) -> str:
+def resolve_status_emoji_style(style: Optional[str]) -> str:
+    if style is None:
+        raise ValueError("STATUS_EMOJI_STYLE is required (expected: 'emoji' or 'symbol').")
+    candidate = style.strip().lower()
+    if not candidate:
+        raise ValueError("STATUS_EMOJI_STYLE is required (expected: 'emoji' or 'symbol').")
+    if candidate in ("emoji", "symbol"):
+        return candidate
+    raise ValueError(
+        f"Invalid STATUS_EMOJI_STYLE={style!r}; expected 'emoji' or 'symbol'."
+    )
+
+
+def status_emoji_map(style: str) -> Mapping[str, str]:
+    resolved = resolve_status_emoji_style(style)
+    return STATUS_EMOJI_SETS[resolved]
+
+
+def status_to_emoji(status: Optional[str], *, style: str) -> str:
     canonical = normalize_status_name(status)
     if canonical:
-        return STATUS_EMOJI.get(canonical, "")
+        return str(status_emoji_map(style).get(canonical, "")).strip()
     return ""

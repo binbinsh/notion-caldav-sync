@@ -48,6 +48,7 @@ class FakeEnv:
         self.APPLE_APP_PASSWORD = "app-password"
         self.NOTION_TOKEN = "notion-token"
         self.ADMIN_TOKEN = "admin"
+        self.STATUS_EMOJI_STYLE = "emoji"
 
 
 @pytest.fixture(autouse=True)
@@ -207,4 +208,4 @@ async def test_database_event_triggers_full_sync(monkeypatch: pytest.MonkeyPatch
     assert task is not None
     await asyncio.wait_for(task, timeout=0.1)
     assert called.get("full_sync") == 1
-    assert called.get("page_ids") == []
+    assert called.get("page_ids") is None

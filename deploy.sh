@@ -10,6 +10,53 @@ STATE_NAMESPACE_NAME="notion-caldav-sync-STATE"  # Change if you prefer a differ
 
 cd "$ROOT_DIR"
 
+resolve_status_emoji_style() {
+  local style=${1:-}
+  style=$(printf "%s" "$style" | tr '[:upper:]' '[:lower:]' | xargs)
+  case "$style" in
+    "") echo "emoji" ;;
+    emoji|symbol) echo "$style" ;;
+    *)
+      echo "Invalid STATUS_EMOJI_STYLE=$style (expected: emoji|symbol)" >&2
+      return 1
+      ;;
+  esac
+}
+
+choose_status_emoji_style() {
+  if [ -n "${STATUS_EMOJI_STYLE:-}" ]; then
+    if ! STATUS_EMOJI_STYLE=$(resolve_status_emoji_style "$STATUS_EMOJI_STYLE"); then
+      exit 1
+    fi
+    export STATUS_EMOJI_STYLE
+    echo "Using STATUS_EMOJI_STYLE=$STATUS_EMOJI_STYLE"
+    return
+  fi
+
+  if [ ! -t 0 ]; then
+    echo "STATUS_EMOJI_STYLE is required in non-interactive mode (set: emoji|symbol)." >&2
+    exit 1
+  fi
+
+  echo "Choose status emoji style:"
+  echo "  1) emoji   (⬜ ⚙️ ✅ ⚠️ ❌)"
+  echo "  2) symbol  (○ ⊖ ✓⃝ ⊜ ⊗)"
+  while true; do
+    read -r -p "Selection [1|2]: " choice
+    case "${choice:-}" in
+      1) STATUS_EMOJI_STYLE="emoji" ;;
+      2) STATUS_EMOJI_STYLE="symbol" ;;
+      *)
+        echo "Invalid selection; enter 1 or 2." >&2
+        continue
+        ;;
+    esac
+    break
+  done
+  export STATUS_EMOJI_STYLE
+  echo "Using STATUS_EMOJI_STYLE=$STATUS_EMOJI_STYLE"
+}
+
 reuse_namespace_from_config() {
   if [ -n "${CLOUDFLARE_STATE_NAMESPACE:-}" ]; then
     return 1
@@ -117,15 +164,19 @@ ensure_namespace() {
 }
 
 ensure_namespace
+choose_status_emoji_style
 if [ ! -f "$TEMPLATE_PATH" ]; then
   echo "Missing wrangler template at $TEMPLATE_PATH" >&2
   exit 1
 fi
 
 if command -v envsubst >/dev/null 2>&1; then
-  CLOUDFLARE_STATE_NAMESPACE="$CLOUDFLARE_STATE_NAMESPACE" envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
+  CLOUDFLARE_STATE_NAMESPACE="$CLOUDFLARE_STATE_NAMESPACE" STATUS_EMOJI_STYLE="$STATUS_EMOJI_STYLE" envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
 else
-  sed "s/\${CLOUDFLARE_STATE_NAMESPACE}/$CLOUDFLARE_STATE_NAMESPACE/g" "$TEMPLATE_PATH" > "$CONFIG_PATH"
+  sed \
+    -e "s/\${CLOUDFLARE_STATE_NAMESPACE}/$CLOUDFLARE_STATE_NAMESPACE/g" \
+    -e "s/\${STATUS_EMOJI_STYLE}/$STATUS_EMOJI_STYLE/g" \
+    "$TEMPLATE_PATH" > "$CONFIG_PATH"
 fi
 echo "Generated wrangler.toml with STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
 

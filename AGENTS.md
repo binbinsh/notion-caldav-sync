@@ -61,3 +61,4 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - ICS descriptions combine datasource, category, and Notion description; keep `_description_for_task` as the single source of truth.
 - Cron now always calls `run_full_sync`, but it skips runs until `full_sync_interval_minutes` (KV) elapses; tune the cron schedule or that interval as needed (default 30 min).
 - Webhooks batch page IDs; the engine handles deduplication and deletion of archived/undated tasks.
+- No legacy code, no backward compatibility.

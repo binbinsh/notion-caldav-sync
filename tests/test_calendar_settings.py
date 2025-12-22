@@ -42,6 +42,7 @@ async def test_ensure_calendar_preserves_webhook_verification_token(monkeypatch:
         apple_app_password="app-password",
         notion_token="notion-token",
         admin_token="admin",
+        status_emoji_style="emoji",
     )
 
     async def _fake_discover_principal(*args, **kwargs) -> str:
@@ -76,4 +77,3 @@ async def test_ensure_calendar_preserves_webhook_verification_token(monkeypatch:
     assert settings.get("calendar_href")
     assert settings.get("webhook_verification_token") == "secret_token"
     assert token_key in state.storage
-

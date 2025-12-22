@@ -6,13 +6,13 @@ try:
     from .constants import (
         EMOJI_STATUS,
         STATUS_CANONICAL_VARIANTS,
-        STATUS_EMOJI,
+        status_emoji_map,
     )
 except ImportError:
     from constants import (  # type: ignore
         EMOJI_STATUS,
         STATUS_CANONICAL_VARIANTS,
-        STATUS_EMOJI,
+        status_emoji_map,
     )
 
 
@@ -37,6 +37,9 @@ def _extract_summary_status(summary: str) -> Tuple[Optional[str], str]:
     head, sep, tail = summary.partition(' ')
     if sep and head in EMOJI_STATUS:
         return EMOJI_STATUS[head], tail.lstrip()
+    summary_stripped = summary.strip()
+    if summary_stripped in EMOJI_STATUS:
+        return EMOJI_STATUS[summary_stripped], ""
     first_char = summary[0]
     if first_char in EMOJI_STATUS:
         return EMOJI_STATUS[first_char], summary[1:].lstrip()
@@ -59,8 +62,9 @@ def _clean_summary_title(title: Optional[str]) -> str:
     if not title:
         return ""
     working = title.lstrip()
-    if working and working[0] in EMOJI_STATUS:
-        working = working[1:].lstrip()
+    head, sep, tail = working.partition(" ")
+    if sep and head in EMOJI_STATUS:
+        working = tail.lstrip()
     lowered = working.lower()
     for prefix in _STATUS_PREFIXES_LOWER:
         if lowered.startswith(prefix):
@@ -129,7 +133,11 @@ def build_event(
     event = Event()
     event.add('uid', build_uid(notion_id))
     summary_payload = (title or "").strip() or "Untitled"
-    summary = f"{status_emoji}{summary_payload}"
+    status_prefix = (status_emoji or "").strip()
+    if status_prefix:
+        summary = f"{status_prefix} {summary_payload}"
+    else:
+        summary = summary_payload
     event.add('summary', summary)
     # Add per-event color when available (RFC 7986 COLOR)
     if color:
@@ -295,7 +303,8 @@ def update_event_fields(existing_ics: str, *,
                         url: Optional[str] = None,
                         category: Optional[str] = None,
                         description: Optional[str] = None,
-                        color: Optional[str] = None) -> str:
+                        color: Optional[str] = None,
+                        status_emoji_style: str) -> str:
     cal = Calendar.from_ical(existing_ics)
     for comp in cal.walk('VEVENT'):
         if notion_id:
@@ -307,9 +316,10 @@ def update_event_fields(existing_ics: str, *,
             cleaned_title = _clean_summary_title(title_candidate)
             new_title = cleaned_title if cleaned_title else (title_candidate or "").strip()
             new_status = status_name if status_name is not None else current_status
-            emoji = STATUS_EMOJI.get((new_status or "").strip(), "")
+            emoji = status_emoji_map(status_emoji_style).get((new_status or "").strip(), "")
+            emoji = (emoji or "").strip()
             if emoji and new_title:
-                comp['summary'] = f"{emoji}{new_title}"
+                comp['summary'] = f"{emoji} {new_title}"
             elif emoji:
                 comp['summary'] = emoji
             else:

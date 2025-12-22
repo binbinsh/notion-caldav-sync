@@ -38,6 +38,7 @@ def test_description_for_task_includes_datasource_and_optional_fields():
         status="Todo",
         database_name="Inbox",
         category="Work",
+        category_name="Category",
         description="Do something",
     )
     text = _description_for_task(task)
@@ -121,6 +122,7 @@ class _DummyBindings:
         self.apple_app_password = "secret"
         self.notion_token = "token"
         self.notion_version = NOTION_VERSION
+        self.status_emoji_style = "emoji"
 
 
 @pytest.mark.asyncio

@@ -7,5 +7,8 @@ compatibility_flags = ["python_workers"]
 binding = "STATE"
 id = "${CLOUDFLARE_STATE_NAMESPACE}"
 
+[vars]
+STATUS_EMOJI_STYLE = "${STATUS_EMOJI_STYLE}"
+
 [triggers]
 crons = ["*/5 * * * *"]
