@@ -223,8 +223,7 @@ def _is_task_overdue(task: TaskInfo, *, date_only_tz: tzinfo = timezone.utc) -> 
     )
     if not due_dt:
         return False
-    now_local = datetime.now(date_only_tz)
-    return due_dt < now_local
+    return due_dt < datetime.now(date_only_tz)
 
 
 def _is_all_day_value(value: Optional[str]) -> bool:
