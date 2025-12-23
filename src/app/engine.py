@@ -144,12 +144,14 @@ def _date_only_timezone(settings: Optional[Dict[str, Any]]) -> tzinfo:
         override = settings.get("date_only_timezone")
         if isinstance(override, str) and override.strip():
             tz_name = override.strip()
+            log(f"[sync] using date-only timezone override '{tz_name}' from settings")
         else:
             calendar_tz = settings.get("calendar_timezone")
             if isinstance(calendar_tz, str) and calendar_tz.strip():
                 tz_name = calendar_tz.strip()
     if tz_name:
         candidate = datetz.gettz(tz_name)
+        log(f"[sync] using date-only timezone '{tz_name}' -> {candidate}")
         if candidate:
             return candidate
     return timezone.utc
@@ -193,7 +195,7 @@ def _status_for_task(task: TaskInfo, *, date_only_tz: tzinfo = timezone.utc) -> 
     return normalized
 
 
-_FINAL_STATUSES = {"Completed", "Cancelled"}
+_FINAL_STATUSES = {"Completed", "Done", "Cancelled"}
 
 
 def _is_task_overdue(task: TaskInfo, *, date_only_tz: tzinfo = timezone.utc) -> bool:
@@ -212,7 +214,8 @@ def _is_task_overdue(task: TaskInfo, *, date_only_tz: tzinfo = timezone.utc) -> 
     )
     if not due_dt:
         return False
-    return due_dt < datetime.now(timezone.utc)
+    now_local = datetime.now(date_only_tz)
+    return due_dt < now_local
 
 
 def _is_all_day_value(value: Optional[str]) -> bool:
