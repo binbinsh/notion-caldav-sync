@@ -21,7 +21,9 @@ class TaskInfo:
         end_date: Optional[str] = None,
         reminder: Optional[str] = None,
         description: Optional[str] = None,
+
         database_name: str = "",
+        database_id: Optional[str] = None,
     ) -> None:
         self.notion_id = notion_id
         self.title = title
@@ -34,6 +36,7 @@ class TaskInfo:
         self.reminder = reminder
         self.description = description
         self.database_name = database_name
+        self.database_id = database_id
 
     def __repr__(self) -> str:
         return (
@@ -41,6 +44,8 @@ class TaskInfo:
             f"notion_id={self.notion_id!r}, title={self.title!r}, status={self.status!r}, "
             f"category={self.category!r}, category_name={self.category_name!r}, url={self.url!r}, start_date={self.start_date!r}, "
             f"end_date={self.end_date!r}, reminder={self.reminder!r}, "
-            f"description={self.description!r}, database_name={self.database_name!r}"
+
+            f"description={self.description!r}, database_name={self.database_name!r}, "
+            f"database_id={self.database_id!r}"
             ")"
         )

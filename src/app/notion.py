@@ -112,6 +112,160 @@ def extract_database_title(meta: Dict) -> Optional[str]:
     return None
 
 
+    return None
+
+
+class DatabaseConfig:
+    def __init__(self, page_id: str):
+        self.config_page_id = page_id
+        self.source_db_id: Optional[str] = None
+        self.calendar_name: Optional[str] = None
+        self.title_property: str = TITLE_PROPERTY
+        self.status_property: List[str] = list(STATUS_PROPERTY)
+        self.date_property: List[str] = list(DATE_PROPERTY)
+        self.reminder_property: List[str] = list(REMINDER_PROPERTY)
+        self.category_property: List[str] = list(CATEGORY_PROPERTY)
+        self.description_property: str = DESCRIPTION_PROPERTY
+
+    def __repr__(self):
+        return f"<DatabaseConfig source={self.source_db_id} calendar={self.calendar_name}>"
+
+
+async def find_config_database(token: str, api_version: str) -> Optional[str]:
+    """Search for the special configuration database named 'CalDAV Sync Config'."""
+    body = {
+        "query": "CalDAV Sync Config",
+        "filter": {"property": "object", "value": "database"},
+        "page_size": 1,
+    }
+    response = await http_json(
+        "https://api.notion.com/v1/search",
+        method="POST",
+        headers=_headers(token, api_version),
+        body=json.dumps(body),
+    )
+    results = (response.get("json") or {}).get("results", [])
+    for db in results:
+        title = extract_database_title(db)
+        if title and title.strip().lower() == "caldav sync config":
+            return db.get("id")
+    return None
+
+
+async def ensure_config_database_documentation(token: str, api_version: str, database_id: str) -> None:
+    """Updates the description and properties of the config database to serve as documentation."""
+    # 1. Update Description
+    desc_text = (
+        "⚙️ **CalDAV Sync Configuration**\n"
+        "Use this database to map your Notion databases to specific Calendars.\n\n"
+        "**How to use:**\n"
+        "1. Add a new row for each database you want to sync.\n"
+        "2. Paste the **Database ID** (from the URL or 'Copy Link') into the `Source Database ID` column.\n"
+        "3. Enter the desired **Calendar Name** (e.g., 'Work', 'Personal') in the `Calendar Name` column.\n"
+        "4. (Optional) Customize property names if your database uses different names."
+    )
+    
+    # We need to format description as rich_text object.
+    # Note: Updating database description via API might not be fully supported in all versions or require specific structure.
+    # The 'description' field is a rich_text array.
+    update_body = {
+        "description": [
+            {
+                "text": {"content": desc_text},
+            }
+        ],
+        # We can also attempt to ensure properties exist/have descriptions if they are missing?
+        # Creating properties is doable via update database.
+        # For now, let's assume the user created the DB likely with basic text cols, 
+        # but we can try to update property definitions to add descriptions (helper text).
+        "properties": {
+            "Source Database ID": {"name": "Source Database ID", "type": "rich_text"},
+            "Calendar Name": {"name": "Calendar Name", "type": "rich_text"},
+            "Title Property": {"name": "Title Property", "type": "rich_text"},
+            "Status Property": {"name": "Status Property", "type": "rich_text"},
+        }
+    }
+    
+    try:
+        await http_json(
+            f"https://api.notion.com/v1/databases/{database_id}",
+            method="PATCH",
+            headers=_headers(token, api_version),
+            body=json.dumps(update_body),
+        )
+    except Exception as e:
+        log(f"[config] failed to update documentation for config db {database_id}: {e}")
+
+
+async def load_config_map(token: str, api_version: str, database_id: str) -> Dict[str, DatabaseConfig]:
+    """Load configuration mappings from the config database."""
+    config_map: Dict[str, DatabaseConfig] = {}
+    
+    pages = await query_database_pages(token, api_version, database_id)
+    for p in pages:
+        props = p.get("properties") or {}
+        
+        # Helper to extract text safely
+        def get_text(prop_name: str) -> Optional[str]:
+            prop = props.get(prop_name)
+            return _extract_title_from_prop(prop) if prop else None # Reuse existing helper even for rich_text
+        
+        # Alternate helper for specifically rich_text which _extract_title_from_prop handles if it has title/rich_text keys
+        # We need to be careful. _extract_title_from_prop checks for type="title".
+        
+        def get_text_any(prop_name: str) -> Optional[str]:
+             prop = props.get(prop_name)
+             if not prop: return None
+             # Handle title or rich_text
+             items = prop.get("title") or prop.get("rich_text") or []
+             parts = []
+             for item in items:
+                 txt = item.get("plain_text") or item.get("text", {}).get("content")
+                 if txt: parts.append(txt)
+             return "".join(parts).strip() or None
+
+        source_id = get_text_any("Source Database ID")
+        if not source_id:
+            continue
+            
+        # Clean up source ID (sometimes users paste full URLs)
+        # Rudimentary ID extraction: last 32 hex chars? Or just split by /
+        if "/" in source_id:
+            source_id = source_id.split("/")[-1].split("?")[0]
+        # Remove hyphens to standardizes if needed, but Notion IDs usually have them or not. 
+        # API requires hyphens usually. Let's assume user pastes UUID.
+        
+        cfg = DatabaseConfig(p["id"])
+        cfg.source_db_id = source_id
+        cfg.calendar_name = get_text_any("Calendar Name")
+        
+        # Optional Overrides
+        t_prop = get_text_any("Title Property")
+        if t_prop: cfg.title_property = t_prop
+        
+        s_prop = get_text_any("Status Property")
+        if s_prop: cfg.status_property = [x.strip() for x in s_prop.split(",")]
+        
+        d_prop = get_text_any("Date Property")
+        if d_prop: cfg.date_property = [x.strip() for x in d_prop.split(",")]
+
+        r_prop = get_text_any("Reminder Property")
+        if r_prop: cfg.reminder_property = [x.strip() for x in r_prop.split(",")]
+
+        c_prop = get_text_any("Category Property")
+        if c_prop: cfg.category_property = [x.strip() for x in c_prop.split(",")]
+
+        desc_prop = get_text_any("Description Property")
+        if desc_prop: cfg.description_property = desc_prop
+        
+        if cfg.source_db_id:
+             config_map[cfg.source_db_id] = cfg
+             # Also handle hyphenated/unhyphenated variants if we want to be robust?
+             # For now, trust exact match.
+             
+    return config_map
+
+
 async def list_databases(token: str, api_version: str) -> List[Dict[str, str]]:
     results: List[Dict[str, str]] = []
     body = {
@@ -233,11 +387,25 @@ def _extract_title_from_prop(prop: Dict) -> str:
     return "".join(parts).strip()
 
 
-def parse_page_to_task(page: Dict) -> TaskInfo:
+def parse_page_to_task(page: Dict, config: Optional[DatabaseConfig] = None) -> TaskInfo:
     props = page.get("properties", {})
-    title_prop = props.get(TITLE_PROPERTY, {})
+    
+    # Resolve Property Names
+    target_title = config.title_property if config else TITLE_PROPERTY
+    target_status = config.status_property if config else STATUS_PROPERTY
+    target_date = config.date_property if config else DATE_PROPERTY
+    target_reminder = config.reminder_property if config else REMINDER_PROPERTY
+    target_category = config.category_property if config else CATEGORY_PROPERTY
+    target_description = config.description_property if config else DESCRIPTION_PROPERTY
+
+    # Title
+    title_prop = props.get(target_title, {})
     title = _extract_title_from_prop(title_prop)
     if not title:
+        # Fallback? Or strict? 
+        # Existing logic tried to find ANY title prop if named one failed. 
+        # Let's keep strict if config is provided? Or keep fallback search?
+        # Preserving original fallback search behavior if named lookup fails:
         for value in props.values():
             if value is title_prop:
                 continue
@@ -246,16 +414,20 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
                 break
     if not title:
         title = page.get("id") or "Untitled"
+
+    # Status
     status_prop = {}
-    for name in STATUS_PROPERTY:
+    for name in target_status:
         candidate = props.get(name)
         if isinstance(candidate, dict) and candidate.get("type") in ("status", "select"):
             status_prop = candidate
             break
     status_data = status_prop.get("status") or status_prop.get("select") or {}
     status = status_data.get("name")
+
+    # Date
     date_prop = {}
-    for name in DATE_PROPERTY:
+    for name in target_date:
         candidate = props.get(name)
         if isinstance(candidate, dict) and candidate.get("type") == "date":
             date_prop = candidate
@@ -263,17 +435,21 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
     date_value = date_prop.get("date") or {}
     start = date_value.get("start")
     end = date_value.get("end")
+
+    # Reminder
     reminder_prop = {}
-    for name in REMINDER_PROPERTY:
+    for name in target_reminder:
         candidate = props.get(name)
         if isinstance(candidate, dict) and candidate.get("type") == "date":
             reminder_prop = candidate
             break
     reminder_value = reminder_prop.get("date") or {}
     reminder = reminder_value.get("start")
+
+    # Category
     category_prop = {}
     category_name = "Category"
-    for name in CATEGORY_PROPERTY:
+    for name in target_category:
         candidate = props.get(name)
         if isinstance(candidate, dict) and candidate.get("type") == "select":
             category_prop = candidate
@@ -283,10 +459,15 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
     if isinstance(category_prop, dict) and category_prop.get("type") == "select":
         select_data = category_prop.get("select") or {}
         category = select_data.get("name")
-    description_prop = props.get(DESCRIPTION_PROPERTY) or {}
+
+    # Description
+    description_prop = props.get(target_description) or {}
     description = None
     if isinstance(description_prop, dict) and description_prop.get("type") == "rich_text" and description_prop.get("rich_text"):
         description = description_prop["rich_text"][0].get("plain_text", "")
+
+    parent = page.get("parent") or {}
+    database_id = parent.get("data_source_id") or parent.get("database_id")
 
     return TaskInfo(
         notion_id=page.get("id"), # type: ignore
@@ -299,4 +480,5 @@ def parse_page_to_task(page: Dict) -> TaskInfo:
         category_name=category_name,
         description=description,
         url=page.get("url"),
+        database_id=database_id,
     )
