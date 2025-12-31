@@ -1,12 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
+
+export STATUS_EMOJI_STYLE="symbol"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 CONFIG_PATH="$ROOT_DIR/wrangler.toml"
 TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
 HELPERS_PATH="$ROOT_DIR/scripts/deploy_helpers.py"
 STATE_NAMESPACE_NAME="notion-caldav-sync-STATE"  # Change if you prefer a different namespace title.
+
+source $ROOT_DIR/.env
 
 cd "$ROOT_DIR"
 
@@ -183,6 +187,17 @@ echo "Generated wrangler.toml with STATE namespace id: $CLOUDFLARE_STATE_NAMESPA
 # Namespace ensured above (created if missing)
 echo "STATE namespace title: $STATE_NAMESPACE_NAME"
 echo "STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
+
+# Bootstrap Notion Configuration
+echo "Bootstrapping Notion Configuration..."
+CONFIG_DB_ID=$(uv run python scripts/bootstrap_notion.py)
+
+if [ -n "$CONFIG_DB_ID" ]; then
+    echo "Caching Config ID to KV ($CONFIG_DB_ID)..."
+    # We use pywrangler (wrapper around wrangler) to put the key
+    # Value must be properly JSON encoded/quoted for the settings store
+    npx --yes wrangler kv key put --namespace-id "$CLOUDFLARE_STATE_NAMESPACE" "settings:value:config_db_id" "\"$CONFIG_DB_ID\"" --remote
+fi
 
 echo "Setting up secrets..."
 printf "%s" "${APPLE_ID:?APPLE_ID must be set}" | uv run -- pywrangler secret put APPLE_ID

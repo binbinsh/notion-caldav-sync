@@ -5,13 +5,13 @@ from typing import Optional, Dict, Mapping
 
 TITLE_PROPERTY = "Title"
 STATUS_PROPERTY = [ "Status", "Task Status", "Progress" ]
-DATE_PROPERTY = ["Due date", "Due", "Date", "Deadline"]
+DATE_PROPERTY = ["Due date", "Due", "Date", "Deadline", "Scheduled"]
 REMINDER_PROPERTY = ["Reminder", "Notification"]
 CATEGORY_PROPERTY = ["Category", "Tags", "Tag", "Type", "Class"]
 DESCRIPTION_PROPERTY = "Description"
 
 CALDAV_ORIGIN = "https://caldav.icloud.com/"
-DEFAULT_CALENDAR_NAME = "Notion"
+DEFAULT_CALENDAR_NAME = "[N] Catch-all Tray"
 DEFAULT_CALENDAR_COLOR = "#FF7F00"
 DEFAULT_FULL_SYNC_MINUTES = 30
 NOTION_DB_PAGE_SIZE = 100

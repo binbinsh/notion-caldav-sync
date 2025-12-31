@@ -8,7 +8,14 @@ binding = "STATE"
 id = "${CLOUDFLARE_STATE_NAMESPACE}"
 
 [vars]
-STATUS_EMOJI_STYLE = "${STATUS_EMOJI_STYLE}"
+STATUS_EMOJI_STYLE = "symbol"
 
 [triggers]
 crons = ["*/5 * * * *"]
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true

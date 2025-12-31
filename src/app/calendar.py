@@ -441,3 +441,86 @@ async def ensure_calendar(bindings: Bindings, *, _reset_attempted: bool = False)
     raise RuntimeError(
         "Unable to determine calendar_href; verify iCloud credentials and that the STATE KV binding is configured."
     )
+
+
+async def get_calendar_by_name(bindings: Bindings, name: str) -> Dict[str, Any]:
+    """Get or create a calendar by a specific name.
+    
+    Uses caching to avoid repeated discovery.
+    """
+    settings = await load_settings(bindings.state)
+    target_name = name.strip()
+    if not target_name:
+         # Fallback to default if empty name passed
+         return await ensure_calendar(bindings)
+
+    calendar_name = target_name
+    
+    # Caching Logic
+    calendar_cache = settings.get("calendar_cache") or {}
+    cached = calendar_cache.get(target_name)
+
+
+    # Caching Logic
+    calendar_cache = settings.get("calendar_cache") or {}
+    cached = calendar_cache.get(target_name)
+    
+    # Verify if cache is valid (simple existence check for now)
+    if cached and isinstance(cached, dict) and cached.get("href"):
+        calendar_href = cached["href"]
+        remote_color = cached.get("color")
+        remote_timezone = cached.get("timezone")
+        created = False
+        # We assume the calendar still exists. If methods fail later (404), we might need robust retry/eviction.
+        # But for minimizing PROPFINDs, this is the way.
+    else:
+        # Discovery / Creation
+
+        principal = await discover_principal(CALDAV_ORIGIN, bindings.apple_id, bindings.apple_app_password)
+        home = await discover_calendar_home(CALDAV_ORIGIN, principal, bindings.apple_id, bindings.apple_app_password)
+        calendars = await list_calendars(CALDAV_ORIGIN, home, bindings.apple_id, bindings.apple_app_password)
+        target = next((cal for cal in calendars if (cal.get("displayName") or "").strip() == calendar_name), None)
+        
+        if target:
+            calendar_href = target["href"]
+        else:
+            calendar_href = await mkcalendar(
+                CALDAV_ORIGIN,
+                home,
+                calendar_name,
+                bindings.apple_id,
+                bindings.apple_app_password,
+            )
+            created = True
+        
+        if calendar_href:
+            remote_color, remote_timezone = await _fetch_calendar_properties(calendar_href, bindings)
+            
+            # Update cache
+            calendar_cache[target_name] = {
+                "href": calendar_href,
+                "color": remote_color,
+                "timezone": remote_timezone,
+            }
+            await update_settings(bindings.state, calendar_cache=calendar_cache)
+
+    # Color handling for mapped calendar
+    stored_color = DEFAULT_CALENDAR_COLOR
+    if calendar_href and created:
+         # Only apply default color on creation
+         await _apply_calendar_color(calendar_href, stored_color, bindings)
+    elif calendar_href and cached and not remote_color:
+        # If we have a cached href but missing color info (legacy cache?), fetch it? 
+        # For now, rely on cache.
+        pass
+
+    # Return a settings-like dict
+    return {
+        "calendar_href": calendar_href,
+        "calendar_name": calendar_name,
+        "calendar_color": remote_color or stored_color,
+        "calendar_timezone": settings.get("calendar_timezone"),
+        "date_only_timezone": settings.get("date_only_timezone"),
+        "full_sync_interval_minutes": settings.get("full_sync_interval_minutes", DEFAULT_FULL_SYNC_MINUTES),
+        "is_mapped": True,
+    }
