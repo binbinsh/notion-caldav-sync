@@ -12,3 +12,11 @@ STATUS_EMOJI_STYLE = "${STATUS_EMOJI_STYLE}"
 
 [triggers]
 crons = ["*/5 * * * *"]
+
+[[routes]]
+pattern = "superplanner.ai/notion/caldav-sync"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/notion/caldav-sync/*"
+zone_name = "superplanner.ai"
