@@ -1,0 +1,248 @@
+import { createAuth, type AppEnv } from "../auth/factory";
+import {
+  getProviderConnectionByTenant,
+  getTenantConfigByTenantId,
+  getTenantSecretByKind,
+} from "../db/tenant-repo";
+import { decryptSecret, requireMasterKey } from "../lib/secrets";
+import { buildService } from "../sync/runtime";
+import { D1TenantLedgerStorage } from "./d1-storage";
+
+export type TenantSyncEnv = AppEnv;
+
+export class TenantSyncObject {
+  constructor(
+    private readonly ctx: DurableObjectState,
+    private readonly env: TenantSyncEnv,
+  ) {}
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const tenantId = this.resolveTenantId(request, url);
+    if (!tenantId) {
+      return Response.json({ ok: false, error: "Missing tenant id." }, { status: 400 });
+    }
+
+    if (request.method === "GET" && url.pathname === "/status") {
+      const config = await getTenantConfigByTenantId(this.env.AUTH_DB, tenantId);
+      return Response.json({
+        ok: true,
+        tenantId,
+        config,
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/sync/full") {
+      const result = await this.runFullSync(tenantId);
+      return Response.json({
+        ok: true,
+        mode: "full",
+        tenantId,
+        result,
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/sync/incremental") {
+      const result = await this.runIncrementalSync(tenantId);
+      return Response.json({
+        ok: true,
+        mode: "incremental",
+        tenantId,
+        result,
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/sync/scheduled") {
+      await this.runScheduledSync(tenantId);
+      return Response.json({
+        ok: true,
+        mode: "scheduled",
+        tenantId,
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/sync/webhook") {
+      const payload = (await request.json().catch(() => null)) as
+        | { pageIds?: string[]; forceFull?: boolean }
+        | null;
+      const result = await this.runWebhookSync(tenantId, payload);
+      return Response.json({
+        ok: true,
+        mode: "webhook",
+        tenantId,
+        result,
+      });
+    }
+
+    return new Response("Not found", { status: 404 });
+  }
+
+  async alarm(): Promise<void> {
+    const tenantId = await this.ctx.storage.get<string>("tenantId");
+    if (!tenantId) {
+      return;
+    }
+    try {
+      await this.runScheduledSync(tenantId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[tenant-sync] scheduled sync failed tenant=${tenantId}: ${message}`);
+    }
+  }
+
+  private async runFullSync(tenantId: string) {
+    const runtime = await this.buildRuntime(tenantId);
+    await runtime.service.runFullReconcile();
+    await this.markLastFullSync(tenantId);
+    await this.scheduleNextAlarm(runtime.config.poll_interval_minutes || 5, tenantId);
+    return {
+      lastFullSyncAt: new Date().toISOString(),
+      workspaceName: runtime.config.notion_workspace_name,
+    };
+  }
+
+  private async runIncrementalSync(tenantId: string) {
+    const runtime = await this.buildRuntime(tenantId);
+    await runtime.service.syncCaldavIncremental();
+    await this.scheduleNextAlarm(runtime.config.poll_interval_minutes || 5, tenantId);
+    return {
+      workspaceName: runtime.config.notion_workspace_name,
+    };
+  }
+
+  private async runScheduledSync(tenantId: string) {
+    const runtime = await this.buildRuntime(tenantId);
+    await runtime.service.syncCaldavIncremental();
+    if (this.fullSyncDue(runtime.config.last_full_sync_at, runtime.config.full_sync_interval_minutes)) {
+      await runtime.service.runFullReconcile();
+      await this.markLastFullSync(tenantId);
+    }
+    await this.scheduleNextAlarm(runtime.config.poll_interval_minutes || 5, tenantId);
+  }
+
+  private async runWebhookSync(
+    tenantId: string,
+    payload: { pageIds?: string[]; forceFull?: boolean } | null,
+  ) {
+    const runtime = await this.buildRuntime(tenantId);
+    if (payload?.forceFull) {
+      await runtime.service.runFullReconcile();
+      await this.markLastFullSync(tenantId);
+    }
+    const pageIds = Array.isArray(payload?.pageIds)
+      ? payload?.pageIds.filter((pageId): pageId is string => typeof pageId === "string" && pageId.trim().length > 0)
+      : [];
+    if (pageIds.length > 0) {
+      await runtime.service.syncNotionPageIds(pageIds);
+    }
+    await this.scheduleNextAlarm(runtime.config.poll_interval_minutes || 5, tenantId);
+    return {
+      updatedPageIds: pageIds,
+      forceFull: Boolean(payload?.forceFull),
+    };
+  }
+
+  private async buildRuntime(tenantId: string) {
+    const config = await getTenantConfigByTenantId(this.env.AUTH_DB, tenantId);
+    if (!config) {
+      throw new Error(`Tenant config not found for ${tenantId}.`);
+    }
+
+    const appleIdSecret = await getTenantSecretByKind(this.env.AUTH_DB, tenantId, "apple_id");
+    const applePasswordSecret = await getTenantSecretByKind(
+      this.env.AUTH_DB,
+      tenantId,
+      "apple_app_password",
+    );
+    if (!appleIdSecret || !applePasswordSecret) {
+      throw new Error(`Apple credentials are missing for tenant ${tenantId}.`);
+    }
+
+    const providerConnection = await getProviderConnectionByTenant(
+      this.env.AUTH_DB,
+      tenantId,
+      "notion",
+    );
+    if (!providerConnection) {
+      throw new Error(`Notion connection is missing for tenant ${tenantId}.`);
+    }
+
+    const masterKey = requireMasterKey(this.env.APP_ENCRYPTION_KEY);
+    const appleId = await decryptSecret(appleIdSecret.cipher_text, masterKey, `${tenantId}:apple_id`);
+    const appleAppPassword = await decryptSecret(
+      applePasswordSecret.cipher_text,
+      masterKey,
+      `${tenantId}:apple_app_password`,
+    );
+
+    const authBaseUrl = (this.env.BETTER_AUTH_BASE_URL || "").trim() || "https://example.invalid";
+    const auth = createAuth(this.env, new Request(authBaseUrl), authBaseUrl);
+    const notionToken = await auth.api.getAccessToken({
+      body: {
+        providerId: "notion",
+        accountId: providerConnection.provider_account_id,
+        userId: providerConnection.user_id,
+      },
+    });
+
+    const service = buildService({
+      bindings: {
+        notionToken: notionToken.accessToken,
+        notionVersion: this.env.NOTION_API_VERSION || "2025-09-03",
+        appleId,
+        appleAppPassword,
+        statusEmojiStyle: "emoji",
+        tenantId,
+        calendarSettings: {
+          calendar_name: config.calendar_name,
+          calendar_color: config.calendar_color,
+          calendar_timezone: config.calendar_timezone,
+          date_only_timezone: config.date_only_timezone,
+          full_sync_interval_minutes: config.full_sync_interval_minutes,
+        },
+      },
+      storage: new D1TenantLedgerStorage(this.env.AUTH_DB, tenantId),
+      log: (message) => console.log(`[tenant-sync:${tenantId}] ${message}`),
+    });
+
+    return {
+      config,
+      service,
+    };
+  }
+
+  private async markLastFullSync(tenantId: string) {
+    await this.env.AUTH_DB.prepare(
+      `UPDATE tenant_config SET last_full_sync_at = ?, updated_at = ? WHERE tenant_id = ?`,
+    )
+      .bind(new Date().toISOString(), new Date().toISOString(), tenantId)
+      .run();
+  }
+
+  private fullSyncDue(lastFullSyncAt: string | null, intervalMinutes: number | null): boolean {
+    if (!lastFullSyncAt) {
+      return true;
+    }
+    const last = new Date(lastFullSyncAt);
+    if (Number.isNaN(last.getTime())) {
+      return true;
+    }
+    const minutes = intervalMinutes && intervalMinutes > 0 ? intervalMinutes : 60;
+    return Date.now() - last.getTime() >= minutes * 60 * 1000;
+  }
+
+  private async scheduleNextAlarm(pollIntervalMinutes: number, tenantId: string) {
+    const delayMs = Math.max(1, pollIntervalMinutes) * 60 * 1000;
+    await this.ctx.storage.put("tenantId", tenantId);
+    await this.ctx.storage.setAlarm(Date.now() + delayMs);
+  }
+
+  private resolveTenantId(request: Request, url: URL): string | null {
+    const headerValue = request.headers.get("x-tenant-id") || request.headers.get("X-Tenant-Id");
+    if (headerValue?.trim()) {
+      return headerValue.trim();
+    }
+    const queryValue = url.searchParams.get("tenantId");
+    return queryValue?.trim() || null;
+  }
+}

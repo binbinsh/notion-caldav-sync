@@ -1,0 +1,33 @@
+{
+  "name": "notion-caldav-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.toml",
+    "deploy": "wrangler deploy --config wrangler.toml",
+    "predeploy:check": "node scripts/predeploy-check.mjs",
+    "test": "vitest run",
+    "test:live": "vitest run test/live.integration.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.6.2",
+    "@notionhq/client": "^5.17.0",
+    "better-auth": "^1.6.2",
+    "better-auth-cloudflare": "^0.3.0",
+    "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.5.11",
+    "hono": "^4.12.12",
+    "ical-generator": "^10.1.0",
+    "ical.js": "^2.2.1",
+    "tsdav": "^2.1.8",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@cloudflare/workers-types": "^4.20260404.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.42.0"
+  }
+}

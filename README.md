@@ -1,103 +1,153 @@
-# Notion → iCloud Calendar Sync
+# Notion ↔ iCloud Calendar Sync
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)](pyproject.toml)
+[![TypeScript](https://img.shields.io/badge/runtime-TypeScript-3178C6?logo=typescript&logoColor=white)](/Users/binbinsh/Projects/Personal/notion-caldav-sync/package.json)
 [![Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-F38020?logo=cloudflare)](https://developers.cloudflare.com/workers/)
 [![Notion API](https://img.shields.io/badge/Notion%20API-2025--09--03-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
-[![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/app/calendar.py)
+[![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](/Users/binbinsh/Projects/Personal/notion-caldav-sync/src/calendar/caldav.ts)
 
-Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker is the simplest way to surface every dated Notion task inside a dedicated iCloud calendar. Webhooks keep updates nearly instant, and a cron-powered rewrite regularly reconciles the two so Apple Calendar always reflects the latest Notion truth.
+This project is being migrated to a single TypeScript Cloudflare Worker runtime.
 
-The design goal is **Reliability first**. every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
+The active runtime now lives directly at the repository root and provides:
 
-## Requirements
-- Python 3.12+, [uv](https://github.com/astral-sh/uv), and Cloudflare’s `pywrangler` CLI.
-- Cloudflare account with Workers + KV access.
-- Notion internal integration token shared with your task databases.
-- Apple ID plus app-specific password for CalDAV.
+- `better-auth` sessions and direct Notion OAuth
+- tenant isolation with Durable Objects
+- D1-backed tenant config, provider links, app state, and sync metadata
+- Turnstile-gated onboarding at `/setup`
+- Notion webhook routing to tenant sync runtimes
+- CalDAV + ICS sync helpers in TypeScript
 
-## Configuration
-Create a `.env` (used locally and when running `pywrangler secret put`):
+The old Python code still exists in the repo as migration material, but it is no longer the desired deployment target.
+
+## User Flow
+
+1. Open `https://<worker-url>/caldav-sync/setup`
+2. Complete Turnstile and continue with Notion
+3. Authorize the shared Notion public integration and select the pages/databases it may access
+4. Return to the dashboard
+5. Save Apple Calendar credentials
+6. Trigger a full sync or wait for scheduled/webhook-driven syncs
+
+## Architecture
+
+- `src/index.ts` is the Worker entrypoint
+- `better-auth` handles user sessions and Notion OAuth
+- `AUTH_DB` stores auth tables, tenant config, secrets metadata, provider connections, webhook state, and sync ledger rows
+- `AUTH_CACHE` is available for cache/session helpers
+- `TENANT_SYNC` Durable Objects serialize per-tenant sync work and alarms
+- `src/notion/*` handles Notion API access and webhook parsing
+- `src/calendar/*` handles WebDAV/CalDAV and ICS read/write
+- `src/sync/*` contains the sync domain models and reconcile logic
+
+## Required Environment
+
+Create a `.env` with:
 
 | Key | Purpose |
 | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Worker account |
-| `CLOUDFLARE_API_TOKEN` | Token with Workers + KV permissions |
-| `CLOUDFLARE_STATE_NAMESPACE` | KV namespace ID for the `STATE` binding |
-| `NOTION_TOKEN` | Notion integration token |
-| `ADMIN_TOKEN` | Required by `/admin/*` endpoints |
-| `APPLE_ID` / `APPLE_APP_PASSWORD` | iCloud Calendar credentials |
+| `CLOUDFLARE_ACCOUNT_ID` | Worker account id |
+| `CLOUDFLARE_API_TOKEN` | Token with Workers, D1, KV, and DO permissions |
+| `AUTH_DB_DATABASE_ID` | D1 database id for `AUTH_DB` |
+| `AUTH_CACHE_NAMESPACE_ID` | Optional existing KV namespace id for `AUTH_CACHE` |
+| `APP_BASE_PATH` | Route base path, defaults to `/caldav-sync` |
+| `BETTER_AUTH_SECRET` | Better Auth secret |
+| `APP_ENCRYPTION_KEY` | Base64url-encoded 32-byte AES key for tenant secret encryption |
+| `NOTION_CLIENT_ID` | Notion public OAuth client id |
+| `NOTION_CLIENT_SECRET` | Notion public OAuth client secret |
+| `INTERNAL_SERVICE_TOKEN` | Optional internal service token |
+| `TURNSTILE_SITE_KEY` | Site key rendered on the setup form |
+| `TURNSTILE_SECRET_KEY` | Server-side Turnstile secret |
 
-Generate a strong `ADMIN_TOKEN` locally (e.g. `openssl rand -hex 32`) and keep it handy for the protected admin endpoints. You don’t need to pre-populate `CLOUDFLARE_STATE_NAMESPACE`; running `./deploy.sh` prints the namespace ID it discovers or creates and writes the same value into `wrangler.toml`, so you can copy it into `.env` afterward.
+Generate the encryption key with:
 
-## Deployment
 ```bash
-# setup venv
-uv venv --python 3.12
-uv sync
-uv sync --group dev
+node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'))"
+```
 
-# deploy to cloudflare
-chmod a+x deploy.sh
+## Deploy
+
+The root deploy script now targets the TypeScript Worker:
+
+```bash
+chmod +x deploy.sh
 ./deploy.sh
 ```
 
-The script ensures `wrangler.toml` matches your KV namespace, prompts for secrets via `pywrangler`, and deploys the Worker. Update your Notion webhook URL to the production Worker afterwards.
+The script:
 
-## Status emoji style
-The worker supports two status emoji styles for event titles:
-| Style | Todo | In progress | Completed | Overdue | Cancelled |
-| --- | --- | --- | --- | --- | --- |
-| `emoji` | ⬜ | ⚙️ | ✅ | ⚠️ | ❌ |
-| `symbol` | ○ | ⊖ | ✓⃝ | ⊜ | ⊗ |
+- installs the root TypeScript dependencies
+- typechecks the TypeScript runtime
+- creates or reuses the `AUTH_CACHE` KV namespace
+- writes secrets
+- deploys `src/index.ts` using the root `wrangler.toml`
 
-`./deploy.sh` prompts you to pick one and writes the choice into `wrangler.toml` as `STATUS_EMOJI_STYLE`.
+## Routes
 
-To skip the prompt (or when running non-interactively), set `STATUS_EMOJI_STYLE` explicitly:
+Public/app routes:
+
+- `GET /setup`
+- `POST /setup/connect/notion`
+- `GET /setup/complete`
+- `POST /setup/apple`
+- `POST /api/tenants/:tenantId/sync/full`
+- `POST /api/tenants/:tenantId/sync/incremental`
+- `POST /webhook`
+- `ALL /api/auth/*`
+
+Internal behavior:
+
+- Turnstile is enforced before first-time Notion OAuth starts
+- tenant Apple credentials are stored encrypted in D1-backed secret rows
+- Notion webhook verification token is stored in D1 app state
+- webhook events route by `bot_id` and `workspace_id`
+- scheduled cron runs trigger tenant Durable Objects, which then run incremental/full sync logic
+
+## Library Choices
+
+Current TypeScript stack:
+
+- `better-auth`
+- `better-auth-cloudflare`
+- `hono`
+- `drizzle-orm`
+- `@better-auth/drizzle-adapter`
+- `@notionhq/client`
+- `tsdav`
+- `ical.js`
+- `ical-generator`
+- `fast-xml-parser`
+
+`tsdav` is the first-choice CalDAV abstraction. Low-level DAV/XML helpers are still present as fallback for iCloud-specific quirks.
+
+## Verification
+
+TypeScript runtime:
+
 ```bash
-STATUS_EMOJI_STYLE=emoji ./deploy.sh
-# or
-STATUS_EMOJI_STYLE=symbol ./deploy.sh
+npm test
+npm run test:live
+npm run typecheck
+npm run predeploy:check
 ```
 
-## Notion integration
-1. Visit [Notion Developers → My integrations](https://www.notion.so/my-integrations) and create a new integration.
-2. **Basics**
-   - **Integration name:** `iCloud Calendar` (any meaningful name works)
-   - **Workspace:** select the workspace that owns your task databases
-3. **Capabilities**
-   - **Content:** enable only *Read content*
-   - **Comments:** leave all unchecked
-   - **User information:** select *No user information*
-4. **Access**
-   - Under *Page and database access*, choose the databases that should sync (make sure they’re shared with the integration inside Notion)
-5. **Webhooks**
-   - **Webhook URL:** `https://<worker-url>/webhook/notion` (replace with your *.workers.dev domain or custom route)
-   - **Subscribed events:** select every **Page**, **Database**, and **Data source** entry; leave **Comment** and **File upload** unchecked
-6. Save the integration and copy the generated secret into `.env` as `NOTION_TOKEN`.
+## Status
 
-When Notion first performs the webhook verification handshake, the worker automatically persists the provided verification token into KV and uses it for all future signature checks—no manual secret management required. If you click **Resend token** inside Notion’s webhook UI, you’ll see `(log) [Webhook] Stored verification token from Notion` in the worker logs; fetch the new `webhook_verification_token` at `/admin/settings` to confirm it updated.
+Already ported to TypeScript:
 
-## Useful HTTP endpoints
-- Manual sync: `curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/full-sync`
-- Get settings: `curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/settings`
-- Debug info: `curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/debug`
+- auth and Notion OAuth
+- tenant config and encrypted Apple secrets
+- sync domain models, ledger, and reconcile service
+- Notion live adapter
+- WebDAV/CalDAV helpers
+- ICS parse/generate helpers
+- tenant Durable Object sync entrypoints
+- webhook routing
+- scheduled polling trigger
 
-## Testing
-All tests hit live APIs, so use staging credentials.
-```bash
-uv run -- pywrangler dev --persist-to .wrangler/state
-uv run python -m tests.cli smoke --env-file .env
-uv run python -m tests.cli run --suite all --env-file .env
-uv run -- pywrangler tail
-```
+Still missing before the Python runtime can be deleted:
 
-## Notes
-- Only tasks with a start date will sync; undated pages are skipped.
-- The worker stores only calendar metadata (`calendar_href`, `calendar_name`, `calendar_color`, `calendar_timezone`, `date_only_timezone`, `full_sync_interval_minutes`, `event_hashes`, `last_full_sync`, `webhook_verification_token`) in KV.
-- Rename/recolour the iCloud calendar directly—the worker reuses those values from KV.
-- All-day overdue detection uses the calendar's timezone. We auto-detect it from iCloud, but you can override it via `POST /admin/settings` with `{ "date_only_timezone": "<IANA tz>" }`.
-- Cron runs every 5 minutes (see `wrangler.toml-example`). The actual rewrite occurs when `full_sync_interval_minutes` (stored in KV via `/admin/settings`) has elapsed.
-- Status emojis embedded in ICS titles map to the canonical task states (see “Status emoji style”).
+- live parity validation against real Notion + iCloud data
+- final cleanup of remaining legacy Python files still present in the repository history/worktree
 
 ## License
-MIT – see `LICENSE`.
+
+MIT – see [`LICENSE`](/Users/binbinsh/Projects/Personal/notion-caldav-sync/LICENSE)

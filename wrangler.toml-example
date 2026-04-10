@@ -1,22 +1,39 @@
 name = "notion-caldav-sync"
-main = "src/app/worker.py"
+main = "src/index.ts"
 compatibility_date = "2025-11-09"
-compatibility_flags = ["python_workers"]
+compatibility_flags = ["nodejs_compat"]
 
 [[kv_namespaces]]
-binding = "STATE"
-id = "${CLOUDFLARE_STATE_NAMESPACE}"
+binding = "AUTH_CACHE"
+id = "${AUTH_CACHE_NAMESPACE_ID}"
+preview_id = "${AUTH_CACHE_NAMESPACE_ID}"
+
+[[d1_databases]]
+binding = "AUTH_DB"
+database_name = "notion-caldav-sync"
+database_id = "${AUTH_DB_DATABASE_ID}"
+
+[[durable_objects.bindings]]
+name = "TENANT_SYNC"
+class_name = "TenantSyncObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TenantSyncObject"]
 
 [vars]
-STATUS_EMOJI_STYLE = "${STATUS_EMOJI_STYLE}"
+APP_BASE_PATH = "${APP_BASE_PATH}"
+BETTER_AUTH_BASE_URL = "${BETTER_AUTH_BASE_URL}"
+TURNSTILE_SITE_KEY = "${TURNSTILE_SITE_KEY}"
+NOTION_API_VERSION = "2025-09-03"
 
 [triggers]
 crons = ["*/5 * * * *"]
 
 [[routes]]
-pattern = "superplanner.ai/notion/caldav-sync"
+pattern = "superplanner.ai/caldav-sync"
 zone_name = "superplanner.ai"
 
 [[routes]]
-pattern = "superplanner.ai/notion/caldav-sync/*"
+pattern = "superplanner.ai/caldav-sync/*"
 zone_name = "superplanner.ai"
