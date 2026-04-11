@@ -10,7 +10,7 @@ AUTH_CACHE_NAMESPACE_NAME="caldav-sync-service-AUTH-CACHE"
 cd "$ROOT_DIR"
 
 discover_namespace_id() {
-  if list_json=$(npm exec wrangler kv namespace list -- --json 2>/dev/null); then
+  if list_json=$(npm exec wrangler kv namespace list 2>/dev/null); then
     printf '%s' "$list_json" | node -e '
       const fs = require("fs");
       const title = process.argv[1];
@@ -24,7 +24,7 @@ discover_namespace_id() {
 
 namespace_exists() {
   local namespace_id=${1:-}
-  if list_json=$(npm exec wrangler kv namespace list -- --json 2>/dev/null); then
+  if list_json=$(npm exec wrangler kv namespace list 2>/dev/null); then
     if printf '%s' "$list_json" | node -e '
       const fs = require("fs");
       const target = process.argv[1];
