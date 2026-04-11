@@ -136,6 +136,11 @@ echo "AUTH_CACHE namespace id: $AUTH_CACHE_NAMESPACE_ID"
 echo "AUTH_DB database id: $AUTH_DB_DATABASE_ID"
 
 npm install --ignore-scripts
+
+echo "Building frontend SPA..."
+(cd frontend && npm install --ignore-scripts && npm run build)
+echo "Frontend build complete."
+
 npm run typecheck
 
 put_secret BETTER_AUTH_SECRET "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"

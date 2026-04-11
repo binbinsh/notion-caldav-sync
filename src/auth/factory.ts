@@ -5,6 +5,7 @@ import { organization } from "better-auth/plugins";
 export type AppEnv = {
   APP_ENCRYPTION_KEY?: string;
   APP_BASE_PATH?: string;
+  ASSETS?: Fetcher;
   AUTH_CACHE?: KVNamespace;
   AUTH_DB: D1Database;
   BETTER_AUTH_BASE_URL?: string;
@@ -22,6 +23,7 @@ export function createAuth(env: AppEnv, request: Request, authBaseUrl: string): 
   const requestUrl = new URL(request.url);
   const serviceBasePath = normalizeBasePath(env.APP_BASE_PATH);
   const authHandlerBaseUrl = `${requestUrl.origin}${serviceBasePath}/auth`;
+  const providerCallbackBaseUrl = `${requestUrl.origin}${serviceBasePath}/callback`;
   const authErrorUrl = `${serviceBasePath}/sign-in` || "/sign-in";
   return betterAuth({
     secret: env.BETTER_AUTH_SECRET,
@@ -47,7 +49,7 @@ export function createAuth(env: AppEnv, request: Request, authBaseUrl: string): 
           notion: {
             clientId: env.NOTION_CLIENT_ID,
             clientSecret: env.NOTION_CLIENT_SECRET,
-            redirectURI: `${authHandlerBaseUrl}/callback/notion`,
+            redirectURI: `${providerCallbackBaseUrl}/notion`,
           },
         },
         plugins: [
@@ -60,7 +62,7 @@ export function createAuth(env: AppEnv, request: Request, authBaseUrl: string): 
                   tenantId: {
                     type: "string",
                     required: false,
-                    input: false,
+                    input: true,
                   },
                 },
               },

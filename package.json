@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --config wrangler.toml",
+    "dev": "npm run build:frontend && wrangler dev --config wrangler.toml",
+    "build:frontend": "cd frontend && npm install --ignore-scripts && npm run build",
     "deploy": "wrangler deploy --config wrangler.toml",
-    "predeploy:check": "node scripts/predeploy-check.mjs",
+    "predeploy:check": "npm run build:frontend && node scripts/predeploy-check.mjs",
     "test": "vitest run",
     "test:live": "vitest run test/live.integration.test.ts",
     "typecheck": "tsc --noEmit"

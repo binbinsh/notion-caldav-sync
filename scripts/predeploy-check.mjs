@@ -70,11 +70,13 @@ async function runChecks() {
   const signInResponse = await fetch(`${BASE_URL}/sign-in`);
   const signInHtml = await signInResponse.text();
   assert(signInResponse.ok, "GET /sign-in should succeed");
-  assert(signInHtml.includes("Continue with Notion"), "sign-in page should render onboarding CTA");
-  assert(
-    signInHtml.includes(`action="${BASE_PATH}/notion/connect"`),
-    "sign-in form should post to a base-path-relative action",
-  );
+  assert(signInHtml.includes('<div id="app">'), "sign-in page should serve the SPA shell");
+  assert(signInHtml.includes("<script"), "sign-in page should include a script tag for the SPA bundle");
+
+  const apiMeResponse = await fetch(`${BASE_URL}/api/me`);
+  assert(apiMeResponse.ok, "GET /api/me should succeed for unauthenticated users");
+  const apiMeData = await apiMeResponse.json();
+  assert(apiMeData.authenticated === false, "/api/me should report unauthenticated when no session");
 
   const notionConnectResponse = await fetch(`${BASE_URL}/notion/connect`, {
     method: "POST",
@@ -90,6 +92,16 @@ async function runChecks() {
   );
   const location = notionConnectResponse.headers.get("location") || "";
   assert(location.length > 0, "Notion connect should set a redirect location");
+  const notionAuthorizeUrl = new URL(location);
+  const oauthStateCookie = notionConnectResponse.headers.get("set-cookie") || "";
+  assert(
+    oauthStateCookie.includes("oauth_state") || oauthStateCookie.includes("better-auth"),
+    "Notion connect should persist OAuth state before redirecting",
+  );
+  assert(
+    notionAuthorizeUrl.searchParams.get("redirect_uri") === `${BASE_URL}/callback/notion`,
+    "Notion connect should use the public provider callback route",
+  );
 
   const authSignInSocialResponse = await fetch(`${BASE_URL}/auth/sign-in/social`, {
     method: "POST",
@@ -113,6 +125,15 @@ async function runChecks() {
   assert(
     (callbackResponse.headers.get("location") || "").startsWith(`${BASE_PATH}/sign-in`),
     "Better Auth callback fallback should preserve APP_BASE_PATH",
+  );
+
+  const providerCallbackResponse = await fetch(`${BASE_URL}/callback/notion`, {
+    redirect: "manual",
+  });
+  assert(providerCallbackResponse.status !== 404, "Provider callback route should be reachable");
+  assert(
+    (providerCallbackResponse.headers.get("location") || "").startsWith(`${BASE_PATH}/sign-in`),
+    "Provider callback fallback should preserve APP_BASE_PATH",
   );
 
   const dashboardResponse = await fetch(`${BASE_URL}/dashboard/`, {

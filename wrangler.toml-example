@@ -3,6 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2025-11-09"
 compatibility_flags = ["nodejs_compat"]
 
+[assets]
+directory = "frontend/dist"
+binding = "ASSETS"
+not_found_handling = "none"
+
 [[kv_namespaces]]
 binding = "AUTH_CACHE"
 id = "${AUTH_CACHE_NAMESPACE_ID}"
@@ -35,37 +40,5 @@ pattern = "superplanner.ai/caldav-sync"
 zone_name = "superplanner.ai"
 
 [[routes]]
-pattern = "superplanner.ai/caldav-sync/"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/sign-in"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/dashboard"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/dashboard/*"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/notion/*"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/apple"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/auth/*"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/api/*"
-zone_name = "superplanner.ai"
-
-[[routes]]
-pattern = "superplanner.ai/caldav-sync/webhook/*"
+pattern = "superplanner.ai/caldav-sync/*"
 zone_name = "superplanner.ai"

@@ -9,6 +9,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 
 ## Runtime & Architecture
 - **TypeScript Cloudflare Worker** using [Hono](https://hono.dev/) for routing.
+- **Frontend SPA** – Preact + Tailwind CSS, built with Vite, served as Cloudflare Workers static assets via `ASSETS` binding.
 - **Durable Objects** (`TenantSyncObject`) – one per tenant, handles sync orchestration with per-tenant SQLite storage.
 - **D1** (`AUTH_DB`) – stores auth sessions, tenant configs, provider connections, and encrypted secrets.
 - **KV** (`AUTH_CACHE`) – caches auth-related data.
@@ -27,7 +28,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 ## Key Files
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | HTTP entrypoint (Hono routes), sign-in & dashboard UI, cron handler |
+| `src/index.ts` | HTTP entrypoint (Hono routes), API endpoints (`/api/me`), SPA serving, cron handler |
 | `src/auth/factory.ts` | better-auth configuration and factory |
 | `src/durable/tenant-sync.ts` | Durable Object: per-tenant sync orchestration |
 | `src/durable/d1-storage.ts` | D1-backed ledger storage adapter for the Durable Object |
@@ -49,6 +50,12 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 | `src/lib/secrets.ts` | AES-GCM encryption/decryption for stored secrets |
 | `scripts/predeploy-check.mjs` | Pre-deploy validation script |
 | `deploy.sh` | Deployment script (generates wrangler.toml, sets secrets, deploys) |
+| `frontend/` | Preact + Tailwind SPA (sign-in & dashboard pages) |
+| `frontend/src/pages/SignIn.tsx` | Sign-in page component |
+| `frontend/src/pages/Dashboard.tsx` | Dashboard page component (setup wizard + settings) |
+| `frontend/src/lib/i18n.tsx` | i18n system (EN / 简体中文 / 繁體中文) via Preact Context |
+| `frontend/src/lib/api.ts` | API client (`fetchMe()` for `/api/me`) |
+| `frontend/vite.config.ts` | Vite build configuration |
 
 ## HTTP Endpoints
 - `GET /sign-in` – Sign-in page (redirects to dashboard if already authenticated)
@@ -56,6 +63,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - `POST /notion/connect` – Initiates Notion OAuth flow
 - `GET /notion/complete` – Notion OAuth callback
 - `POST /apple` – Saves Apple/CalDAV credentials
+- `GET /api/me` – Returns session, config, and connection status JSON for the SPA
 - `POST /api/tenants/:tenantId/sync/full` – Trigger full sync for a tenant
 - `POST /api/tenants/:tenantId/sync/incremental` – Trigger incremental sync
 - `POST /webhook/notion` – Notion webhook receiver
@@ -76,8 +84,8 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 7. Deploy: `./deploy.sh` (generates `wrangler.toml` from template, uploads secrets, runs `wrangler deploy`).
 
 ## Coding Tips
-- The UI (sign-in page, dashboard) is rendered inline in `src/index.ts` via template strings — there are no separate HTML files.
-- The dashboard supports three languages (EN / 简体中文 / 繁體中文) with a `lang` query parameter; translations are defined inline.
+- The UI (sign-in page, dashboard) is a Preact SPA in `frontend/`. Vite builds it to `frontend/dist/`, and the Worker serves it via the `ASSETS` binding.
+- The dashboard supports three languages (EN / 简体中文 / 繁體中文) with a `lang` query parameter; translations are defined in `frontend/src/lib/i18n.tsx` via Preact Context.
 - Each tenant gets a Durable Object instance keyed by tenant ID; sync state is stored in the DO's SQLite storage.
 - Provider credentials (Apple passwords, Notion tokens) are AES-GCM encrypted before storage in D1.
 - The cron schedule (`*/5 * * * *`) triggers full sync for all schedulable tenants.
