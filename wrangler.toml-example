@@ -1,4 +1,4 @@
-name = "notion-caldav-sync"
+name = "caldav-sync-service"
 main = "src/index.ts"
 compatibility_date = "2025-11-09"
 compatibility_flags = ["nodejs_compat"]
@@ -10,7 +10,7 @@ preview_id = "${AUTH_CACHE_NAMESPACE_ID}"
 
 [[d1_databases]]
 binding = "AUTH_DB"
-database_name = "notion-caldav-sync"
+database_name = "caldav-sync-service"
 database_id = "${AUTH_DB_DATABASE_ID}"
 
 [[durable_objects.bindings]]
@@ -35,5 +35,37 @@ pattern = "superplanner.ai/caldav-sync"
 zone_name = "superplanner.ai"
 
 [[routes]]
-pattern = "superplanner.ai/caldav-sync/*"
+pattern = "superplanner.ai/caldav-sync/"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/sign-in"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/dashboard"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/dashboard/*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/notion/*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/apple"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/auth/*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/api/*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/webhook/*"
 zone_name = "superplanner.ai"

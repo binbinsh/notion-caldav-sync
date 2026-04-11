@@ -1,153 +1,116 @@
-# Notion ↔ iCloud Calendar Sync
+# Notion CalDAV Sync
 
-[![TypeScript](https://img.shields.io/badge/runtime-TypeScript-3178C6?logo=typescript&logoColor=white)](/Users/binbinsh/Projects/Personal/notion-caldav-sync/package.json)
+[![TypeScript](https://img.shields.io/badge/runtime-TypeScript-3178C6?logo=typescript&logoColor=white)](package.json)
 [![Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-F38020?logo=cloudflare)](https://developers.cloudflare.com/workers/)
 [![Notion API](https://img.shields.io/badge/Notion%20API-2025--09--03-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
-[![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](/Users/binbinsh/Projects/Personal/notion-caldav-sync/src/calendar/caldav.ts)
+[![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/calendar/caldav.ts)
 
-This project is being migrated to a single TypeScript Cloudflare Worker runtime.
+**Keep your Notion tasks and iCloud Calendar in sync — both ways.**
 
-The active runtime now lives directly at the repository root and provides:
+Notion CalDAV Sync connects your Notion workspace to iCloud Calendar so your dated tasks automatically appear on your iPhone, iPad, and Mac. Edit a task in Notion and it updates on your calendar within seconds. Reschedule an event on your calendar and the change flows back to Notion.
 
-- `better-auth` sessions and direct Notion OAuth
-- tenant isolation with Durable Objects
-- D1-backed tenant config, provider links, app state, and sync metadata
-- Turnstile-gated onboarding at `/setup`
-- Notion webhook routing to tenant sync runtimes
-- CalDAV + ICS sync helpers in TypeScript
+## How It Works
 
-The old Python code still exists in the repo as migration material, but it is no longer the desired deployment target.
+1. **Sign in with Notion** — connect your workspace with one click.
+2. **Link Apple Calendar** — enter your Apple ID and an app-specific password.
+3. **Everything stays in sync** — tasks appear on your calendar instantly. Changes in either direction are synced automatically.
 
-## User Flow
+## Features
 
-1. Open `https://<worker-url>/caldav-sync/setup`
-2. Complete Turnstile and continue with Notion
-3. Authorize the shared Notion public integration and select the pages/databases it may access
-4. Return to the dashboard
-5. Save Apple Calendar credentials
-6. Trigger a full sync or wait for scheduled/webhook-driven syncs
+- **Two-way sync** — changes flow from Notion to iCloud Calendar and back.
+- **Instant updates** — webhooks push changes within seconds.
+- **Always accurate** — a periodic background check catches anything that slipped through.
+- **All your databases** — every shared Notion database is discovered automatically.
+- **Private & encrypted** — Apple credentials are encrypted with AES-256 and stored securely.
+- **Runs 24/7** — always on, no app to keep open, no computer to leave running.
+- **Smart reminders** — events include status, category, and a link back to the Notion page.
 
-## Architecture
+## Getting Started
 
-- `src/index.ts` is the Worker entrypoint
-- `better-auth` handles user sessions and Notion OAuth
-- `AUTH_DB` stores auth tables, tenant config, secrets metadata, provider connections, webhook state, and sync ledger rows
-- `AUTH_CACHE` is available for cache/session helpers
-- `TENANT_SYNC` Durable Objects serialize per-tenant sync work and alarms
-- `src/notion/*` handles Notion API access and webhook parsing
-- `src/calendar/*` handles WebDAV/CalDAV and ICS read/write
-- `src/sync/*` contains the sync domain models and reconcile logic
+### As a user
 
-## Required Environment
+1. Visit `https://superplanner.ai/caldav-sync/`
+2. Sign in with your Notion account
+3. Authorize access to your databases
+4. Enter your Apple ID and [app-specific password](https://support.apple.com/en-us/102654)
+5. Your tasks start syncing automatically
 
-Create a `.env` with:
+### Self-hosting
+
+This project runs as a Cloudflare Worker with D1, KV, and Durable Objects.
+
+#### Prerequisites
+
+- Node.js 18+
+- A Cloudflare account with Workers, D1, KV, and Durable Objects enabled
+- A [Notion public integration](https://developers.notion.com/docs/getting-started)
+- An Apple ID with an [app-specific password](https://support.apple.com/en-us/102654)
+
+#### Environment Variables
+
+Create a `.env` file with:
 
 | Key | Purpose |
 | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Worker account id |
-| `CLOUDFLARE_API_TOKEN` | Token with Workers, D1, KV, and DO permissions |
-| `AUTH_DB_DATABASE_ID` | D1 database id for `AUTH_DB` |
-| `AUTH_CACHE_NAMESPACE_ID` | Optional existing KV namespace id for `AUTH_CACHE` |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
+| `CLOUDFLARE_API_TOKEN` | API token with Workers, D1, KV, and DO permissions |
+| `AUTH_DB_DATABASE_ID` | D1 database ID |
+| `AUTH_CACHE_NAMESPACE_ID` | (Optional) Existing KV namespace ID |
 | `APP_BASE_PATH` | Route base path, defaults to `/caldav-sync` |
-| `BETTER_AUTH_SECRET` | Better Auth secret |
-| `APP_ENCRYPTION_KEY` | Base64url-encoded 32-byte AES key for tenant secret encryption |
-| `NOTION_CLIENT_ID` | Notion public OAuth client id |
-| `NOTION_CLIENT_SECRET` | Notion public OAuth client secret |
-| `INTERNAL_SERVICE_TOKEN` | Optional internal service token |
-| `TURNSTILE_SITE_KEY` | Site key rendered on the setup form |
-| `TURNSTILE_SECRET_KEY` | Server-side Turnstile secret |
+| `BETTER_AUTH_SECRET` | Session secret |
+| `APP_ENCRYPTION_KEY` | Base64url-encoded 32-byte AES key for credential encryption |
+| `NOTION_CLIENT_ID` | Notion OAuth client ID |
+| `NOTION_CLIENT_SECRET` | Notion OAuth client secret |
+| `TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret |
 
-Generate the encryption key with:
+Generate the encryption key:
 
 ```bash
 node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'))"
 ```
 
-## Deploy
-
-The root deploy script now targets the TypeScript Worker:
+#### Deploy
 
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-The script:
+The script installs dependencies, runs type checks, sets up the KV namespace, writes secrets, and deploys the worker.
 
-- installs the root TypeScript dependencies
-- typechecks the TypeScript runtime
-- creates or reuses the `AUTH_CACHE` KV namespace
-- writes secrets
-- deploys `src/index.ts` using the root `wrangler.toml`
-
-## Routes
-
-Public/app routes:
-
-- `GET /setup`
-- `POST /setup/connect/notion`
-- `GET /setup/complete`
-- `POST /setup/apple`
-- `POST /api/tenants/:tenantId/sync/full`
-- `POST /api/tenants/:tenantId/sync/incremental`
-- `POST /webhook`
-- `ALL /api/auth/*`
-
-Internal behavior:
-
-- Turnstile is enforced before first-time Notion OAuth starts
-- tenant Apple credentials are stored encrypted in D1-backed secret rows
-- Notion webhook verification token is stored in D1 app state
-- webhook events route by `bot_id` and `workspace_id`
-- scheduled cron runs trigger tenant Durable Objects, which then run incremental/full sync logic
-
-## Library Choices
-
-Current TypeScript stack:
-
-- `better-auth`
-- `better-auth-cloudflare`
-- `hono`
-- `drizzle-orm`
-- `@better-auth/drizzle-adapter`
-- `@notionhq/client`
-- `tsdav`
-- `ical.js`
-- `ical-generator`
-- `fast-xml-parser`
-
-`tsdav` is the first-choice CalDAV abstraction. Low-level DAV/XML helpers are still present as fallback for iCloud-specific quirks.
-
-## Verification
-
-TypeScript runtime:
+## Development
 
 ```bash
-npm test
-npm run test:live
-npm run typecheck
-npm run predeploy:check
+npm install
+npm run dev          # Start local dev server
+npm test             # Run unit tests
+npm run test:live    # Run live integration tests
+npm run typecheck    # Type-check the codebase
 ```
 
-## Status
+### Architecture
 
-Already ported to TypeScript:
+| Directory | Purpose |
+| --- | --- |
+| `src/index.ts` | Worker entrypoint, routing, sign-in and dashboard UI |
+| `src/auth/` | Authentication factory (better-auth + Notion OAuth) |
+| `src/notion/` | Notion API client and webhook parsing |
+| `src/calendar/` | CalDAV discovery, event CRUD, ICS generation |
+| `src/sync/` | Sync domain models, reconcile logic, rendering |
+| `src/durable/` | Durable Object per-tenant sync runtime |
+| `src/db/` | D1 schema and tenant data access |
+| `src/lib/` | Encryption helpers |
 
-- auth and Notion OAuth
-- tenant config and encrypted Apple secrets
-- sync domain models, ledger, and reconcile service
-- Notion live adapter
-- WebDAV/CalDAV helpers
-- ICS parse/generate helpers
-- tenant Durable Object sync entrypoints
-- webhook routing
-- scheduled polling trigger
+### Tech Stack
 
-Still missing before the Python runtime can be deleted:
-
-- live parity validation against real Notion + iCloud data
-- final cleanup of remaining legacy Python files still present in the repository history/worktree
+- **Runtime**: Cloudflare Workers (TypeScript)
+- **Auth**: better-auth with Notion OAuth
+- **Database**: Cloudflare D1
+- **Sync isolation**: Durable Objects (one per tenant)
+- **CalDAV**: tsdav + custom iCloud helpers
+- **ICS**: ical-generator + ical.js
 
 ## License
 
-MIT – see [`LICENSE`](/Users/binbinsh/Projects/Personal/notion-caldav-sync/LICENSE)
+MIT — see [LICENSE](LICENSE)

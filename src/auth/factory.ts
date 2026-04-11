@@ -19,10 +19,18 @@ export type AppEnv = {
 };
 
 export function createAuth(env: AppEnv, request: Request, authBaseUrl: string): Auth<any> {
+  const requestUrl = new URL(request.url);
+  const serviceBasePath = normalizeBasePath(env.APP_BASE_PATH);
+  const authHandlerBaseUrl = `${requestUrl.origin}${serviceBasePath}/auth`;
+  const authErrorUrl = `${serviceBasePath}/sign-in` || "/sign-in";
   return betterAuth({
     secret: env.BETTER_AUTH_SECRET,
-    baseURL: authBaseUrl,
-    trustedOrigins: [authBaseUrl],
+    baseURL: authHandlerBaseUrl,
+    basePath: "/auth",
+    trustedOrigins: [requestUrl.origin],
+    onAPIError: {
+      errorURL: authErrorUrl,
+    },
     ...withCloudflare(
       {
         autoDetectIpAddress: false,
@@ -39,6 +47,7 @@ export function createAuth(env: AppEnv, request: Request, authBaseUrl: string): 
           notion: {
             clientId: env.NOTION_CLIENT_ID,
             clientSecret: env.NOTION_CLIENT_SECRET,
+            redirectURI: `${authHandlerBaseUrl}/callback/notion`,
           },
         },
         plugins: [
@@ -61,4 +70,13 @@ export function createAuth(env: AppEnv, request: Request, authBaseUrl: string): 
       },
     ),
   });
+}
+
+function normalizeBasePath(value: string | null | undefined): string {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  if (!candidate || candidate === "/") {
+    return "";
+  }
+  const prefixed = candidate.startsWith("/") ? candidate : `/${candidate}`;
+  return prefixed.replace(/\/+$/g, "");
 }

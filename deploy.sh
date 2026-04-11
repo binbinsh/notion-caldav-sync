@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 CONFIG_PATH="$ROOT_DIR/wrangler.toml"
 TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
-AUTH_CACHE_NAMESPACE_NAME="notion-caldav-sync-AUTH-CACHE"
+AUTH_CACHE_NAMESPACE_NAME="caldav-sync-service-AUTH-CACHE"
 
 cd "$ROOT_DIR"
 
@@ -40,11 +40,11 @@ namespace_exists() {
 
 ensure_auth_cache_namespace() {
   if [ -n "${AUTH_CACHE_NAMESPACE_ID:-}" ]; then
-    echo "AUTH_CACHE namespace already set: $AUTH_CACHE_NAMESPACE_ID"
     if namespace_exists "$AUTH_CACHE_NAMESPACE_ID"; then
+      echo "AUTH_CACHE namespace already set: $AUTH_CACHE_NAMESPACE_ID"
       return
     fi
-    echo "AUTH_CACHE namespace id does not exist in the account; creating a new namespace..."
+    echo "Provided AUTH_CACHE_NAMESPACE_ID was not found. Rediscovering or creating AUTH_CACHE namespace..." >&2
     unset AUTH_CACHE_NAMESPACE_ID
   fi
 
@@ -57,7 +57,7 @@ ensure_auth_cache_namespace() {
   fi
 
   echo "Creating AUTH_CACHE namespace \"$AUTH_CACHE_NAMESPACE_NAME\" ..."
-  if output=$(npm exec wrangler kv namespace create "$AUTH_CACHE_NAMESPACE_NAME" -- --json 2>&1); then
+  if output=$(npm exec wrangler kv namespace create "$AUTH_CACHE_NAMESPACE_NAME" 2>&1); then
     :
   else
     create_status=$?
@@ -69,9 +69,9 @@ ensure_auth_cache_namespace() {
   AUTH_CACHE_NAMESPACE_ID=$(
     printf "%s\n" "$output" | node -e '
       const fs = require("fs");
-      const data = JSON.parse(fs.readFileSync(0, "utf8"));
-      const result = data.result || data;
-      if (result && result.id) process.stdout.write(String(result.id));
+      const text = fs.readFileSync(0, "utf8");
+      const match = text.match(/id\\s*=\\s*\"([^\"]+)\"/);
+      if (match) process.stdout.write(match[1]);
     ' || true
   )
   if [ -z "$AUTH_CACHE_NAMESPACE_ID" ]; then
