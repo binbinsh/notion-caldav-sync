@@ -96,6 +96,49 @@ export function parseIsoDateTime(
     const hour = options?.endOfDayIfDateOnly ? 23 : 0;
     const minute = options?.endOfDayIfDateOnly ? 59 : 0;
     const second = options?.endOfDayIfDateOnly ? 59 : 0;
+    const tz = options?.dateOnlyTimezoneName;
+    if (tz && tz !== "UTC") {
+      try {
+        // Build a wall-clock date string in the target timezone, then parse
+        // it back to get the correct UTC instant.
+        const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+        const formatter = new Intl.DateTimeFormat("en-US", {
+          timeZone: tz,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        });
+        // Get the timezone offset by comparing the wall clock in the target tz
+        // with what we want. We create a reference date in UTC and see what time
+        // the timezone formatter renders it as.
+        const refUtc = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+        const parts = formatter.formatToParts(refUtc);
+        const getPart = (type: string) =>
+          Number.parseInt(parts.find((p) => p.type === type)?.value || "0", 10);
+        const tzHour = getPart("hour");
+        const tzMinute = getPart("minute");
+        const tzDay = getPart("day");
+        // Compute offset including minutes (handles UTC+5:30, UTC+5:45, etc.)
+        const utcRefHour = 12;
+        const utcRefMinute = 0;
+        let offsetMinutes = (tzHour - utcRefHour) * 60 + (tzMinute - utcRefMinute);
+        // Handle day boundary crossing
+        if (tzDay > day) {
+          offsetMinutes += 24 * 60;
+        } else if (tzDay < day) {
+          offsetMinutes -= 24 * 60;
+        }
+        const offsetMs = offsetMinutes * 60 * 1000;
+        return new Date(wallClock.getTime() - offsetMs);
+      } catch {
+        // Fall back to UTC if timezone is invalid
+        return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+      }
+    }
     return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
   }
 
@@ -125,14 +168,16 @@ export function canonicalPayload(input: {
   };
 }
 
-export function canonicalHash(payload: Record<string, string | null>): string {
+export async function canonicalHash(payload: Record<string, string | null>): Promise<string> {
   const input = stableJSONStringify(payload);
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+  const data = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = new Uint8Array(hashBuffer);
+  let hex = "";
+  for (const byte of hashArray) {
+    hex += byte.toString(16).padStart(2, "0");
   }
-  return hash.toString(16).padStart(8, "0");
+  return hex;
 }
 
 export function statusEmojiForTask(

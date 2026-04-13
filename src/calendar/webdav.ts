@@ -7,7 +7,13 @@ export type WebDavResponse = {
 };
 
 export function basicAuthHeader(username: string, password: string): string {
-  return `Basic ${btoa(`${username}:${password}`)}`;
+  // Use TextEncoder to handle non-ASCII characters safely
+  const encoded = new TextEncoder().encode(`${username}:${password}`);
+  let binary = "";
+  for (const byte of encoded) {
+    binary += String.fromCharCode(byte);
+  }
+  return `Basic ${btoa(binary)}`;
 }
 
 export async function httpRequest(input: {

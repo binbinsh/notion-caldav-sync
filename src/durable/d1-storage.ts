@@ -136,6 +136,33 @@ export class D1TenantLedgerStorage {
     };
   }
 
+  /**
+   * Returns all records in a single query, avoiding the N+1 problem
+   * where list() + individual get() calls would be O(N) D1 operations.
+   */
+  async listAll(): Promise<Array<Record<string, unknown>>> {
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM sync_ledger WHERE tenant_id = ? ORDER BY page_id ASC`,
+      )
+      .bind(this.tenantId)
+      .all<SyncLedgerRow>();
+    return (result.results || []).map((row) => ({
+      pageId: row.page_id,
+      eventHref: row.event_href,
+      eventEtag: row.event_etag,
+      lastNotionEditedTime: row.last_notion_edited_time,
+      lastNotionHash: row.last_notion_hash,
+      lastCaldavHash: row.last_caldav_hash,
+      lastCaldavModified: row.last_caldav_modified,
+      lastPushOrigin: row.last_push_origin,
+      lastPushToken: row.last_push_token,
+      deletedOnCaldavAt: row.deleted_on_caldav_at,
+      deletedInNotionAt: row.deleted_in_notion_at,
+      clearedDueInNotionAt: row.cleared_due_in_notion_at,
+    }));
+  }
+
   private pageIdFromKey(key: string): string | null {
     return key.startsWith(this.prefix) ? key.slice(this.prefix.length) : null;
   }

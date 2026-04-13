@@ -23,7 +23,8 @@ describe("ics helpers", () => {
 
     expect(parsed.title).toBe("Plan trip");
     expect(parsed.startDate).toBe("2024-06-01");
-    expect(parsed.endDate).toBe("2024-06-01");
+    // Single-day all-day event: endDate is null (ICS exclusive DTEND == startDate+1 → normalized to null)
+    expect(parsed.endDate).toBeNull();
     expect(parsed.description).toBe("Pack bags");
     expect(parsed.color).toBe("#FF7F00");
     expect(parsed.category).toBe("Travel");

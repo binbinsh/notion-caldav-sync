@@ -2,7 +2,7 @@ import ICAL from "ical.js";
 import ical from "ical-generator";
 import { STATUS_CANONICAL_VARIANTS, STATUS_EMOJI_SETS } from "../sync/constants";
 
-const DEFAULT_TIMED_EVENT_DURATION_MS = 0;
+const DEFAULT_TIMED_EVENT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 
 const emojiStatus = Object.fromEntries(
   Object.values(STATUS_EMOJI_SETS).flatMap((emojiSet) =>
@@ -45,6 +45,7 @@ export function buildEvent(input: {
   category?: string | null;
   color?: string | null;
   url?: string | null;
+  lastModified?: string | null;
 }): string {
   const calendar = ical({
     prodId: { company: "Notion Sync", product: "Notion Sync" },
@@ -65,7 +66,8 @@ export function buildEvent(input: {
     url: input.url || `https://www.notion.so/${input.notionId.replaceAll("-", "")}`,
   });
   (event as any).stamp(new Date());
-  (event as any).lastModified(new Date());
+  const lastModDate = input.lastModified ? new Date(input.lastModified) : new Date();
+  (event as any).lastModified(Number.isNaN(lastModDate.getTime()) ? new Date() : lastModDate);
   if (input.category) {
     (event as any).categories([{ name: input.category }]);
   }
@@ -126,7 +128,11 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   if (descriptionValue) {
     const parsed = parseDescriptionFields(descriptionValue);
     category = parsed.headers.Category || category;
-    description = parsed.body || parsed.headers.Description || descriptionValue || null;
+    // Only use the user's actual description body, not the structured metadata
+    // headers (Source, Status, Notion URL, etc.) that we embed in the ICS.
+    // If there's no body and no explicit Description header, the description
+    // was purely metadata — return null to match Notion's empty description.
+    description = parsed.body || parsed.headers.Description || null;
     if (!summaryStatus || summaryStatus === "Overdue") {
       status = parsed.headers.Status || status;
     }
@@ -137,7 +143,13 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   const startValue = event.startDate;
   const endValue = event.endDate;
   const startDate = startValue ? toIso(startValue, false) : null;
-  const endDate = endValue ? toIso(endValue, event.startDate?.isDate || false, true) : null;
+  let endDate = endValue ? toIso(endValue, event.startDate?.isDate || false, true) : null;
+  // For all-day events: if the parsed end date equals the start date, the
+  // original event was a single-day event with no explicit end. Return null
+  // to match Notion's representation and avoid hash mismatches.
+  if (endDate && startDate && event.startDate?.isDate && endDate === startDate) {
+    endDate = null;
+  }
 
   const alarms = vevent.getAllSubcomponents("valarm") || [];
   let reminder: string | null = null;
@@ -253,6 +265,11 @@ function parseDescriptionFields(text: string): {
   }
   if (!body && headers.Description) {
     body = headers.Description;
+  }
+  // If no structured headers were found and no body was extracted,
+  // the entire text is plain description content — not metadata.
+  if (!body && Object.keys(headers).length === 0) {
+    body = text.trim() || null;
   }
   return { headers, body };
 }

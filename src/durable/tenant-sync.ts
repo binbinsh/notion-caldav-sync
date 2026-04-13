@@ -11,10 +11,38 @@ import { D1TenantLedgerStorage } from "./d1-storage";
 export type TenantSyncEnv = AppEnv;
 
 export class TenantSyncObject {
+  private syncMutex: Promise<void> = Promise.resolve();
+  private runtimeCache: {
+    tenantId: string;
+    config: any;
+    service: any;
+    createdAt: number;
+  } | null = null;
+  private static readonly RUNTIME_CACHE_TTL_MS = 60_000; // 1 minute
+
+  /** Recent webhook dedup: maps "pageId1,pageId2,..." -> timestamp */
+  private recentWebhooks = new Map<string, number>();
+  private static readonly WEBHOOK_DEDUP_WINDOW_MS = 5_000; // 5 seconds
+
   constructor(
     private readonly ctx: DurableObjectState,
     private readonly env: TenantSyncEnv,
   ) {}
+
+  private async withSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+    let resolve: () => void;
+    const next = new Promise<void>((r) => {
+      resolve = r;
+    });
+    const previous = this.syncMutex;
+    this.syncMutex = next;
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      resolve!();
+    }
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -23,55 +51,71 @@ export class TenantSyncObject {
       return Response.json({ ok: false, error: "Missing tenant id." }, { status: 400 });
     }
 
-    if (request.method === "GET" && url.pathname === "/status") {
-      const config = await getTenantConfigByTenantId(this.env.AUTH_DB, tenantId);
-      return Response.json({
-        ok: true,
-        tenantId,
-        config,
-      });
-    }
+    try {
+      if (request.method === "GET" && url.pathname === "/status") {
+        const config = await getTenantConfigByTenantId(this.env.AUTH_DB, tenantId);
+        return Response.json({
+          ok: true,
+          tenantId,
+          config,
+        });
+      }
 
-    if (request.method === "POST" && url.pathname === "/sync/full") {
-      const result = await this.runFullSync(tenantId);
-      return Response.json({
-        ok: true,
-        mode: "full",
-        tenantId,
-        result,
-      });
-    }
+      if (request.method === "GET" && url.pathname === "/debug") {
+        const runtime = await this.buildRuntime(tenantId);
+        const snapshot = await runtime.service.buildDebugSnapshot();
+        return Response.json({
+          ok: true,
+          tenantId,
+          snapshot,
+        });
+      }
 
-    if (request.method === "POST" && url.pathname === "/sync/incremental") {
-      const result = await this.runIncrementalSync(tenantId);
-      return Response.json({
-        ok: true,
-        mode: "incremental",
-        tenantId,
-        result,
-      });
-    }
+      if (request.method === "POST" && url.pathname === "/sync/full") {
+        const result = await this.withSyncLock(() => this.runFullSync(tenantId));
+        return Response.json({
+          ok: true,
+          mode: "full",
+          tenantId,
+          result,
+        });
+      }
 
-    if (request.method === "POST" && url.pathname === "/sync/scheduled") {
-      await this.runScheduledSync(tenantId);
-      return Response.json({
-        ok: true,
-        mode: "scheduled",
-        tenantId,
-      });
-    }
+      if (request.method === "POST" && url.pathname === "/sync/incremental") {
+        const result = await this.withSyncLock(() => this.runIncrementalSync(tenantId));
+        return Response.json({
+          ok: true,
+          mode: "incremental",
+          tenantId,
+          result,
+        });
+      }
 
-    if (request.method === "POST" && url.pathname === "/sync/webhook") {
-      const payload = (await request.json().catch(() => null)) as
-        | { pageIds?: string[]; forceFull?: boolean }
-        | null;
-      const result = await this.runWebhookSync(tenantId, payload);
-      return Response.json({
-        ok: true,
-        mode: "webhook",
-        tenantId,
-        result,
-      });
+      if (request.method === "POST" && url.pathname === "/sync/scheduled") {
+        await this.withSyncLock(() => this.runScheduledSync(tenantId));
+        return Response.json({
+          ok: true,
+          mode: "scheduled",
+          tenantId,
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/sync/webhook") {
+        const payload = (await request.json().catch(() => null)) as
+          | { pageIds?: string[]; forceFull?: boolean }
+          | null;
+        const result = await this.withSyncLock(() => this.runWebhookSync(tenantId, payload));
+        return Response.json({
+          ok: true,
+          mode: "webhook",
+          tenantId,
+          result,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[tenant-sync] request failed tenant=${tenantId} path=${url.pathname}: ${message}`);
+      return Response.json({ ok: false, error: message }, { status: 500 });
     }
 
     return new Response("Not found", { status: 404 });
@@ -83,7 +127,7 @@ export class TenantSyncObject {
       return;
     }
     try {
-      await this.runScheduledSync(tenantId);
+      await this.withSyncLock(() => this.runScheduledSync(tenantId));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[tenant-sync] scheduled sync failed tenant=${tenantId}: ${message}`);
@@ -133,16 +177,44 @@ export class TenantSyncObject {
       ? payload?.pageIds.filter((pageId): pageId is string => typeof pageId === "string" && pageId.trim().length > 0)
       : [];
     if (pageIds.length > 0) {
+      // Dedup: skip if the same set of page IDs was synced very recently
+      const dedupKey = [...pageIds].sort().join(",");
+      const now = Date.now();
+      const lastSeen = this.recentWebhooks.get(dedupKey);
+      if (lastSeen && now - lastSeen < TenantSyncObject.WEBHOOK_DEDUP_WINDOW_MS) {
+        return {
+          updatedPageIds: pageIds,
+          forceFull: Boolean(payload?.forceFull),
+          deduplicated: true,
+        };
+      }
+      this.recentWebhooks.set(dedupKey, now);
+      // Clean old entries
+      for (const [key, ts] of this.recentWebhooks) {
+        if (now - ts > TenantSyncObject.WEBHOOK_DEDUP_WINDOW_MS * 2) {
+          this.recentWebhooks.delete(key);
+        }
+      }
       await runtime.service.syncNotionPageIds(pageIds);
     }
     await this.scheduleNextAlarm(runtime.config.poll_interval_minutes || 5, tenantId);
     return {
       updatedPageIds: pageIds,
       forceFull: Boolean(payload?.forceFull),
+      deduplicated: false,
     };
   }
 
   private async buildRuntime(tenantId: string) {
+    // Use cached runtime if available and fresh
+    if (
+      this.runtimeCache &&
+      this.runtimeCache.tenantId === tenantId &&
+      Date.now() - this.runtimeCache.createdAt < TenantSyncObject.RUNTIME_CACHE_TTL_MS
+    ) {
+      return { config: this.runtimeCache.config, service: this.runtimeCache.service };
+    }
+
     const config = await getTenantConfigByTenantId(this.env.AUTH_DB, tenantId);
     if (!config) {
       throw new Error(`Tenant config not found for ${tenantId}.`);
@@ -205,10 +277,19 @@ export class TenantSyncObject {
       log: (message) => console.log(`[tenant-sync:${tenantId}] ${message}`),
     });
 
-    return {
+    const result = {
       config,
       service,
     };
+
+    this.runtimeCache = {
+      tenantId,
+      config,
+      service,
+      createdAt: Date.now(),
+    };
+
+    return result;
   }
 
   private async markLastFullSync(tenantId: string) {

@@ -97,7 +97,7 @@ export async function putEvent(input: {
   ics: string;
   appleId: string;
   appleAppPassword: string;
-}): Promise<void> {
+}): Promise<{ etag: string | null }> {
   const client = await createClient(input.appleId, input.appleAppPassword);
   const calendar = await findCalendarByObjectUrl(client, input.eventUrl);
   if (!calendar) {
@@ -117,14 +117,21 @@ export async function putEvent(input: {
         data: input.ics,
       },
     });
-    return;
+  } else {
+    const filename = input.eventUrl.split("/").pop() || `${crypto.randomUUID()}.ics`;
+    await client.createCalendarObject({
+      calendar,
+      iCalString: input.ics,
+      filename,
+    });
   }
-  const filename = input.eventUrl.split("/").pop() || `${crypto.randomUUID()}.ics`;
-  await client.createCalendarObject({
+  // Re-fetch to get the new ETag
+  const updated = await client.fetchCalendarObjects({
     calendar,
-    iCalString: input.ics,
-    filename,
-  });
+    objectUrls: [objectUrl],
+    useMultiGet: true,
+  }).catch(() => []);
+  return { etag: normalizeText(updated[0]?.etag) || null };
 }
 
 export async function deleteEvent(input: {
@@ -305,22 +312,31 @@ async function createClient(appleId: string, appleAppPassword: string): Promise<
 
 async function findCalendarByHref(client: DAVClient, calendarHref: string): Promise<DAVCalendar | null> {
   const calendars = await client.fetchCalendars();
-  const normalizedTarget = calendarHref.replace(/\/$/, "");
+  const normalizedTarget = normalizeCalendarResourcePath(calendarHref);
   return (
-    calendars.find((calendar) => calendar.url.replace(/\/$/, "") === normalizedTarget) || null
+    calendars.find((calendar) => normalizeCalendarResourcePath(calendar.url) === normalizedTarget) ||
+    null
   );
 }
 
 async function findCalendarByObjectUrl(client: DAVClient, objectUrl: string): Promise<DAVCalendar | null> {
   const calendars = await client.fetchCalendars();
-  const normalizedObjectUrl = objectUrl.replace(/\/$/, "");
+  const normalizedObjectUrl = normalizeCalendarResourcePath(objectUrl);
   for (const calendar of calendars) {
-    const base = calendar.url.replace(/\/$/, "");
+    const base = normalizeCalendarResourcePath(calendar.url);
     if (normalizedObjectUrl.startsWith(`${base}/`)) {
       return calendar;
     }
   }
   return null;
+}
+
+export function normalizeCalendarResourcePath(value: string): string {
+  try {
+    return new URL(value).pathname.replace(/\/$/, "");
+  } catch {
+    return value.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/\/$/, "");
+  }
 }
 
 function notionIdFromHref(href: string): string | null {

@@ -36,6 +36,8 @@ export interface KVLikeStorage {
   put(key: string, value: unknown): Promise<void>;
   delete(key: string): Promise<void>;
   list(options?: { prefix?: string }): Promise<{ keys?: Array<string | { name?: string }> } | unknown>;
+  /** Optional batch method: returns all records in a single query (avoids N+1). */
+  listAll?(): Promise<Array<Record<string, unknown>>>;
 }
 
 export class StorageLedger implements SyncLedger {
@@ -65,6 +67,19 @@ export class StorageLedger implements SyncLedger {
   }
 
   async listRecords(): Promise<LedgerRecord[]> {
+    // Fast path: use batch listAll if available (avoids N+1)
+    if (typeof this.storage.listAll === "function") {
+      const allRecords = await this.storage.listAll();
+      return allRecords
+        .filter((payload): payload is Record<string, unknown> => Boolean(payload))
+        .map((payload) => {
+          const pageId = typeof payload.pageId === "string" ? payload.pageId : "";
+          return LedgerRecord.fromJSON(payload, pageId);
+        })
+        .filter((record) => Boolean(record.pageId));
+    }
+
+    // Fallback: list keys then fetch individually (N+1)
     const payload = await this.storage.list({ prefix: this.prefix });
     const keys =
       typeof payload === "object" && payload !== null && "keys" in payload

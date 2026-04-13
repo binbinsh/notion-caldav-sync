@@ -21,6 +21,8 @@ import {
 } from "../notion/client";
 import { CalendarTask, NotionTask, TaskSchema } from "./models";
 import { descriptionForTask, statusForTask } from "./rendering";
+import type { CalendarDebugEvent } from "./service";
+import { RateLimiter, parallelMap, withRetry } from "../lib/retry";
 
 export type LiveBindings = {
   notionToken: string;
@@ -36,23 +38,50 @@ export class LiveSyncFacade {
   private readonly notionClient: Client;
   private readonly dbTitleCache = new Map<string, string>();
   private readonly dbPropsCache = new Map<string, Record<string, Record<string, unknown>>>();
+  private readonly notionRateLimiter = new RateLimiter(3, 3); // 3 req/s for Notion API
+  private readonly caldavRateLimiter = new RateLimiter(10, 10); // 10 req/s for CalDAV
 
   constructor(private readonly bindings: LiveBindings) {
     this.notionClient = createNotionClient(bindings.notionToken, bindings.notionVersion);
   }
 
-  async ensureCalendar() {
-    return calendarEnsure({
-      bindings: {
-        appleId: this.bindings.appleId,
-        appleAppPassword: this.bindings.appleAppPassword,
+  private async notionCall<T>(fn: () => Promise<T>): Promise<T> {
+    await this.notionRateLimiter.acquire();
+    return withRetry(fn, {
+      maxAttempts: 3,
+      baseDelayMs: 1000,
+      shouldRetry: (error) => {
+        if (error && typeof error === "object" && "status" in error) {
+          const status = (error as { status: number }).status;
+          return status === 429 || status === 502 || status === 503 || status === 504;
+        }
+        return false;
       },
-      settings: this.bindings.calendarSettings || {},
     });
   }
 
+  private async caldavCall<T>(fn: () => Promise<T>): Promise<T> {
+    await this.caldavRateLimiter.acquire();
+    return withRetry(fn, {
+      maxAttempts: 3,
+      baseDelayMs: 1000,
+    });
+  }
+
+  async ensureCalendar() {
+    return this.caldavCall(() =>
+      calendarEnsure({
+        bindings: {
+          appleId: this.bindings.appleId,
+          appleAppPassword: this.bindings.appleAppPassword,
+        },
+        settings: this.bindings.calendarSettings || {},
+      }),
+    );
+  }
+
   async listNotionTasks(): Promise<NotionTask[]> {
-    const databases = await listDatabases(this.notionClient);
+    const databases = await this.notionCall(() => listDatabases(this.notionClient));
     const tasks: NotionTask[] = [];
     for (const db of databases) {
       const props = await this.getCachedDatabaseProperties(db.id);
@@ -60,7 +89,7 @@ export class LiveSyncFacade {
         continue;
       }
       const dbTitle = await this.getCachedDatabaseTitle(db.id, db.title);
-      const pages = await queryDatabasePages(this.notionClient, db.id);
+      const pages = await this.notionCall(() => queryDatabasePages(this.notionClient, db.id));
       for (const page of pages) {
         const task = this.hydrateTask(page, db.id, dbTitle, props);
         if (task) {
@@ -72,7 +101,7 @@ export class LiveSyncFacade {
   }
 
   async getNotionTask(pageId: string): Promise<NotionTask | null> {
-    const page = await getPage(this.notionClient, pageId);
+    const page = await this.notionCall(() => getPage(this.notionClient, pageId));
     const parent = asRecord(page.parent) || {};
     const databaseId =
       normalizeText(parent.data_source_id) || normalizeText(parent.database_id);
@@ -91,22 +120,41 @@ export class LiveSyncFacade {
     notionTask: NotionTask,
     calendarTask: CalendarTask,
   ): Promise<NotionTask> {
-    const properties = buildPropertiesForCalendarTask(notionTask.schema, calendarTask);
+    const properties = buildPropertiesForCalendarTask(notionTask.schema, calendarTask, notionTask);
     if (!Object.keys(properties).length) {
       return notionTask;
     }
-    const updated = await updatePageProperties(this.notionClient, notionTask.pageId, properties);
+    const updated = await this.notionCall(() =>
+      updatePageProperties(this.notionClient, notionTask.pageId, properties),
+    );
     const databaseId =
       normalizeText(asRecord(updated.parent)?.data_source_id) ||
       normalizeText(asRecord(updated.parent)?.database_id) ||
       notionTask.databaseId;
-    if (!databaseId) {
-      return notionTask;
+    if (databaseId) {
+      const props = await this.getCachedDatabaseProperties(databaseId);
+      const hydrated = this.hydrateTask(updated, databaseId, notionTask.databaseName, props);
+      if (hydrated) {
+        return hydrated;
+      }
     }
-    const props = await this.getCachedDatabaseProperties(databaseId);
-    return (
-      this.hydrateTask(updated, databaseId, notionTask.databaseName, props) ||
-      notionTask
+    // Fallback: construct best-effort updated task from known changes
+    // so the ledger records an accurate hash for echo suppression.
+    return new NotionTask(
+      notionTask.pageId,
+      calendarTask.pageUrl || notionTask.pageUrl,
+      notionTask.databaseId,
+      notionTask.databaseName,
+      calendarTask.title || notionTask.title,
+      normalizeStatusName(calendarTask.status) || notionTask.status,
+      calendarTask.startDate !== undefined ? calendarTask.startDate : notionTask.startDate,
+      calendarTask.endDate !== undefined ? calendarTask.endDate : notionTask.endDate,
+      calendarTask.reminder !== undefined ? calendarTask.reminder : notionTask.reminder,
+      calendarTask.category !== undefined ? calendarTask.category : notionTask.category,
+      calendarTask.description !== undefined ? calendarTask.description : notionTask.description,
+      notionTask.archived,
+      normalizeText(updated.last_edited_time) || notionTask.lastEditedTime,
+      notionTask.schema,
     );
   }
 
@@ -121,34 +169,120 @@ export class LiveSyncFacade {
     if (!Object.keys(properties).length) {
       return notionTask;
     }
-    const updated = await updatePageProperties(this.notionClient, notionTask.pageId, properties);
-    if (!notionTask.databaseId) {
-      return notionTask;
+    const updated = await this.notionCall(() =>
+      updatePageProperties(this.notionClient, notionTask.pageId, properties),
+    );
+    if (notionTask.databaseId) {
+      const props = await this.getCachedDatabaseProperties(notionTask.databaseId);
+      const hydrated = this.hydrateTask(updated, notionTask.databaseId, notionTask.databaseName, props);
+      if (hydrated) {
+        return hydrated;
+      }
     }
-    const props = await this.getCachedDatabaseProperties(notionTask.databaseId);
-    return (
-      this.hydrateTask(updated, notionTask.databaseId, notionTask.databaseName, props) ||
-      notionTask
+    // Fallback: construct cleared task so the ledger hash is accurate
+    return new NotionTask(
+      notionTask.pageId,
+      notionTask.pageUrl,
+      notionTask.databaseId,
+      notionTask.databaseName,
+      notionTask.title,
+      notionTask.status,
+      null, // startDate cleared
+      null, // endDate cleared
+      null, // reminder cleared
+      notionTask.category,
+      notionTask.description,
+      notionTask.archived,
+      normalizeText(updated.last_edited_time) || notionTask.lastEditedTime,
+      notionTask.schema,
     );
   }
 
   async listCalendarEvents(calendarHref: string) {
-    return calendarListEvents({
-      calendarHref,
-      appleId: this.bindings.appleId,
-      appleAppPassword: this.bindings.appleAppPassword,
-    });
+    return this.caldavCall(() =>
+      calendarListEvents({
+        calendarHref,
+        appleId: this.bindings.appleId,
+        appleAppPassword: this.bindings.appleAppPassword,
+      }),
+    );
+  }
+
+  async listCalendarDebugEvents(calendarHref: string): Promise<CalendarDebugEvent[]> {
+    const events = await this.caldavCall(() =>
+      calendarListEvents({
+        calendarHref,
+        appleId: this.bindings.appleId,
+        appleAppPassword: this.bindings.appleAppPassword,
+      }),
+    );
+    const details = await parallelMap(
+      events,
+      async (event) => {
+        const href = normalizeText(event.href);
+        if (!href) {
+          return null;
+        }
+
+        const payload = await this.caldavCall(() =>
+          calendarReadEvent({
+            eventUrl: href,
+            appleId: this.bindings.appleId,
+            appleAppPassword: this.bindings.appleAppPassword,
+          }),
+        ).catch(() => null);
+        if (!payload) {
+          return {
+            href,
+            etag: normalizeText(event.etag),
+            notionId: null,
+            title: null,
+            status: null,
+            startDate: null,
+            endDate: null,
+            reminder: null,
+            category: null,
+            description: null,
+            lastModified: null,
+            pageUrl: null,
+          } satisfies CalendarDebugEvent;
+        }
+
+        const parsed = parseIcsMinimal(payload.ics);
+        return {
+          href,
+          etag: normalizeText(payload.etag) || normalizeText(event.etag),
+          notionId: parsed.notionId,
+          title: parsed.title,
+          status: parsed.status,
+          startDate: parsed.startDate,
+          endDate: parsed.endDate,
+          reminder: parsed.reminder,
+          category: parsed.category,
+          description: parsed.description,
+          lastModified: parsed.lastModified,
+          pageUrl: parsed.url,
+        } satisfies CalendarDebugEvent;
+      },
+      5, // bounded concurrency
+    );
+
+    return details
+      .filter((event): event is CalendarDebugEvent => Boolean(event))
+      .sort((left, right) => left.href.localeCompare(right.href));
   }
 
   async getCalendarTask(
     eventHref: string,
     options: { etag?: string | null },
   ): Promise<CalendarTask | null> {
-    const payload = await calendarReadEvent({
-      eventUrl: eventHref,
-      appleId: this.bindings.appleId,
-      appleAppPassword: this.bindings.appleAppPassword,
-    });
+    const payload = await this.caldavCall(() =>
+      calendarReadEvent({
+        eventUrl: eventHref,
+        appleId: this.bindings.appleId,
+        appleAppPassword: this.bindings.appleAppPassword,
+      }),
+    );
     if (!payload) {
       return null;
     }
@@ -177,7 +311,7 @@ export class LiveSyncFacade {
     calendarColor: string,
     notionTask: NotionTask,
     options: { settings: Record<string, unknown> },
-  ): Promise<string> {
+  ): Promise<{ eventHref: string; etag: string | null }> {
     const eventHref = `${calendarHref.replace(/\/$/, "")}/${notionTask.pageId}.ics`;
     const normalizedStatus = statusForTask(notionTask, {
       dateOnlyTimezoneName: String(options.settings.date_only_timezone || options.settings.calendar_timezone || "UTC"),
@@ -195,22 +329,27 @@ export class LiveSyncFacade {
       category: notionTask.category,
       color: calendarColor,
       url: notionTask.pageUrl || `https://www.notion.so/${notionTask.pageId.replaceAll("-", "")}`,
+      lastModified: notionTask.lastEditedTime,
     });
-    await calendarPutEvent({
-      eventUrl: eventHref,
-      ics,
-      appleId: this.bindings.appleId,
-      appleAppPassword: this.bindings.appleAppPassword,
-    });
-    return eventHref;
+    const result = await this.caldavCall(() =>
+      calendarPutEvent({
+        eventUrl: eventHref,
+        ics,
+        appleId: this.bindings.appleId,
+        appleAppPassword: this.bindings.appleAppPassword,
+      }),
+    );
+    return { eventHref, etag: result.etag };
   }
 
   async deleteCalendarEvent(eventHref: string): Promise<void> {
-    await calendarDeleteEvent({
-      eventUrl: eventHref,
-      appleId: this.bindings.appleId,
-      appleAppPassword: this.bindings.appleAppPassword,
-    });
+    await this.caldavCall(() =>
+      calendarDeleteEvent({
+        eventUrl: eventHref,
+        appleId: this.bindings.appleId,
+        appleAppPassword: this.bindings.appleAppPassword,
+      }),
+    );
   }
 
   private async getCachedDatabaseProperties(databaseId: string) {
@@ -218,7 +357,7 @@ export class LiveSyncFacade {
     if (cached) {
       return cached;
     }
-    const props = await getDatabaseProperties(this.notionClient, databaseId);
+    const props = await this.notionCall(() => getDatabaseProperties(this.notionClient, databaseId));
     this.dbPropsCache.set(databaseId, props);
     return props;
   }
@@ -230,7 +369,7 @@ export class LiveSyncFacade {
     }
     let title = fallback || null;
     try {
-      title = await getDatabaseTitle(this.notionClient, databaseId);
+      title = await this.notionCall(() => getDatabaseTitle(this.notionClient, databaseId));
     } catch {
       title = title || databaseId;
     }
@@ -276,60 +415,80 @@ export class LiveSyncFacade {
 export function buildPropertiesForCalendarTask(
   schema: TaskSchema,
   calendarTask: CalendarTask,
+  currentNotionTask?: NotionTask | null,
 ): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
+
+  // Only set title if it changed (avoids triggering last_edited_time needlessly)
   if (schema.titleProperty) {
-    properties[schema.titleProperty] = {
-      title: [
-        {
-          type: "text",
-          text: { content: calendarTask.title || "Untitled" },
-        },
-      ],
-    };
+    const newTitle = calendarTask.title || "Untitled";
+    if (!currentNotionTask || currentNotionTask.title !== newTitle) {
+      properties[schema.titleProperty] = {
+        title: [
+          {
+            type: "text",
+            text: { content: newTitle },
+          },
+        ],
+      };
+    }
   }
 
   const normalizedStatus = normalizeStatusName(calendarTask.status) || calendarTask.status;
   if (schema.statusProperty && normalizedStatus) {
-    if (schema.statusType === "status") {
-      properties[schema.statusProperty] = { status: { name: normalizedStatus } };
-    } else if (schema.statusType === "select") {
-      properties[schema.statusProperty] = { select: { name: normalizedStatus } };
+    if (!currentNotionTask || currentNotionTask.status !== normalizedStatus) {
+      if (schema.statusType === "status") {
+        properties[schema.statusProperty] = { status: { name: normalizedStatus } };
+      } else if (schema.statusType === "select") {
+        properties[schema.statusProperty] = { select: { name: normalizedStatus } };
+      }
     }
   }
 
   if (schema.dateProperty) {
-    properties[schema.dateProperty] = {
-      date: {
-        start: calendarTask.startDate,
-        end: calendarTask.endDate,
-      },
-    };
+    if (
+      !currentNotionTask ||
+      currentNotionTask.startDate !== calendarTask.startDate ||
+      currentNotionTask.endDate !== calendarTask.endDate
+    ) {
+      properties[schema.dateProperty] = {
+        date: {
+          start: calendarTask.startDate,
+          end: calendarTask.endDate,
+        },
+      };
+    }
   }
 
   if (schema.reminderProperty) {
-    properties[schema.reminderProperty] = calendarTask.reminder
-      ? { date: { start: calendarTask.reminder, end: null } }
-      : { date: null };
+    if (!currentNotionTask || currentNotionTask.reminder !== calendarTask.reminder) {
+      properties[schema.reminderProperty] = calendarTask.reminder
+        ? { date: { start: calendarTask.reminder, end: null } }
+        : { date: null };
+    }
   }
 
   if (schema.categoryProperty) {
-    properties[schema.categoryProperty] = calendarTask.category
-      ? { select: { name: calendarTask.category } }
-      : { select: null };
+    if (!currentNotionTask || currentNotionTask.category !== calendarTask.category) {
+      properties[schema.categoryProperty] = calendarTask.category
+        ? { select: { name: calendarTask.category } }
+        : { select: null };
+    }
   }
 
   if (schema.descriptionProperty) {
-    properties[schema.descriptionProperty] = {
-      rich_text: calendarTask.description
-        ? [
-            {
-              type: "text",
-              text: { content: calendarTask.description },
-            },
-          ]
-        : [],
-    };
+    if (!currentNotionTask || currentNotionTask.description !== calendarTask.description) {
+      properties[schema.descriptionProperty] = {
+        rich_text: calendarTask.description
+          ? [
+              {
+                type: "text",
+                text: { content: calendarTask.description },
+              },
+            ]
+          : [],
+      };
+    }
   }
 
   return properties;

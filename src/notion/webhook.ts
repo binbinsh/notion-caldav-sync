@@ -1,5 +1,6 @@
 const PAGE_ID_KEYS = new Set(["page_id", "pageId"]);
 const FULL_SYNC_PREFIXES = ["database.", "data_source."] as const;
+const MAX_RECURSION_DEPTH = 20;
 
 export function normalizePageId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -22,10 +23,13 @@ export function collectPageIds(payload: unknown): string[] {
     }
   };
 
-  const walk = (value: unknown, parentKey?: string) => {
+  const walk = (value: unknown, parentKey?: string, depth = 0) => {
+    if (depth > MAX_RECURSION_DEPTH) {
+      return;
+    }
     if (Array.isArray(value)) {
       for (const item of value) {
-        walk(item, parentKey);
+        walk(item, parentKey, depth + 1);
       }
       return;
     }
@@ -46,11 +50,11 @@ export function collectPageIds(payload: unknown): string[] {
         append((nested as Record<string, unknown>).page_id);
       }
       if (["payload", "data", "after", "before", "value"].includes(key)) {
-        walk(nested, key);
+        walk(nested, key, depth + 1);
         continue;
       }
       if (nested && typeof nested === "object") {
-        walk(nested, key);
+        walk(nested, key, depth + 1);
       }
     }
   };
@@ -71,10 +75,13 @@ export function extractEventTypes(payload: unknown): string[] {
     }
   };
 
-  const walk = (value: unknown) => {
+  const walk = (value: unknown, depth = 0) => {
+    if (depth > MAX_RECURSION_DEPTH) {
+      return;
+    }
     if (Array.isArray(value)) {
       for (const item of value) {
-        walk(item);
+        walk(item, depth + 1);
       }
       return;
     }
@@ -86,16 +93,16 @@ export function extractEventTypes(payload: unknown): string[] {
       append(record.type);
     }
     if (record.event && typeof record.event === "object") {
-      walk(record.event);
+      walk(record.event, depth + 1);
     }
     if (Array.isArray(record.events)) {
       for (const item of record.events) {
-        walk(item);
+        walk(item, depth + 1);
       }
     }
     for (const key of ["payload", "data"] as const) {
       if (record[key] && typeof record[key] === "object") {
-        walk(record[key]);
+        walk(record[key], depth + 1);
       }
     }
   };
@@ -132,10 +139,13 @@ export function extractRoutingIds(payload: unknown): {
     }
   };
 
-  const walk = (value: unknown) => {
+  const walk = (value: unknown, depth = 0) => {
+    if (depth > MAX_RECURSION_DEPTH) {
+      return;
+    }
     if (Array.isArray(value)) {
       for (const item of value) {
-        walk(item);
+        walk(item, depth + 1);
       }
       return;
     }
@@ -147,12 +157,12 @@ export function extractRoutingIds(payload: unknown): {
     append(workspaceIds, record.workspace_id);
     if (Array.isArray(record.accessible_by)) {
       for (const item of record.accessible_by) {
-        walk(item);
+        walk(item, depth + 1);
       }
     }
     for (const nested of Object.values(record)) {
       if (nested && typeof nested === "object") {
-        walk(nested);
+        walk(nested, depth + 1);
       }
     }
   };
