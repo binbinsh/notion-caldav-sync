@@ -1,3 +1,6 @@
+/** Clerk accounts portal URL (shared across superplanner.ai) */
+export const CLERK_ACCOUNTS_URL = "https://accounts.superplanner.ai";
+
 /** Shape returned by GET /api/me */
 export type ApiMeResponse = {
   authenticated: boolean;
@@ -165,9 +168,10 @@ export async function triggerSync(
   return data as ApiJsonResult;
 }
 
-export async function signOut(): Promise<void> {
-  await fetch(`${BASE}/auth/sign-out`, {
-    method: "POST",
-    credentials: "include",
-  });
+/**
+ * Sign out by redirecting to Clerk's accounts portal sign-out page.
+ */
+export function signOut(): void {
+  const returnUrl = `${window.location.origin}${BASE}/sign-in`;
+  window.location.href = `${CLERK_ACCOUNTS_URL}/sign-out?redirect_url=${encodeURIComponent(returnUrl)}`;
 }

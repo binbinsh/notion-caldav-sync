@@ -11,9 +11,10 @@ Notion CalDAV Sync connects your Notion workspace to iCloud Calendar so your dat
 
 ## How It Works
 
-1. **Sign in with Notion** — connect your workspace with one click.
-2. **Link Apple Calendar** — enter your Apple ID and an app-specific password.
-3. **Everything stays in sync** — tasks appear on your calendar instantly. Changes in either direction are synced automatically.
+1. **Sign in with Clerk** — authenticate via the shared superplanner.ai account system.
+2. **Connect Notion** — link your Notion workspace through Clerk's social connection management.
+3. **Link Apple Calendar** — enter your Apple ID and an app-specific password.
+4. **Everything stays in sync** — tasks appear on your calendar instantly. Changes in either direction are synced automatically.
 
 ## Features
 
@@ -30,20 +31,20 @@ Notion CalDAV Sync connects your Notion workspace to iCloud Calendar so your dat
 ### As a user
 
 1. Visit `https://superplanner.ai/caldav-sync/`
-2. Sign in with your Notion account
-3. Authorize access to your databases
+2. Sign in via Clerk (shared superplanner.ai account)
+3. Connect your Notion workspace through your Clerk account settings
 4. Enter your Apple ID and [app-specific password](https://support.apple.com/en-us/102654)
 5. Your tasks start syncing automatically
 
 ### Self-hosting
 
-This project runs as a Cloudflare Worker with D1, KV, and Durable Objects.
+This project runs as a Cloudflare Worker with D1 and Durable Objects.
 
 #### Prerequisites
 
 - Node.js 18+
-- A Cloudflare account with Workers, D1, KV, and Durable Objects enabled
-- A [Notion public integration](https://developers.notion.com/docs/getting-started)
+- A Cloudflare account with Workers, D1, and Durable Objects enabled
+- A [Clerk](https://clerk.com/) account with Notion configured as a social provider (using custom OAuth credentials from your [Notion integration](https://developers.notion.com/docs/getting-started))
 - An Apple ID with an [app-specific password](https://support.apple.com/en-us/102654)
 
 #### Environment Variables
@@ -53,15 +54,11 @@ Create a `.env` file with:
 | Key | Purpose |
 | --- | --- |
 | `AUTH_DB_DATABASE_ID` | D1 database ID |
-| `AUTH_CACHE_NAMESPACE_ID` | (Optional) Existing KV namespace ID |
 | `APP_BASE_PATH` | Route base path, defaults to `/caldav-sync` |
 | `WRANGLER_AUTH_MODE` | Optional, defaults to `oauth`; set to `token` only for CI or non-interactive deploys |
-| `BETTER_AUTH_SECRET` | Session secret |
+| `CLERK_PUBLISHABLE_KEY` | Clerk frontend API publishable key |
+| `CLERK_SECRET_KEY` | Clerk Backend API secret key |
 | `APP_ENCRYPTION_KEY` | Base64url-encoded 32-byte AES key for credential encryption |
-| `NOTION_CLIENT_ID` | Notion OAuth client ID |
-| `NOTION_CLIENT_SECRET` | Notion OAuth client secret |
-| `TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key |
-| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret |
 
 For local deploys, use Wrangler's native OAuth:
 
@@ -77,6 +74,12 @@ Generate the encryption key:
 node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'))"
 ```
 
+#### Clerk Configuration
+
+1. In Clerk Dashboard, add **Notion** as an SSO connection / social provider.
+2. Enable **"Use custom credentials"** and enter your Notion integration's OAuth Client ID and Client Secret.
+3. Configure the required OAuth scopes in the Scopes field.
+
 #### Deploy
 
 ```bash
@@ -84,7 +87,7 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-The script installs dependencies, runs type checks, sets up the KV namespace, writes secrets, and deploys the worker.
+The script installs dependencies, runs type checks, writes secrets, and deploys the worker.
 
 ## Development
 
@@ -101,7 +104,7 @@ npm run typecheck    # Type-check the codebase
 | Directory | Purpose |
 | --- | --- |
 | `src/index.ts` | Worker entrypoint, routing, sign-in and dashboard UI |
-| `src/auth/` | Authentication factory (better-auth + Notion OAuth) |
+| `src/auth/` | Clerk integration (middleware, client factory, Notion OAuth token helper) |
 | `src/notion/` | Notion API client and webhook parsing |
 | `src/calendar/` | CalDAV discovery, event CRUD, ICS generation |
 | `src/sync/` | Sync domain models, reconcile logic, rendering |
@@ -112,7 +115,7 @@ npm run typecheck    # Type-check the codebase
 ### Tech Stack
 
 - **Runtime**: Cloudflare Workers (TypeScript)
-- **Auth**: better-auth with Notion OAuth
+- **Auth**: Clerk (shared `accounts.superplanner.ai` instance, Notion OAuth via social provider)
 - **Database**: Cloudflare D1
 - **Sync isolation**: Durable Objects (one per tenant)
 - **CalDAV**: tsdav + custom iCloud helpers

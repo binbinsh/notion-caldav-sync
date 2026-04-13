@@ -8,11 +8,6 @@ directory = "frontend/dist"
 binding = "ASSETS"
 not_found_handling = "none"
 
-[[kv_namespaces]]
-binding = "AUTH_CACHE"
-id = "${AUTH_CACHE_NAMESPACE_ID}"
-preview_id = "${AUTH_CACHE_NAMESPACE_ID}"
-
 [[d1_databases]]
 binding = "AUTH_DB"
 database_name = "caldav-sync-service"
@@ -28,8 +23,6 @@ new_sqlite_classes = ["TenantSyncObject"]
 
 [vars]
 APP_BASE_PATH = "${APP_BASE_PATH}"
-BETTER_AUTH_BASE_URL = "${BETTER_AUTH_BASE_URL}"
-TURNSTILE_SITE_KEY = "${TURNSTILE_SITE_KEY}"
 NOTION_API_VERSION = "2025-09-03"
 
 [triggers]

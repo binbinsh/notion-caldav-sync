@@ -6,13 +6,8 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export function Topbar({ userName }: { userName?: string }) {
   const { lang, setLang, t } = useI18n();
 
-  const handleLogout = async () => {
-    try {
-      await signOut();
-    } catch {
-      // best-effort
-    }
-    window.location.href = `${BASE}/sign-in`;
+  const handleLogout = () => {
+    signOut();
   };
 
   return (

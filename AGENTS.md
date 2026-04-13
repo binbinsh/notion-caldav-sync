@@ -11,25 +11,23 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - **TypeScript Cloudflare Worker** using [Hono](https://hono.dev/) for routing.
 - **Frontend SPA** – Preact + Tailwind CSS, built with Vite, served as Cloudflare Workers static assets via `ASSETS` binding.
 - **Durable Objects** (`TenantSyncObject`) – one per tenant, handles sync orchestration with per-tenant SQLite storage.
-- **D1** (`AUTH_DB`) – stores auth sessions, tenant configs, provider connections, and encrypted secrets.
-- **KV** (`AUTH_CACHE`) – caches auth-related data.
-- **better-auth** – handles user authentication (Notion OAuth, Apple credentials).
+- **D1** (`AUTH_DB`) – stores tenant configs, provider connections, and encrypted secrets.
+- **Clerk** – shared authentication system at `accounts.superplanner.ai`. Clerk also manages Notion OAuth (configured as a social provider in Clerk Dashboard with custom credentials). The frontend redirects to Clerk's hosted pages for sign-in and social connection management.
 - **Secrets** are encrypted at rest via `APP_ENCRYPTION_KEY` before storage in D1.
 
 ## Required Secrets / Env Vars
 - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` – deploy-time only
 - `AUTH_DB_DATABASE_ID` – D1 database ID
-- `BETTER_AUTH_SECRET` – session signing key
-- `APP_ENCRYPTION_KEY` – encrypts stored provider credentials
-- `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET` – Notion OAuth app
-- `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` – Cloudflare Turnstile (anti-bot)
+- `CLERK_PUBLISHABLE_KEY` – Clerk frontend API publishable key
+- `CLERK_SECRET_KEY` – Clerk Backend API secret key
+- `APP_ENCRYPTION_KEY` – encrypts stored provider credentials (Apple passwords)
 - `INTERNAL_SERVICE_TOKEN` – optional, for inter-service calls
 
 ## Key Files
 | Path | Role |
 | --- | --- |
 | `src/index.ts` | HTTP entrypoint (Hono routes), API endpoints (`/api/me`), SPA serving, cron handler |
-| `src/auth/factory.ts` | better-auth configuration and factory |
+| `src/auth/clerk.ts` | Clerk integration: `AppEnv` type, `buildClerkClient()`, `getNotionOAuthToken()`, middleware re-exports |
 | `src/durable/tenant-sync.ts` | Durable Object: per-tenant sync orchestration |
 | `src/durable/d1-storage.ts` | D1-backed ledger storage adapter for the Durable Object |
 | `src/sync/service.ts` | Core sync service (full & incremental sync logic) |
@@ -46,7 +44,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 | `src/notion/client.ts` | Notion API client helpers |
 | `src/notion/webhook.ts` | Notion webhook verification & payload parsing |
 | `src/db/tenant-repo.ts` | D1 repository: tenant configs, connections, secrets |
-| `src/db/app-schema.ts` | D1 schema definitions (custom tables) |
+| `src/db/app-schema.ts` | D1 schema definitions (raw SQL) |
 | `src/lib/secrets.ts` | AES-GCM encryption/decryption for stored secrets |
 | `scripts/predeploy-check.mjs` | Pre-deploy validation script |
 | `deploy.sh` | Deployment script (generates wrangler.toml, sets secrets, deploys) |
@@ -54,26 +52,23 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 | `frontend/src/pages/SignIn.tsx` | Sign-in page component |
 | `frontend/src/pages/Dashboard.tsx` | Dashboard page component (setup wizard + settings) |
 | `frontend/src/lib/i18n.tsx` | i18n system (EN / 简体中文 / 繁體中文) via Preact Context |
-| `frontend/src/lib/api.ts` | API client (`fetchMe()` for `/api/me`) |
+| `frontend/src/lib/api.ts` | API client (`fetchMe()` for `/api/me`), `CLERK_ACCOUNTS_URL`, `signOut()` |
 | `frontend/vite.config.ts` | Vite build configuration |
 
 ## HTTP Endpoints
 - `GET /sign-in` – Sign-in page (redirects to dashboard if already authenticated)
 - `GET /dashboard/` – Dashboard page (setup wizard + settings)
-- `POST /notion/connect` – Initiates Notion OAuth flow
-- `GET /notion/complete` – Notion OAuth callback
 - `POST /apple` – Saves Apple/CalDAV credentials
 - `GET /api/me` – Returns session, config, and connection status JSON for the SPA
 - `POST /api/tenants/:tenantId/sync/full` – Trigger full sync for a tenant
 - `POST /api/tenants/:tenantId/sync/incremental` – Trigger incremental sync
 - `POST /webhook/notion` – Notion webhook receiver
-- `ALL /auth/*` – better-auth authentication routes
 
 ## Development Workflow
 1. `npm install`
 2. Copy `.env-example` to `.env` and fill in all required variables.
 3. `npm run dev` (runs `wrangler dev`)
-4. Create a Notion integration, connect databases, and point the webhook to `/webhook/notion`.
+4. Configure Notion as a social provider in Clerk Dashboard (with custom OAuth credentials and scopes). Users connect Notion via Clerk's account portal.
 5. Tests:
    ```bash
    npm test                # unit tests (vitest)
@@ -86,8 +81,11 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 ## Coding Tips
 - The UI (sign-in page, dashboard) is a Preact SPA in `frontend/`. Vite builds it to `frontend/dist/`, and the Worker serves it via the `ASSETS` binding.
 - The dashboard supports three languages (EN / 简体中文 / 繁體中文) with a `lang` query parameter; translations are defined in `frontend/src/lib/i18n.tsx` via Preact Context.
-- Each tenant gets a Durable Object instance keyed by tenant ID; sync state is stored in the DO's SQLite storage.
-- Provider credentials (Apple passwords, Notion tokens) are AES-GCM encrypted before storage in D1.
+- Authentication is handled by Clerk. The Worker uses `@clerk/hono` middleware to verify sessions. In non-Hono contexts (Durable Objects, cron), use `buildClerkClient(env)` from `src/auth/clerk.ts`.
+- Notion OAuth tokens are obtained via `getNotionOAuthToken(clerk, userId)` — Clerk manages the OAuth flow and token refresh.
+- The frontend redirects users to `accounts.superplanner.ai` for sign-in and to manage social connections (Notion).
+- Each tenant gets a Durable Object instance keyed by tenant ID (= Clerk user ID); sync state is stored in the DO's SQLite storage.
+- Provider credentials (Apple passwords) are AES-GCM encrypted before storage in D1. Notion tokens are managed by Clerk and fetched on-demand.
 - The cron schedule (`*/5 * * * *`) triggers full sync for all schedulable tenants.
 - Webhooks parse Notion event payloads to determine affected page IDs and fan out incremental syncs.
 - No legacy Python code remains; the project is fully TypeScript.

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useI18n, type Translations } from "../lib/i18n";
 import { Topbar } from "../components/Topbar";
 import {
+  CLERK_ACCOUNTS_URL,
   fetchDebugSnapshot,
   fetchMe,
   fetchRecentWebhooks,
@@ -344,14 +345,15 @@ export function DashboardPage() {
           </h1>
           {!needsSetup && (
             <div class="flex gap-2.5 flex-wrap">
-              <form method="post" action={`${BASE}/notion/connect`}>
-                <button
-                  type="submit"
-                  class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover"
-                >
-                  {data.notionConnected ? t("reconnectNotion") : t("connectNotion")}
-                </button>
-              </form>
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = `${CLERK_ACCOUNTS_URL}/user`;
+                }}
+                class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover"
+              >
+                {data.notionConnected ? t("reconnectNotion") : t("connectNotion")}
+              </button>
               {data.workspaceId && (
                 <>
                   <button
@@ -471,14 +473,15 @@ function SetupWizard({
       {currentStep === 1 && (
         <div class="grid gap-4">
           <p class="text-sm text-muted m-0">{t("signInSub")}</p>
-          <form method="post" action={`${BASE}/notion/connect`}>
-            <button
-              type="submit"
-              class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover"
-            >
-              {t("connectNotion")}
-            </button>
-          </form>
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = `${CLERK_ACCOUNTS_URL}/user`;
+            }}
+            class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover"
+          >
+            {t("connectNotion")}
+          </button>
         </div>
       )}
 

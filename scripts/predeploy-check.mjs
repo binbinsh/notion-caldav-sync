@@ -12,14 +12,12 @@ loadLocalEnv();
 const env = {
   ...process.env,
   APP_BASE_PATH: BASE_PATH,
-  BETTER_AUTH_BASE_URL: `http://127.0.0.1:${PORT}${BASE_PATH}`,
-  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || randomBytes(24).toString("hex"),
+  CLERK_PUBLISHABLE_KEY:
+    process.env.CLERK_PUBLISHABLE_KEY || "pk_test_placeholder",
+  CLERK_SECRET_KEY:
+    process.env.CLERK_SECRET_KEY || "sk_test_placeholder",
   APP_ENCRYPTION_KEY:
     process.env.APP_ENCRYPTION_KEY || randomBytes(32).toString("base64url"),
-  NOTION_CLIENT_ID: process.env.NOTION_CLIENT_ID || "dummy-notion-client-id",
-  NOTION_CLIENT_SECRET: process.env.NOTION_CLIENT_SECRET || "dummy-notion-client-secret",
-  TURNSTILE_SECRET_KEY: process.env.TURNSTILE_SECRET_KEY || "",
-  TURNSTILE_SITE_KEY: process.env.TURNSTILE_SITE_KEY || "",
 };
 
 const child = spawn(
@@ -55,6 +53,7 @@ try {
 }
 
 async function runChecks() {
+  // Root should redirect to /sign-in
   const rootResponse = await fetch(`${BASE_URL}/`, {
     redirect: "manual",
   });
@@ -67,6 +66,7 @@ async function runChecks() {
     "GET / should redirect with a base-path-relative Location header",
   );
 
+  // Sign-in page should serve the SPA shell
   const signInResponse = await fetch(`${BASE_URL}/sign-in`);
   const signInHtml = await signInResponse.text();
   assert(signInResponse.ok, "GET /sign-in should succeed");
@@ -78,69 +78,13 @@ async function runChecks() {
   const assetResponse = await fetch(assetUrl);
   assert(assetResponse.ok, "referenced frontend asset should be served");
 
+  // /api/me should report unauthenticated
   const apiMeResponse = await fetch(`${BASE_URL}/api/me`);
   assert(apiMeResponse.ok, "GET /api/me should succeed for unauthenticated users");
   const apiMeData = await apiMeResponse.json();
   assert(apiMeData.authenticated === false, "/api/me should report unauthenticated when no session");
 
-  const notionConnectResponse = await fetch(`${BASE_URL}/notion/connect`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: "",
-    redirect: "manual",
-  });
-  assert(
-    notionConnectResponse.status === 302 || notionConnectResponse.status === 303,
-    "Notion connect should redirect",
-  );
-  const location = notionConnectResponse.headers.get("location") || "";
-  assert(location.length > 0, "Notion connect should set a redirect location");
-  const notionAuthorizeUrl = new URL(location);
-  const oauthStateCookie = notionConnectResponse.headers.get("set-cookie") || "";
-  assert(
-    oauthStateCookie.includes("oauth_state") || oauthStateCookie.includes("better-auth"),
-    "Notion connect should persist OAuth state before redirecting",
-  );
-  assert(
-    notionAuthorizeUrl.searchParams.get("redirect_uri") === `${BASE_URL}/callback/notion`,
-    "Notion connect should use the public provider callback route",
-  );
-
-  const authSignInSocialResponse = await fetch(`${BASE_URL}/auth/sign-in/social`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      provider: "notion",
-      callbackURL: `${BASE_URL}/notion/complete`,
-      errorCallbackURL: `${BASE_URL}/sign-in`,
-      disableRedirect: true,
-    }),
-    redirect: "manual",
-  });
-  assert(authSignInSocialResponse.status !== 404, "Better Auth sign-in route should be reachable");
-
-  const callbackResponse = await fetch(`${BASE_URL}/auth/callback/notion`, {
-    redirect: "manual",
-  });
-  assert(callbackResponse.status !== 404, "Better Auth callback route should be reachable");
-  assert(
-    (callbackResponse.headers.get("location") || "").startsWith(`${BASE_PATH}/sign-in`),
-    "Better Auth callback fallback should preserve APP_BASE_PATH",
-  );
-
-  const providerCallbackResponse = await fetch(`${BASE_URL}/callback/notion`, {
-    redirect: "manual",
-  });
-  assert(providerCallbackResponse.status !== 404, "Provider callback route should be reachable");
-  assert(
-    (providerCallbackResponse.headers.get("location") || "").startsWith(`${BASE_PATH}/sign-in`),
-    "Provider callback fallback should preserve APP_BASE_PATH",
-  );
-
+  // Dashboard should redirect unauthenticated users to sign-in
   const dashboardResponse = await fetch(`${BASE_URL}/dashboard/`, {
     redirect: "manual",
   });
@@ -153,6 +97,7 @@ async function runChecks() {
     "Dashboard redirect should stay on the current origin",
   );
 
+  // Webhook verification token flow
   const verifyToken = "predeploy-verify-token";
   const verificationResponse = await fetch(`${BASE_URL}/webhook/notion`, {
     method: "POST",
@@ -161,6 +106,7 @@ async function runChecks() {
   });
   assert(verificationResponse.ok, "Webhook verification token should be stored");
 
+  // Signed webhook should succeed
   const webhookBody = JSON.stringify({
     accessible_by: [{ bot_id: "missing-bot" }],
     events: [{ type: "page.updated", payload: { page_id: "9c01f93a-6862-420f-941f-7609fa1f8911" } }],

@@ -1,4 +1,4 @@
-import { createAuth, type AppEnv } from "../auth/factory";
+import { type AppEnv, buildClerkClient, getNotionOAuthToken } from "../auth/clerk";
 import {
   getProviderConnectionByTenant,
   getTenantConfigByTenantId,
@@ -230,15 +230,6 @@ export class TenantSyncObject {
       throw new Error(`Apple credentials are missing for tenant ${tenantId}.`);
     }
 
-    const providerConnection = await getProviderConnectionByTenant(
-      this.env.AUTH_DB,
-      tenantId,
-      "notion",
-    );
-    if (!providerConnection) {
-      throw new Error(`Notion connection is missing for tenant ${tenantId}.`);
-    }
-
     const masterKey = requireMasterKey(this.env.APP_ENCRYPTION_KEY);
     const appleId = await decryptSecret(appleIdSecret.cipher_text, masterKey, `${tenantId}:apple_id`);
     const appleAppPassword = await decryptSecret(
@@ -247,19 +238,17 @@ export class TenantSyncObject {
       `${tenantId}:apple_app_password`,
     );
 
-    const authBaseUrl = (this.env.BETTER_AUTH_BASE_URL || "").trim() || "https://example.invalid";
-    const auth = createAuth(this.env, new Request(authBaseUrl), authBaseUrl);
-    const notionToken = await auth.api.getAccessToken({
-      body: {
-        providerId: "notion",
-        accountId: providerConnection.provider_account_id,
-        userId: providerConnection.user_id,
-      },
-    });
+    // Fetch the Notion OAuth token from Clerk.
+    // The tenant ID is the Clerk user ID.
+    const clerk = buildClerkClient(this.env);
+    const notionToken = await getNotionOAuthToken(clerk, tenantId);
+    if (!notionToken) {
+      throw new Error(`Notion is not connected for tenant ${tenantId}. Please reconnect via the dashboard.`);
+    }
 
     const service = buildService({
       bindings: {
-        notionToken: notionToken.accessToken,
+        notionToken,
         notionVersion: this.env.NOTION_API_VERSION || "2025-09-03",
         appleId,
         appleAppPassword,

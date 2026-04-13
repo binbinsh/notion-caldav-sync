@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useI18n } from "../lib/i18n";
 import { Flash } from "../components/Flash";
+import { CLERK_ACCOUNTS_URL } from "../lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -20,6 +21,11 @@ export function SignInPage() {
       : lang === "zh-hant"
         ? "font-serif-tc"
         : "font-serif";
+
+  const handleSignIn = () => {
+    const returnUrl = `${window.location.origin}${BASE}/dashboard/`;
+    window.location.href = `${CLERK_ACCOUNTS_URL}/sign-in?redirect_url=${encodeURIComponent(returnUrl)}`;
+  };
 
   return (
     <div class="min-h-screen grid place-items-center p-8 max-md:p-5">
@@ -55,14 +61,13 @@ export function SignInPage() {
           </p>
           {error && <Flash type="error" message={error} />}
           {notice && <Flash type="success" message={notice} />}
-          <form method="post" action={`${BASE}/notion/connect`} class="grid gap-3.5">
-            <button
-              type="submit"
-              class="border-0 rounded-[14px] py-4 px-[18px] bg-accent text-white font-semibold text-base cursor-pointer shadow-[0_4px_14px_rgba(37,99,235,0.2)] transition-all duration-200 hover:bg-accent-hover hover:shadow-[0_6px_20px_rgba(37,99,235,0.25)]"
-            >
-              {t("signInBtn")}
-            </button>
-          </form>
+          <button
+            type="button"
+            onClick={handleSignIn}
+            class="border-0 rounded-[14px] py-4 px-[18px] bg-accent text-white font-semibold text-base cursor-pointer shadow-[0_4px_14px_rgba(37,99,235,0.2)] transition-all duration-200 hover:bg-accent-hover hover:shadow-[0_6px_20px_rgba(37,99,235,0.25)]"
+          >
+            {t("signInBtn")}
+          </button>
         </div>
       </section>
     </div>

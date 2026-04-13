@@ -12,11 +12,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "^1.6.2",
+    "@clerk/backend": "^3.2.8",
+    "@clerk/hono": "^0.1.10",
     "@notionhq/client": "^5.17.0",
-    "better-auth": "^1.6.2",
-    "better-auth-cloudflare": "^0.3.0",
-    "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.5.11",
     "hono": "^4.12.12",
     "ical-generator": "^10.1.0",
@@ -25,8 +23,8 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@types/node": "^24.5.2",
     "@cloudflare/workers-types": "^4.20260404.0",
+    "@types/node": "^24.5.2",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
     "wrangler": "^4.42.0"
