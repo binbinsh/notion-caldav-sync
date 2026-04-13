@@ -6,6 +6,7 @@ ROOT_DIR="$SCRIPT_DIR"
 CONFIG_PATH="$ROOT_DIR/wrangler.toml"
 TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
 AUTH_CACHE_NAMESPACE_NAME="caldav-sync-service-AUTH-CACHE"
+WRANGLER_AUTH_MODE="${WRANGLER_AUTH_MODE:-oauth}"
 
 cd "$ROOT_DIR"
 
@@ -38,13 +39,32 @@ namespace_exists() {
   return 1
 }
 
+namespace_title_for_id() {
+  local namespace_id=${1:-}
+  if list_json=$(npm exec wrangler kv namespace list 2>/dev/null); then
+    printf '%s' "$list_json" | node -e '
+      const fs = require("fs");
+      const target = process.argv[1];
+      const data = JSON.parse(fs.readFileSync(0, "utf8"));
+      const entries = Array.isArray(data) ? data : (data.result || []);
+      const match = entries.find((entry) => entry && entry.id === target);
+      if (match && match.title) process.stdout.write(String(match.title));
+    ' "$namespace_id" || true
+  fi
+}
+
 ensure_auth_cache_namespace() {
   if [ -n "${AUTH_CACHE_NAMESPACE_ID:-}" ]; then
-    if namespace_exists "$AUTH_CACHE_NAMESPACE_ID"; then
+    existing_title=$(namespace_title_for_id "$AUTH_CACHE_NAMESPACE_ID")
+    if [ "$existing_title" = "$AUTH_CACHE_NAMESPACE_NAME" ]; then
       echo "AUTH_CACHE namespace already set: $AUTH_CACHE_NAMESPACE_ID"
       return
     fi
-    echo "Provided AUTH_CACHE_NAMESPACE_ID was not found. Rediscovering or creating AUTH_CACHE namespace..." >&2
+    if [ -n "$existing_title" ]; then
+      echo "Provided AUTH_CACHE_NAMESPACE_ID points to \"$existing_title\". Rediscovering the correct AUTH_CACHE namespace..." >&2
+    else
+      echo "Provided AUTH_CACHE_NAMESPACE_ID was not found. Rediscovering or creating AUTH_CACHE namespace..." >&2
+    fi
     unset AUTH_CACHE_NAMESPACE_ID
   fi
 
@@ -88,13 +108,23 @@ put_secret() {
   printf "%s" "$value" | npm exec wrangler secret put "$name" -- --config wrangler.toml
 }
 
-if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-  echo "CLOUDFLARE_ACCOUNT_ID is required for Wrangler operations." >&2
-  exit 1
-fi
-
-if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-  echo "CLOUDFLARE_API_TOKEN is required for Wrangler operations." >&2
+if [ "$WRANGLER_AUTH_MODE" = "oauth" ]; then
+  unset CLOUDFLARE_API_TOKEN
+  unset CLOUDFLARE_ACCOUNT_ID
+  echo "Using Wrangler OAuth authentication."
+elif [ "$WRANGLER_AUTH_MODE" = "token" ]; then
+  if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    echo "CLOUDFLARE_ACCOUNT_ID is required when WRANGLER_AUTH_MODE=token." >&2
+    exit 1
+  fi
+  if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+    echo "CLOUDFLARE_API_TOKEN is required when WRANGLER_AUTH_MODE=token." >&2
+    exit 1
+  fi
+  echo "Using Wrangler API token authentication."
+else
+  echo "Unsupported WRANGLER_AUTH_MODE: $WRANGLER_AUTH_MODE" >&2
+  echo "Use WRANGLER_AUTH_MODE=oauth or WRANGLER_AUTH_MODE=token." >&2
   exit 1
 fi
 

@@ -52,17 +52,24 @@ Create a `.env` file with:
 
 | Key | Purpose |
 | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
-| `CLOUDFLARE_API_TOKEN` | API token with Workers, D1, KV, and DO permissions |
 | `AUTH_DB_DATABASE_ID` | D1 database ID |
 | `AUTH_CACHE_NAMESPACE_ID` | (Optional) Existing KV namespace ID |
 | `APP_BASE_PATH` | Route base path, defaults to `/caldav-sync` |
+| `WRANGLER_AUTH_MODE` | Optional, defaults to `oauth`; set to `token` only for CI or non-interactive deploys |
 | `BETTER_AUTH_SECRET` | Session secret |
 | `APP_ENCRYPTION_KEY` | Base64url-encoded 32-byte AES key for credential encryption |
 | `NOTION_CLIENT_ID` | Notion OAuth client ID |
 | `NOTION_CLIENT_SECRET` | Notion OAuth client secret |
 | `TURNSTILE_SITE_KEY` | Cloudflare Turnstile site key |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret |
+
+For local deploys, use Wrangler's native OAuth:
+
+```bash
+npm exec wrangler login
+```
+
+Only set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` when you explicitly want token-based auth, for example in CI with `WRANGLER_AUTH_MODE=token`.
 
 Generate the encryption key:
 

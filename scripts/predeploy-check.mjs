@@ -72,6 +72,11 @@ async function runChecks() {
   assert(signInResponse.ok, "GET /sign-in should succeed");
   assert(signInHtml.includes('<div id="app">'), "sign-in page should serve the SPA shell");
   assert(signInHtml.includes("<script"), "sign-in page should include a script tag for the SPA bundle");
+  const assetMatch = signInHtml.match(/(?:src|href)="([^"]*\/assets\/[^"]+)"/);
+  assert(assetMatch?.[1], "sign-in page should reference a built frontend asset");
+  const assetUrl = new URL(assetMatch[1], BASE_URL).toString();
+  const assetResponse = await fetch(assetUrl);
+  assert(assetResponse.ok, "referenced frontend asset should be served");
 
   const apiMeResponse = await fetch(`${BASE_URL}/api/me`);
   assert(apiMeResponse.ok, "GET /api/me should succeed for unauthenticated users");
