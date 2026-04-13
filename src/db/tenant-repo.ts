@@ -408,3 +408,56 @@ export async function setAppState(
     .bind(key, value, now)
     .run();
 }
+
+export type WebhookLogRow = {
+  id: string;
+  tenant_id: string | null;
+  event_types: string | null;
+  page_ids: string | null;
+  result: string | null;
+  created_at: string;
+};
+
+export async function insertWebhookLog(
+  db: D1Database,
+  input: {
+    tenantIds: string[];
+    eventTypes: string[];
+    pageIds: string[];
+    result: Record<string, unknown>;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  const tenantId = input.tenantIds.length > 0 ? input.tenantIds.join(",") : null;
+  await db
+    .prepare(
+      `INSERT INTO webhook_log (id, tenant_id, event_types, page_ids, result, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      crypto.randomUUID().replace(/-/g, ""),
+      tenantId,
+      input.eventTypes.length > 0 ? JSON.stringify(input.eventTypes) : null,
+      input.pageIds.length > 0 ? JSON.stringify(input.pageIds) : null,
+      JSON.stringify(input.result),
+      now,
+    )
+    .run();
+
+  // Prune old entries, keep the latest 50
+  await db
+    .prepare(
+      `DELETE FROM webhook_log WHERE id NOT IN (SELECT id FROM webhook_log ORDER BY created_at DESC LIMIT 50)`,
+    )
+    .run();
+}
+
+export async function getRecentWebhookLogs(
+  db: D1Database,
+  limit = 10,
+): Promise<WebhookLogRow[]> {
+  const result = await db
+    .prepare(`SELECT * FROM webhook_log ORDER BY created_at DESC LIMIT ?`)
+    .bind(limit)
+    .all<WebhookLogRow>();
+  return result.results || [];
+}

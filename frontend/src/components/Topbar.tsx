@@ -1,9 +1,19 @@
 import { useI18n, type Lang } from "../lib/i18n";
+import { signOut } from "../lib/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export function Topbar({ userName }: { userName?: string }) {
   const { lang, setLang, t } = useI18n();
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+    } catch {
+      // best-effort
+    }
+    window.location.href = `${BASE}/sign-in`;
+  };
 
   return (
     <header class="flex items-center justify-between px-6 py-4 border-b border-line bg-surface">
@@ -19,6 +29,15 @@ export function Topbar({ userName }: { userName?: string }) {
           <span class="text-[13px] text-muted">{userName}</span>
         )}
         <LangBar lang={lang} setLang={setLang} />
+        {userName && (
+          <button
+            type="button"
+            onClick={handleLogout}
+            class="px-2.5 py-1 border border-line rounded-md text-[11px] font-medium text-muted cursor-pointer transition-all duration-150 bg-transparent hover:bg-red/8 hover:text-red hover:border-red/20"
+          >
+            {t("logoutBtn")}
+          </button>
+        )}
       </div>
     </header>
   );

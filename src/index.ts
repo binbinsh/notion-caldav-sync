@@ -7,14 +7,17 @@ import {
   getProviderConnectionsForWebhookRouting,
   getProviderConnectionByTenant,
   getTenantConfigByTenantId,
+  getTenantSecretByKind,
   listSchedulableTenantIds,
   setAppState,
   upsertProviderConnection,
   upsertTenantConfig,
   upsertTenantSecret,
+  insertWebhookLog,
+  getRecentWebhookLogs,
 } from "./db/tenant-repo";
 export { TenantSyncObject } from "./durable/tenant-sync";
-import { encryptSecret, requireMasterKey } from "./lib/secrets";
+import { decryptSecret, encryptSecret, requireMasterKey } from "./lib/secrets";
 import {
   collectPageIds,
   extractEventTypes,
@@ -74,6 +77,10 @@ app.all("/callback/*", async (c) => {
   return c.var.auth.handler(new Request(url.toString(), c.req.raw));
 });
 
+app.get("/assets/*", async (c) => {
+  return serveAsset(c.env, new URL(c.req.raw.url).pathname);
+});
+
 app.get("/", (c) => c.redirect(servicePath(c, "/sign-in"), 302));
 
 app.get("/sign-in", async (c) => {
@@ -102,8 +109,9 @@ app.get("/api/me", async (c) => {
     return c.json({
       authenticated: false,
       user: null,
-      tenantId: null,
+      workspaceId: null,
       notionConnected: false,
+      appleCredentials: null,
       config: null,
     });
   }
@@ -114,6 +122,7 @@ app.get("/api/me", async (c) => {
   const tenantOrg = organizations.find((organization) => normalizeText(organization.tenantId));
   const tenantId = normalizeText(tenantOrg?.tenantId) || "";
   const config = tenantId ? await getTenantConfigByTenantId(c.env.AUTH_DB, tenantId) : null;
+  const appleCredentials = await loadAppleCredentialSummary(c.env, tenantId);
   const accounts = await c.var.auth.api.listUserAccounts({ headers: c.req.raw.headers }).catch(() => []);
   const notionConnected = Array.isArray(accounts)
     ? accounts.some((account) => account.providerId === "notion")
@@ -125,8 +134,9 @@ app.get("/api/me", async (c) => {
       email: session.user.email,
       name: session.user.name,
     },
-    tenantId: tenantId || null,
+    workspaceId: tenantId || null,
     notionConnected,
+    appleCredentials,
     config: config
       ? {
           calendar_name: config.calendar_name ?? null,
@@ -139,6 +149,24 @@ app.get("/api/me", async (c) => {
           last_full_sync_at: config.last_full_sync_at ?? null,
         }
       : null,
+   });
+});
+
+app.get("/api/webhooks/recent", async (c) => {
+  const session = await c.var.auth.api.getSession({ headers: c.req.raw.headers }).catch(() => null);
+  if (!session) {
+    return c.json({ logs: [] }, 401);
+  }
+  const logs = await getRecentWebhookLogs(c.env.AUTH_DB, 10);
+  return c.json({
+    logs: logs.map((log) => ({
+      id: log.id,
+      tenantId: log.tenant_id,
+      eventTypes: log.event_types ? safeJsonParse(log.event_types) : [],
+      pageIds: log.page_ids ? safeJsonParse(log.page_ids) : [],
+      result: log.result ? safeJsonParse(log.result) : null,
+      createdAt: log.created_at,
+    })),
   });
 });
 
@@ -273,8 +301,12 @@ app.get("/notion/complete", async (c) => {
 });
 
 app.post("/apple", async (c) => {
+  const wantsJson = (c.req.raw.headers.get("accept") || "").includes("application/json");
   const session = await c.var.auth.api.getSession({ headers: c.req.raw.headers });
   if (!session) {
+    if (wantsJson) {
+      return c.json({ ok: false, error: "Please sign in with Notion to access your settings." }, 401);
+    }
     return c.redirect(servicePath(c, "/sign-in?error=Please%20sign%20in%20with%20Notion%20to%20access%20your%20settings."), 302);
   }
 
@@ -287,38 +319,77 @@ app.post("/apple", async (c) => {
   });
   const tenantId = normalizeText(tenant?.tenantId);
   if (!tenant || !tenantId) {
+    if (wantsJson) {
+      return c.json({ ok: false, error: "Your account isn't fully set up yet. Please complete the setup." }, 400);
+    }
     return c.redirect(servicePath(c, "/sign-in?error=Your%20account%20isn't%20fully%20set%20up%20yet.%20Please%20complete%20the%20setup."), 302);
   }
 
-  const formData = await c.req.raw.formData();
-  const appleId = normalizeText(formData.get("apple_id"));
-  const appleAppPassword = normalizeText(formData.get("apple_app_password"));
-  const calendarName = normalizeText(formData.get("calendar_name"));
-  const calendarColor = normalizeText(formData.get("calendar_color"));
-  const calendarTimezone = normalizeText(formData.get("calendar_timezone"));
-  const dateOnlyTimezone = normalizeText(formData.get("date_only_timezone"));
-  const pollIntervalMinutes = normalizeNullableInt(formData.get("poll_interval_minutes"));
-  const fullSyncIntervalMinutes = normalizeNullableInt(formData.get("full_sync_interval_minutes"));
+  let appleId: string;
+  let appleAppPassword: string;
+  let calendarName: string;
+  let calendarColor: string;
+  let calendarTimezone: string;
+  let dateOnlyTimezone: string;
+  let pollIntervalMinutes: number | null;
+  let fullSyncIntervalMinutes: number | null;
 
-  if (!appleId || !appleAppPassword) {
+  const contentType = c.req.raw.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const body = await c.req.raw.json().catch(() => ({})) as Record<string, unknown>;
+    appleId = normalizeText(body.apple_id);
+    appleAppPassword = normalizeText(body.apple_app_password);
+    calendarName = normalizeText(body.calendar_name);
+    calendarColor = normalizeText(body.calendar_color);
+    calendarTimezone = normalizeText(body.calendar_timezone);
+    dateOnlyTimezone = normalizeText(body.date_only_timezone);
+    pollIntervalMinutes = normalizeNullableInt(body.poll_interval_minutes);
+    fullSyncIntervalMinutes = normalizeNullableInt(body.full_sync_interval_minutes);
+  } else {
+    const formData = await c.req.raw.formData();
+    appleId = normalizeText(formData.get("apple_id"));
+    appleAppPassword = normalizeText(formData.get("apple_app_password"));
+    calendarName = normalizeText(formData.get("calendar_name"));
+    calendarColor = normalizeText(formData.get("calendar_color"));
+    calendarTimezone = normalizeText(formData.get("calendar_timezone"));
+    dateOnlyTimezone = normalizeText(formData.get("date_only_timezone"));
+    pollIntervalMinutes = normalizeNullableInt(formData.get("poll_interval_minutes"));
+    fullSyncIntervalMinutes = normalizeNullableInt(formData.get("full_sync_interval_minutes"));
+  }
+
+  const existingAppleId = await getTenantSecretByKind(c.env.AUTH_DB, tenantId, "apple_id");
+  const existingAppleAppPassword = await getTenantSecretByKind(
+    c.env.AUTH_DB,
+    tenantId,
+    "apple_app_password",
+  );
+
+  if ((!appleId && !existingAppleId) || (!appleAppPassword && !existingAppleAppPassword)) {
+    if (wantsJson) {
+      return c.json({ ok: false, error: "Please enter both your Apple ID and app-specific password." }, 400);
+    }
     return c.redirect(servicePath(c, "/sign-in?error=Please%20enter%20both%20your%20Apple%20ID%20and%20app-specific%20password."), 302);
   }
 
   const masterKey = requireMasterKey(c.env.APP_ENCRYPTION_KEY);
-  await upsertTenantSecret(c.env.AUTH_DB, {
-    tenantId,
-    kind: "apple_id",
-    cipherText: await encryptSecret(appleId, masterKey, `${tenantId}:apple_id`),
-  });
-  await upsertTenantSecret(c.env.AUTH_DB, {
-    tenantId,
-    kind: "apple_app_password",
-    cipherText: await encryptSecret(
-      appleAppPassword,
-      masterKey,
-      `${tenantId}:apple_app_password`,
-    ),
-  });
+  if (appleId) {
+    await upsertTenantSecret(c.env.AUTH_DB, {
+      tenantId,
+      kind: "apple_id",
+      cipherText: await encryptSecret(appleId, masterKey, `${tenantId}:apple_id`),
+    });
+  }
+  if (appleAppPassword) {
+    await upsertTenantSecret(c.env.AUTH_DB, {
+      tenantId,
+      kind: "apple_app_password",
+      cipherText: await encryptSecret(
+        appleAppPassword,
+        masterKey,
+        `${tenantId}:apple_app_password`,
+      ),
+    });
+  }
 
   await upsertTenantConfig(c.env.AUTH_DB, {
     tenantId,
@@ -335,49 +406,49 @@ app.post("/apple", async (c) => {
     notionBotId: null,
   });
 
+  if (wantsJson) {
+    return c.json({ ok: true, notice: "Apple Calendar settings saved successfully." });
+  }
   return c.redirect(servicePath(c, "/dashboard/?notice=Apple%20Calendar%20settings%20saved%20successfully."), 302);
 });
 
-app.post("/api/tenants/:tenantId/sync/full", async (c) => {
-  const requestedTenantId = normalizeText(c.req.param("tenantId"));
-  const allowedTenantId = await resolveTenantIdForSession(c.var.auth, c.req.raw.headers);
-  if (!requestedTenantId || requestedTenantId !== allowedTenantId) {
-    return c.redirect(servicePath(c, "/sign-in?error=You%20don't%20have%20permission%20to%20do%20this."), 302);
-  }
-  if (!c.env.TENANT_SYNC) {
-    return c.redirect(servicePath(c, "/sign-in?error=Sync%20service%20is%20temporarily%20unavailable.%20Please%20try%20again%20later."), 302);
-  }
-  const stub = c.env.TENANT_SYNC.getByName(requestedTenantId);
-  const response = await stub.fetch("https://tenant-sync/sync/full", {
-    method: "POST",
-    headers: { "x-tenant-id": requestedTenantId },
-  });
-  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-  if (!response.ok) {
-    return c.redirect(servicePath(c, `/dashboard/?error=${encodeURIComponent(payload?.error || "Sync couldn't complete. Please try again.")}`), 302);
-  }
-  return c.redirect(servicePath(c, "/dashboard/?notice=Full%20sync%20completed%20successfully."), 302);
+app.post("/api/workspaces/:workspaceId/sync/full", async (c) => {
+  return triggerWorkspaceSync(c, normalizeText(c.req.param("workspaceId")), "full");
 });
 
-app.post("/api/tenants/:tenantId/sync/incremental", async (c) => {
-  const requestedTenantId = normalizeText(c.req.param("tenantId"));
-  const allowedTenantId = await resolveTenantIdForSession(c.var.auth, c.req.raw.headers);
-  if (!requestedTenantId || requestedTenantId !== allowedTenantId) {
-    return c.redirect(servicePath(c, "/sign-in?error=You%20don't%20have%20permission%20to%20do%20this."), 302);
+app.post("/api/workspaces/:workspaceId/sync/incremental", async (c) => {
+  return triggerWorkspaceSync(c, normalizeText(c.req.param("workspaceId")), "incremental");
+});
+
+app.get("/api/workspaces/:workspaceId/debug", async (c) => {
+  const requestedWorkspaceId = normalizeText(c.req.param("workspaceId"));
+  const allowedWorkspaceId = await resolveTenantIdForSession(c.var.auth, c.req.raw.headers);
+  if (!requestedWorkspaceId || requestedWorkspaceId !== allowedWorkspaceId) {
+    return c.json({ ok: false, error: "Forbidden" }, 403);
   }
   if (!c.env.TENANT_SYNC) {
-    return c.redirect(servicePath(c, "/sign-in?error=Sync%20service%20is%20temporarily%20unavailable.%20Please%20try%20again%20later."), 302);
+    return c.json({ ok: false, error: "Sync service is temporarily unavailable." }, 503);
   }
-  const stub = c.env.TENANT_SYNC.getByName(requestedTenantId);
-  const response = await stub.fetch("https://tenant-sync/sync/incremental", {
-    method: "POST",
-    headers: { "x-tenant-id": requestedTenantId },
-  });
-  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-  if (!response.ok) {
-    return c.redirect(servicePath(c, `/dashboard/?error=${encodeURIComponent(payload?.error || "Quick sync couldn't complete. Please try again.")}`), 302);
+
+  const stub = c.env.TENANT_SYNC.getByName(requestedWorkspaceId);
+  try {
+    const response = await stub.fetch("https://tenant-sync/debug", {
+      headers: { "x-tenant-id": requestedWorkspaceId },
+    });
+    const payload = await response.json().catch(() => ({
+      ok: false,
+      error: "Debug snapshot could not be parsed.",
+    }));
+    return c.json(payload, response.status as 200 | 400 | 401 | 403 | 404 | 500 | 503);
+  } catch (error) {
+    return c.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      500,
+    );
   }
-  return c.redirect(servicePath(c, "/dashboard/?notice=Quick%20sync%20completed%20successfully."), 302);
 });
 
 app.post("/webhook/notion", async (c) => {
@@ -418,7 +489,8 @@ app.post("/webhook/notion", async (c) => {
   const tenantIds = [...new Set(connections.map((connection) => connection.tenant_id).filter(Boolean))];
 
   const pageIds = collectPageIds(payload);
-  const forceFull = needsFullSync(extractEventTypes(payload));
+  const eventTypes = extractEventTypes(payload);
+  const forceFull = needsFullSync(eventTypes);
 
   const results: Record<string, unknown> = {
     ok: true,
@@ -450,12 +522,106 @@ app.post("/webhook/notion", async (c) => {
     }
   }
 
+  // Log the webhook call (best-effort, don't fail the response)
+  try {
+    await insertWebhookLog(c.env.AUTH_DB, {
+      tenantIds,
+      eventTypes,
+      pageIds,
+      result: results,
+    });
+  } catch (logError) {
+    console.error("[webhook-log] Failed to insert webhook log:", logError);
+  }
+
   return c.json(results);
 });
 
 async function serveIndexHtml(env: AppEnv): Promise<Response> {
+  return serveAsset(env, "/index.html");
+}
+
+async function triggerWorkspaceSync(
+  c: { req: { raw: Request }; var: { auth: Auth<any>; serviceBasePath: string }; env: AppEnv },
+  requestedWorkspaceId: string,
+  mode: "full" | "incremental",
+): Promise<Response> {
+  const wantsJson = (c.req.raw.headers.get("accept") || "").includes("application/json");
+  const allowedWorkspaceId = await resolveTenantIdForSession(c.var.auth, c.req.raw.headers);
+  if (!requestedWorkspaceId || requestedWorkspaceId !== allowedWorkspaceId) {
+    if (wantsJson) {
+      return Response.json({ ok: false, error: "You don't have permission to do this." }, { status: 403 });
+    }
+    return Response.redirect(
+      new URL(servicePath(c, "/sign-in?error=You%20don't%20have%20permission%20to%20do%20this."), c.req.raw.url),
+      302,
+    );
+  }
+  if (!c.env.TENANT_SYNC) {
+    if (wantsJson) {
+      return Response.json({ ok: false, error: "Sync service is temporarily unavailable. Please try again later." }, { status: 503 });
+    }
+    return Response.redirect(
+      new URL(
+        servicePath(c, "/sign-in?error=Sync%20service%20is%20temporarily%20unavailable.%20Please%20try%20again%20later."),
+        c.req.raw.url,
+      ),
+      302,
+    );
+  }
+  const stub = c.env.TENANT_SYNC.getByName(requestedWorkspaceId);
+  try {
+    const response = await stub.fetch(`https://tenant-sync/sync/${mode}`, {
+      method: "POST",
+      headers: { "x-tenant-id": requestedWorkspaceId },
+    });
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      const fallback =
+        mode === "full"
+          ? "Full sync couldn't complete. Please try again."
+          : "Quick sync couldn't complete. Please try again.";
+      if (wantsJson) {
+        return Response.json({ ok: false, error: payload?.error || fallback }, { status: response.status });
+      }
+      return Response.redirect(
+        new URL(
+          servicePath(c, `/dashboard/?error=${encodeURIComponent(payload?.error || fallback)}`),
+          c.req.raw.url,
+        ),
+        302,
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (wantsJson) {
+      return Response.json({ ok: false, error: `Sync request failed: ${message}` }, { status: 500 });
+    }
+    return Response.redirect(
+      new URL(
+        servicePath(
+          c,
+          `/dashboard/?error=${encodeURIComponent(`Sync request failed: ${message}`)}`,
+        ),
+        c.req.raw.url,
+      ),
+      302,
+    );
+  }
+
+  const noticeText =
+    mode === "full"
+      ? "Full sync completed successfully."
+      : "Quick sync completed successfully.";
+  if (wantsJson) {
+    return Response.json({ ok: true, notice: noticeText });
+  }
+  return Response.redirect(new URL(servicePath(c, `/dashboard/?notice=${encodeURIComponent(noticeText)}`), c.req.raw.url), 302);
+}
+
+async function serveAsset(env: AppEnv, pathname: string): Promise<Response> {
   if (env.ASSETS) {
-    return env.ASSETS.fetch(new Request("https://assets/index.html"));
+    return env.ASSETS.fetch(new Request(new URL(pathname, "https://assets").toString()));
   }
   // Fallback for local dev without ASSETS binding
   return new Response("<!doctype html><html><body><p>ASSETS binding not available.</p></body></html>", {
@@ -477,6 +643,10 @@ async function ensureSchema(env: AppEnv, auth: Auth<any>): Promise<void> {
       await runSqlStatements(env.AUTH_DB, customAppSchemaSQL);
     })();
     schemaPromises.set(key, promise);
+    // If the migration fails, remove the cached promise so it can be retried
+    promise.catch(() => {
+      schemaPromises.delete(key);
+    });
   }
   await promise;
 }
@@ -622,6 +792,65 @@ async function fetchNotionMetadata(accessToken: string, notionVersion: string): 
   };
 }
 
+async function loadAppleCredentialSummary(
+  env: AppEnv,
+  tenantId: string,
+): Promise<{
+  hasAppleId: boolean;
+  hasAppPassword: boolean;
+  appleIdMasked: string | null;
+  appPasswordMasked: string | null;
+}> {
+  if (!tenantId) {
+    return {
+      hasAppleId: false,
+      hasAppPassword: false,
+      appleIdMasked: null,
+      appPasswordMasked: null,
+    };
+  }
+
+  const [appleIdSecret, appPasswordSecret] = await Promise.all([
+    getTenantSecretByKind(env.AUTH_DB, tenantId, "apple_id"),
+    getTenantSecretByKind(env.AUTH_DB, tenantId, "apple_app_password"),
+  ]);
+  const hasAppleId = Boolean(appleIdSecret);
+  const hasAppPassword = Boolean(appPasswordSecret);
+  if (!hasAppleId && !hasAppPassword) {
+    return {
+      hasAppleId,
+      hasAppPassword,
+      appleIdMasked: null,
+      appPasswordMasked: null,
+    };
+  }
+
+  const masterKey = requireMasterKey(env.APP_ENCRYPTION_KEY);
+  const [appleIdMasked, appPasswordMasked] = await Promise.all([
+    appleIdSecret
+      ? decryptSecret(appleIdSecret.cipher_text, masterKey, `${tenantId}:apple_id`)
+          .then(maskAppleIdForDisplay)
+          .catch(() => null)
+      : Promise.resolve(null),
+    appPasswordSecret
+      ? decryptSecret(
+          appPasswordSecret.cipher_text,
+          masterKey,
+          `${tenantId}:apple_app_password`,
+        )
+          .then(maskAppPasswordForDisplay)
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    hasAppleId,
+    hasAppPassword,
+    appleIdMasked,
+    appPasswordMasked,
+  };
+}
+
 function resolveBaseUrl(env: AppEnv, request: Request): string {
   const explicit = normalizeText(env.BETTER_AUTH_BASE_URL);
   if (explicit) {
@@ -644,7 +873,7 @@ function normalizeText(value: unknown): string {
   return value.trim();
 }
 
-function normalizeNullableInt(value: FormDataEntryValue | null): number | null {
+function normalizeNullableInt(value: FormDataEntryValue | unknown | null): number | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -668,6 +897,45 @@ async function runSqlStatements(db: D1Database, sqlText: string): Promise<void> 
 
 function randomId(): string {
   return crypto.randomUUID().replace(/-/g, "");
+}
+
+function maskAppleIdForDisplay(value: string): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  const atIndex = normalized.indexOf("@");
+  if (atIndex <= 0) {
+    return maskMiddle(normalized, 2, 0);
+  }
+  const local = normalized.slice(0, atIndex);
+  const domain = normalized.slice(atIndex + 1);
+  const domainParts = domain.split(".");
+  const root = domainParts.shift() || "";
+  const suffix = domainParts.length > 0 ? `.${domainParts.join(".")}` : "";
+  return `${maskMiddle(local, 1, 1)}@${maskMiddle(root, 1, 0)}${suffix}`;
+}
+
+function maskAppPasswordForDisplay(value: string): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  const segments = normalized.split("-");
+  if (segments.length === 4 && segments.every((segment) => segment.length === 4)) {
+    return `${segments[0]}-****-****-${segments[3]}`;
+  }
+  return maskMiddle(normalized, 4, 4);
+}
+
+function maskMiddle(value: string, keepStart: number, keepEnd: number): string {
+  if (!value) {
+    return "";
+  }
+  const start = value.slice(0, keepStart);
+  const end = keepEnd > 0 ? value.slice(-keepEnd) : "";
+  const hiddenLength = Math.max(4, value.length - start.length - end.length);
+  return `${start}${"*".repeat(hiddenLength)}${end}`;
 }
 
 function servicePath(
@@ -781,17 +1049,24 @@ export default {
     const auth = createAuth(env, new Request(authBaseUrl), authBaseUrl);
     await ensureSchema(env, auth);
     const tenantIds = await listSchedulableTenantIds(env.AUTH_DB);
-    for (const tenantId of tenantIds) {
-      try {
-        const stub = env.TENANT_SYNC.getByName(tenantId);
-        await stub.fetch("https://tenant-sync/sync/scheduled", {
-          method: "POST",
-          headers: { "x-tenant-id": tenantId },
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[scheduled] tenant=${tenantId} failed: ${message}`);
-      }
+    // Fan out to all tenant DOs in parallel (bounded by CF runtime limits)
+    const CONCURRENCY = 10;
+    for (let i = 0; i < tenantIds.length; i += CONCURRENCY) {
+      const batch = tenantIds.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (tenantId) => {
+          try {
+            const stub = env.TENANT_SYNC!.getByName(tenantId);
+            await stub.fetch("https://tenant-sync/sync/scheduled", {
+              method: "POST",
+              headers: { "x-tenant-id": tenantId },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[scheduled] tenant=${tenantId} failed: ${message}`);
+          }
+        }),
+      );
     }
   },
 };

@@ -69,6 +69,22 @@ export const appState = sqliteTable("app_state", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const webhookLog = sqliteTable(
+  "webhook_log",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id"),
+    eventTypes: text("event_types"),
+    pageIds: text("page_ids"),
+    result: text("result"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    tenantIdx: index("webhook_log_tenant_idx").on(table.tenantId),
+    createdAtIdx: index("webhook_log_created_at_idx").on(table.createdAt),
+  }),
+);
+
 export const customAppSchemaSQL = `
 CREATE TABLE IF NOT EXISTS tenant_config (
   tenant_id TEXT PRIMARY KEY,
@@ -126,4 +142,15 @@ CREATE TABLE IF NOT EXISTS app_state (
 
 CREATE INDEX IF NOT EXISTS provider_connection_bot_idx ON provider_connection (bot_id);
 CREATE INDEX IF NOT EXISTS provider_connection_workspace_idx ON provider_connection (workspace_id);
+
+CREATE TABLE IF NOT EXISTS webhook_log (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT,
+  event_types TEXT,
+  page_ids TEXT,
+  result TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS webhook_log_tenant_idx ON webhook_log (tenant_id);
+CREATE INDEX IF NOT EXISTS webhook_log_created_at_idx ON webhook_log (created_at);
 `;
