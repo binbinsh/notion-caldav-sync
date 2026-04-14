@@ -1,6 +1,18 @@
 import { Hono } from "hono";
-import { clerkMiddleware, getAuth, getNotionOAuthToken, CLERK_ACCOUNTS_URL, type AppEnv } from "./auth/clerk";
-import { customAppSchemaSQL } from "./db/app-schema";
+import {
+  clerkMiddleware,
+  getAuth,
+  getNotionOAuthToken,
+  type AppEnv,
+} from "./auth/clerk";
+import {
+  buildLocalAuthUrl,
+  buildServicePath,
+  canonicalizeAuthPath,
+  resolveRequestedRedirectUrl,
+} from "./auth/navigation";
+import { renderClerkSignInHtml, renderClerkSignOutHtml } from "./auth/pages";
+import { customAppSchemaSQL, schemaMigrations } from "./db/app-schema";
 import {
   getAppState,
   getProviderConnectionsForWebhookRouting,
@@ -60,6 +72,17 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+app.use("*", async (c, next) => {
+  const pathname = new URL(c.req.raw.url).pathname;
+  const canonicalPath = canonicalizeAuthPath(pathname);
+  if (canonicalPath) {
+    const url = new URL(c.req.raw.url);
+    url.pathname = servicePath(c, canonicalPath);
+    return c.redirect(url.toString(), 301);
+  }
+  await next();
+});
+
 // ---------------------------------------------------------------------------
 // Static assets (no auth required)
 // ---------------------------------------------------------------------------
@@ -69,36 +92,95 @@ app.get("/assets/*", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Root redirect
+// Root path — redirect to dashboard
 // ---------------------------------------------------------------------------
 
-app.get("/", (c) => c.redirect(servicePath(c, "/sign-in"), 302));
-
-// ---------------------------------------------------------------------------
-// Sign-in page
-// ---------------------------------------------------------------------------
-
-app.get("/sign-in", async (c) => {
-  const { userId } = getAuth(c);
-  if (userId) {
-    return c.redirect(servicePathWithCurrentQuery(c, "/dashboard/"), 302);
-  }
-  return serveIndexHtml(c.env);
+app.get("/", async (c) => {
+  return c.redirect(servicePath(c, "/dashboard"), 302);
 });
 
 // ---------------------------------------------------------------------------
 // Dashboard page
 // ---------------------------------------------------------------------------
 
-app.get("/dashboard/", async (c) => {
+app.get("/sign-in", async (c) => {
+  const redirectTarget = resolveRequestedRedirectUrl(
+    c.req.raw.url,
+    c.var.serviceBasePath,
+    servicePath(c, "/dashboard"),
+    new URL(c.req.raw.url).searchParams.get("redirect_url"),
+  );
+  const { userId } = getAuth(c);
+  if (userId) {
+    return c.redirect(redirectTarget, 302);
+  }
+  return c.html(
+    renderClerkSignInHtml(
+      c.env.CLERK_PUBLISHABLE_KEY,
+      redirectTarget,
+      servicePath(c, "/sign-in"),
+    ),
+  );
+});
+
+// Clerk path-based routing navigates to sub-routes like /sign-in/factor-one,
+// /sign-in/sso-callback, etc. Serve the same sign-in page for all of them.
+app.get("/sign-in/*", async (c) => {
+  const redirectTarget = resolveRequestedRedirectUrl(
+    c.req.raw.url,
+    c.var.serviceBasePath,
+    servicePath(c, "/dashboard"),
+    new URL(c.req.raw.url).searchParams.get("redirect_url"),
+  );
+  const { userId } = getAuth(c);
+  if (userId) {
+    return c.redirect(redirectTarget, 302);
+  }
+  return c.html(
+    renderClerkSignInHtml(
+      c.env.CLERK_PUBLISHABLE_KEY,
+      redirectTarget,
+      servicePath(c, "/sign-in"),
+    ),
+  );
+});
+
+app.get("/sign-out", async (c) => {
+  const redirectTarget = resolveRequestedRedirectUrl(
+    c.req.raw.url,
+    c.var.serviceBasePath,
+    servicePath(c, "/"),
+    new URL(c.req.raw.url).searchParams.get("redirect_url"),
+  );
   const { userId } = getAuth(c);
   if (!userId) {
-    return c.redirect(servicePath(c, "/sign-in"), 302);
+    return c.redirect(redirectTarget, 302);
+  }
+  return c.html(renderClerkSignOutHtml(c.env.CLERK_PUBLISHABLE_KEY, redirectTarget));
+});
+
+// Clerk sign-out sub-routes (similar to sign-in).
+app.get("/sign-out/*", async (c) => {
+  const redirectTarget = resolveRequestedRedirectUrl(
+    c.req.raw.url,
+    c.var.serviceBasePath,
+    servicePath(c, "/"),
+    new URL(c.req.raw.url).searchParams.get("redirect_url"),
+  );
+  const { userId } = getAuth(c);
+  if (!userId) {
+    return c.redirect(redirectTarget, 302);
+  }
+  return c.html(renderClerkSignOutHtml(c.env.CLERK_PUBLISHABLE_KEY, redirectTarget));
+});
+
+app.get("/dashboard", async (c) => {
+  const { userId } = getAuth(c);
+  if (!userId) {
+    return redirectToLocalSignIn(c, servicePathWithCurrentQuery(c, "/dashboard"));
   }
   return serveIndexHtml(c.env);
 });
-
-app.get("/dashboard", (c) => c.redirect(servicePathWithCurrentQuery(c, "/dashboard/"), 302));
 
 // ---------------------------------------------------------------------------
 // GET /api/me — session + connection status
@@ -226,21 +308,16 @@ app.get("/api/webhooks/recent", async (c) => {
 
 app.post("/apple", async (c) => {
   const wantsJson = (c.req.raw.headers.get("accept") || "").includes("application/json");
-  const { userId } = getAuth(c);
-  if (!userId) {
-    if (wantsJson) {
-      return c.json(
-        { ok: false, error: "Please sign in to access your settings." },
-        401,
-      );
-    }
-    return c.redirect(
-      servicePath(c, "/sign-in?error=Please%20sign%20in%20to%20access%20your%20settings."),
-      302,
-    );
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to access your settings.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
   }
 
-  const tenantId = userId;
+  const tenantId = authResult;
 
   let appleId: string;
   let appleAppPassword: string;
@@ -291,7 +368,7 @@ app.post("/apple", async (c) => {
     return c.redirect(
       servicePath(
         c,
-        "/sign-in?error=Please%20enter%20both%20your%20Apple%20ID%20and%20app-specific%20password.",
+        "/dashboard?error=Please%20enter%20both%20your%20Apple%20ID%20and%20app-specific%20password.",
       ),
       302,
     );
@@ -320,7 +397,7 @@ app.post("/apple", async (c) => {
   await upsertTenantConfig(c.env.AUTH_DB, {
     tenantId,
     organizationId: null,
-    userId,
+    userId: authResult,
     calendarName: calendarName || null,
     calendarColor: calendarColor || null,
     calendarTimezone: calendarTimezone || null,
@@ -338,7 +415,7 @@ app.post("/apple", async (c) => {
   return c.redirect(
     servicePath(
       c,
-      "/dashboard/?notice=Apple%20Calendar%20settings%20saved%20successfully.",
+      "/dashboard?notice=Apple%20Calendar%20settings%20saved%20successfully.",
     ),
     302,
   );
@@ -358,9 +435,16 @@ app.post("/api/workspaces/:workspaceId/sync/incremental", async (c) => {
 
 app.get("/api/workspaces/:workspaceId/debug", async (c) => {
   const requestedWorkspaceId = normalizeText(c.req.param("workspaceId"));
-  const { userId } = getAuth(c);
+  const authResult = requireAuthenticatedUser(c, {
+    returnPath: servicePath(c, "/dashboard"),
+    wantsJson: true,
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
   // Tenant ID = Clerk user ID
-  if (!userId || requestedWorkspaceId !== userId) {
+  if (requestedWorkspaceId !== authResult) {
     return c.json({ ok: false, error: "Forbidden" }, 403);
   }
   if (!c.env.TENANT_SYNC) {
@@ -490,6 +574,27 @@ async function serveIndexHtml(env: AppEnv): Promise<Response> {
   return serveAsset(env, "/index.html");
 }
 
+function requireAuthenticatedUser(
+  c: {
+    req: { raw: Request };
+    var: AppVariables;
+  },
+  options: {
+    wantsJson: boolean;
+    returnPath: string;
+    jsonError: string;
+  },
+): string | Response {
+  const userId = normalizeText(getAuth(c as any).userId);
+  if (userId) {
+    return userId;
+  }
+  if (options.wantsJson) {
+    return Response.json({ ok: false, error: options.jsonError }, { status: 401 });
+  }
+  return redirectToLocalSignIn(c, options.returnPath);
+}
+
 async function triggerWorkspaceSync(
   c: {
     req: { raw: Request };
@@ -499,9 +604,16 @@ async function triggerWorkspaceSync(
   mode: "full" | "incremental",
 ): Promise<Response> {
   const wantsJson = (c.req.raw.headers.get("accept") || "").includes("application/json");
-  const { userId } = getAuth(c as any);
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
   // Tenant ID = Clerk user ID
-  if (!userId || requestedWorkspaceId !== userId) {
+  if (!requestedWorkspaceId || requestedWorkspaceId !== authResult) {
     if (wantsJson) {
       return Response.json(
         { ok: false, error: "You don't have permission to do this." },
@@ -510,10 +622,7 @@ async function triggerWorkspaceSync(
     }
     return Response.redirect(
       new URL(
-        servicePath(
-          c,
-          "/sign-in?error=You%20don't%20have%20permission%20to%20do%20this.",
-        ),
+        servicePath(c, "/dashboard?error=You%20don't%20have%20permission%20to%20do%20this."),
         c.req.raw.url,
       ),
       302,
@@ -533,7 +642,7 @@ async function triggerWorkspaceSync(
       new URL(
         servicePath(
           c,
-          "/sign-in?error=Sync%20service%20is%20temporarily%20unavailable.%20Please%20try%20again%20later.",
+          "/dashboard?error=Sync%20service%20is%20temporarily%20unavailable.%20Please%20try%20again%20later.",
         ),
         c.req.raw.url,
       ),
@@ -562,7 +671,7 @@ async function triggerWorkspaceSync(
         new URL(
           servicePath(
             c,
-            `/dashboard/?error=${encodeURIComponent(payload?.error || fallback)}`,
+            `/dashboard?error=${encodeURIComponent(payload?.error || fallback)}`,
           ),
           c.req.raw.url,
         ),
@@ -581,7 +690,7 @@ async function triggerWorkspaceSync(
       new URL(
         servicePath(
           c,
-          `/dashboard/?error=${encodeURIComponent(`Sync request failed: ${message}`)}`,
+          `/dashboard?error=${encodeURIComponent(`Sync request failed: ${message}`)}`,
         ),
         c.req.raw.url,
       ),
@@ -598,7 +707,7 @@ async function triggerWorkspaceSync(
   }
   return Response.redirect(
     new URL(
-      servicePath(c, `/dashboard/?notice=${encodeURIComponent(noticeText)}`),
+      servicePath(c, `/dashboard?notice=${encodeURIComponent(noticeText)}`),
       c.req.raw.url,
     ),
     302,
@@ -624,6 +733,7 @@ async function ensureSchema(env: AppEnv): Promise<void> {
     promise = (async () => {
       await runSqlStatements(env.AUTH_DB, CUSTOM_SCHEMA_SQL);
       await runSqlStatements(env.AUTH_DB, customAppSchemaSQL);
+      await runMigrations(env.AUTH_DB, schemaMigrations);
     })();
     schemaPromises.set(key, promise);
     promise.catch(() => {
@@ -759,6 +869,16 @@ async function runSqlStatements(db: D1Database, sqlText: string): Promise<void> 
   }
 }
 
+async function runMigrations(db: D1Database, migrations: string[]): Promise<void> {
+  for (const sql of migrations) {
+    try {
+      await db.prepare(sql).run();
+    } catch {
+      // Silently ignore errors like "duplicate column name" for idempotent migrations
+    }
+  }
+}
+
 function maskAppleIdForDisplay(value: string): string {
   const normalized = normalizeText(value);
   if (!normalized) {
@@ -799,8 +919,7 @@ function maskMiddle(value: string, keepStart: number, keepEnd: number): string {
 }
 
 function servicePath(c: { var: { serviceBasePath: string } }, path: string): string {
-  const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${c.var.serviceBasePath}${suffix}` || "/";
+  return buildServicePath(c.var.serviceBasePath, path);
 }
 
 function servicePathWithCurrentQuery(
@@ -808,6 +927,18 @@ function servicePathWithCurrentQuery(
   path: string,
 ): string {
   return `${servicePath(c, path)}${new URL(c.req.raw.url).search}`;
+}
+
+function redirectToLocalSignIn(
+  c: { var: { serviceBasePath: string }; req: { raw: Request } },
+  returnPath: string,
+): Response {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: buildLocalAuthUrl(c.req.raw.url, c.var.serviceBasePath, "sign-in", returnPath),
+    },
+  });
 }
 
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {

@@ -29,9 +29,29 @@ NOTION_API_VERSION = "2025-09-03"
 crons = ["*/5 * * * *"]
 
 [[routes]]
-pattern = "superplanner.ai/caldav-sync"
+pattern = "superplanner.ai/caldav-sync/assets*"
 zone_name = "superplanner.ai"
 
 [[routes]]
-pattern = "superplanner.ai/caldav-sync/*"
+pattern = "superplanner.ai/caldav-sync/api*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/apple*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/sign-in*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/sign-out*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/dashboard*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/webhook/notion"
 zone_name = "superplanner.ai"

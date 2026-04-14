@@ -103,7 +103,7 @@ npm run typecheck    # Type-check the codebase
 
 | Directory | Purpose |
 | --- | --- |
-| `src/index.ts` | Worker entrypoint, routing, sign-in and dashboard UI |
+| `src/index.ts` | Worker entrypoint, routing, dashboard UI, and API endpoints |
 | `src/auth/` | Clerk integration (middleware, client factory, Notion OAuth token helper) |
 | `src/notion/` | Notion API client and webhook parsing |
 | `src/calendar/` | CalDAV discovery, event CRUD, ICS generation |

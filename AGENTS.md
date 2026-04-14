@@ -9,7 +9,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 
 ## Runtime & Architecture
 - **TypeScript Cloudflare Worker** using [Hono](https://hono.dev/) for routing.
-- **Frontend SPA** – Preact + Tailwind CSS, built with Vite, served as Cloudflare Workers static assets via `ASSETS` binding.
+- **Dashboard SPA** – Preact + Tailwind CSS, built with Vite, served as Cloudflare Workers static assets via `ASSETS` binding.
 - **Durable Objects** (`TenantSyncObject`) – one per tenant, handles sync orchestration with per-tenant SQLite storage.
 - **D1** (`AUTH_DB`) – stores tenant configs, provider connections, and encrypted secrets.
 - **Clerk** – shared authentication system at `accounts.superplanner.ai`. Clerk also manages Notion OAuth (configured as a social provider in Clerk Dashboard with custom credentials). The frontend redirects to Clerk's hosted pages for sign-in and social connection management.
@@ -26,7 +26,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 ## Key Files
 | Path | Role |
 | --- | --- |
-| `src/index.ts` | HTTP entrypoint (Hono routes), API endpoints (`/api/me`), SPA serving, cron handler |
+| `src/index.ts` | HTTP entrypoint (Hono routes), dashboard/API serving, cron handler |
 | `src/auth/clerk.ts` | Clerk integration: `AppEnv` type, `buildClerkClient()`, `getNotionOAuthToken()`, middleware re-exports |
 | `src/durable/tenant-sync.ts` | Durable Object: per-tenant sync orchestration |
 | `src/durable/d1-storage.ts` | D1-backed ledger storage adapter for the Durable Object |
@@ -48,16 +48,16 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 | `src/lib/secrets.ts` | AES-GCM encryption/decryption for stored secrets |
 | `scripts/predeploy-check.mjs` | Pre-deploy validation script |
 | `deploy.sh` | Deployment script (generates wrangler.toml, sets secrets, deploys) |
-| `frontend/` | Preact + Tailwind SPA (sign-in & dashboard pages) |
-| `frontend/src/pages/SignIn.tsx` | Sign-in page component |
+| `frontend/` | Preact + Tailwind dashboard SPA |
 | `frontend/src/pages/Dashboard.tsx` | Dashboard page component (setup wizard + settings) |
 | `frontend/src/lib/i18n.tsx` | i18n system (EN / 简体中文 / 繁體中文) via Preact Context |
 | `frontend/src/lib/api.ts` | API client (`fetchMe()` for `/api/me`), `CLERK_ACCOUNTS_URL`, `signOut()` |
 | `frontend/vite.config.ts` | Vite build configuration |
 
 ## HTTP Endpoints
-- `GET /sign-in` – Sign-in page (redirects to dashboard if already authenticated)
-- `GET /dashboard/` – Dashboard page (setup wizard + settings)
+- `GET /dashboard` – Dashboard page (setup wizard + settings)
+- `GET /sign-in` – Product-scoped Clerk sign-in page that returns users to `/caldav-sync/dashboard`
+- `GET /sign-out` – Product-scoped Clerk sign-out page that returns users to `/caldav-sync/`
 - `POST /apple` – Saves Apple/CalDAV credentials
 - `GET /api/me` – Returns session, config, and connection status JSON for the SPA
 - `POST /api/tenants/:tenantId/sync/full` – Trigger full sync for a tenant
@@ -79,7 +79,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 7. Deploy: `./deploy.sh` (generates `wrangler.toml` from template, uploads secrets, runs `wrangler deploy`).
 
 ## Coding Tips
-- The UI (sign-in page, dashboard) is a Preact SPA in `frontend/`. Vite builds it to `frontend/dist/`, and the Worker serves it via the `ASSETS` binding.
+- This worker serves the dashboard SPA, API routes, assets, and webhooks under `/caldav-sync/`. The public landing page at `/caldav-sync/` is handled by `../gridheap-sites`.
 - The dashboard supports three languages (EN / 简体中文 / 繁體中文) with a `lang` query parameter; translations are defined in `frontend/src/lib/i18n.tsx` via Preact Context.
 - Authentication is handled by Clerk. The Worker uses `@clerk/hono` middleware to verify sessions. In non-Hono contexts (Durable Objects, cron), use `buildClerkClient(env)` from `src/auth/clerk.ts`.
 - Notion OAuth tokens are obtained via `getNotionOAuthToken(clerk, userId)` — Clerk manages the OAuth flow and token refresh.

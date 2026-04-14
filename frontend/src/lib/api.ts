@@ -1,5 +1,6 @@
-/** Clerk accounts portal URL (shared across superplanner.ai) */
-export const CLERK_ACCOUNTS_URL = "https://accounts.superplanner.ai";
+import { buildSignOutUrl, getAppBasePath, redirectToSignIn } from "./auth";
+
+export { CLERK_ACCOUNTS_URL, isAuthRedirectError, redirectToSignIn } from "./auth";
 
 /** Shape returned by GET /api/me */
 export type ApiMeResponse = {
@@ -115,63 +116,92 @@ export type ApiJsonResult = {
   notice?: string;
 };
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const BASE = getAppBasePath();
+
+type JsonFetchOptions = Omit<RequestInit, "body"> & {
+  body?: BodyInit | null;
+  redirectOn401To?: string;
+};
+
+async function fetchJson<T>(path: string, options: JsonFetchOptions = {}): Promise<{
+  response: Response;
+  data: T | null;
+}> {
+  const { redirectOn401To, credentials, ...init } = options;
+  const response = await fetch(`${BASE}${path}`, {
+    credentials: credentials ?? "include",
+    ...init,
+  });
+  if (response.status === 401 && redirectOn401To) {
+    redirectToSignIn(redirectOn401To);
+  }
+  const data = (await response.json().catch(() => null)) as T | null;
+  return { response, data };
+}
 
 export async function fetchMe(): Promise<ApiMeResponse> {
-  const res = await fetch(`${BASE}/api/me`, { credentials: "include" });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
+  const { response, data } = await fetchJson<ApiMeResponse>("/api/me");
+  if (!response.ok || !data) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  return data;
 }
 
 export async function fetchRecentWebhooks(): Promise<WebhookLogEntry[]> {
-  const res = await fetch(`${BASE}/api/webhooks/recent`, { credentials: "include" });
-  if (!res.ok) return [];
-  const data = await res.json();
+  const { response, data } = await fetchJson<{ logs?: WebhookLogEntry[] }>(
+    "/api/webhooks/recent",
+    { redirectOn401To: "/dashboard" },
+  );
+  if (!response.ok || !data) {
+    return [];
+  }
   return data.logs || [];
 }
 
 export async function fetchDebugSnapshot(workspaceId: string): Promise<SyncDebugSnapshot> {
-  const res = await fetch(`${BASE}/api/workspaces/${workspaceId}/debug`, {
-    credentials: "include",
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.snapshot) {
-    throw new Error(data?.error || `Debug API error: ${res.status}`);
+  const { response, data } = await fetchJson<{ snapshot?: SyncDebugSnapshot; error?: string }>(
+    `/api/workspaces/${workspaceId}/debug`,
+    {
+      redirectOn401To: "/dashboard",
+    },
+  );
+  if (!response.ok || !data?.snapshot) {
+    throw new Error(data?.error || `Debug API error: ${response.status}`);
   }
   return data.snapshot as SyncDebugSnapshot;
 }
 
 export async function saveAppleSettings(body: Record<string, unknown>): Promise<ApiJsonResult> {
-  const res = await fetch(`${BASE}/apple`, {
+  const { response, data } = await fetchJson<ApiJsonResult>("/apple", {
     method: "POST",
-    credentials: "include",
+    redirectOn401To: "/dashboard",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
-  return data as ApiJsonResult;
+  return data ?? { ok: false, error: `HTTP ${response.status}` };
 }
 
 export async function triggerSync(
   workspaceId: string,
   mode: "full" | "incremental",
 ): Promise<ApiJsonResult> {
-  const res = await fetch(`${BASE}/api/workspaces/${workspaceId}/sync/${mode}`, {
-    method: "POST",
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  });
-  const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
-  return data as ApiJsonResult;
+  const { response, data } = await fetchJson<ApiJsonResult>(
+    `/api/workspaces/${workspaceId}/sync/${mode}`,
+    {
+      method: "POST",
+      redirectOn401To: "/dashboard",
+      headers: { Accept: "application/json" },
+    },
+  );
+  return data ?? { ok: false, error: `HTTP ${response.status}` };
 }
 
 /**
- * Sign out by redirecting to Clerk's accounts portal sign-out page.
+ * Sign out via the product-scoped sign-out route.
  */
 export function signOut(): void {
-  const returnUrl = `${window.location.origin}${BASE}/sign-in`;
-  window.location.href = `${CLERK_ACCOUNTS_URL}/sign-out?redirect_url=${encodeURIComponent(returnUrl)}`;
+  window.location.href = buildSignOutUrl("/");
 }

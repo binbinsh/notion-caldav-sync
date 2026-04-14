@@ -7,6 +7,8 @@ import {
   fetchDebugSnapshot,
   fetchMe,
   fetchRecentWebhooks,
+  isAuthRedirectError,
+  redirectToSignIn,
   saveAppleSettings,
   triggerSync,
   type ApiMeResponse,
@@ -17,9 +19,7 @@ import {
   type WebhookLogEntry,
 } from "../lib/api";
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const APPLE_ACCOUNT_URL = "https://account.apple.com";
-type DashboardTab = "settings" | "status" | "debug" | "webhooks";
 
 // ---------------------------------------------------------------------------
 // Toast system
@@ -28,26 +28,43 @@ type ToastType = "success" | "error" | "info";
 type ToastItem = { id: number; type: ToastType; message: string };
 let toastId = 0;
 
+function useToast() {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const dismiss = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  const show = useCallback(
+    (type: ToastType, message: string, duration = 4000) => {
+      const id = ++toastId;
+      setToasts((prev) => [...prev, { id, type, message }]);
+      if (duration > 0) setTimeout(() => dismiss(id), duration);
+      return id;
+    },
+    [dismiss],
+  );
+  return { toasts, show, dismiss };
+}
+
 function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: number) => void }) {
+  if (toasts.length === 0) return null;
   return (
     <div class="fixed top-4 right-4 z-50 grid gap-2 max-w-sm" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
-          class={`flex items-start gap-2 px-4 py-3 rounded-xl text-sm leading-relaxed shadow-lg animate-slide-in ${
+          class={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm shadow-lg border animate-slide-in ${
             t.type === "error"
-              ? "bg-red-soft text-red"
+              ? "bg-red-soft text-red border-red/10"
               : t.type === "success"
-                ? "bg-green-soft text-green"
-                : "bg-accent-soft text-accent"
+                ? "bg-green-soft text-green border-green/10"
+                : "bg-accent-soft text-accent border-accent/10"
           }`}
         >
-          <span class="flex-1">{t.message}</span>
+          <span class="flex-1 font-medium">{t.message}</span>
           <button
             type="button"
             onClick={() => onDismiss(t.id)}
-            class="flex-none text-current opacity-60 hover:opacity-100 bg-transparent border-0 cursor-pointer text-sm leading-none p-0"
-            aria-label="Dismiss"
+            class="text-current opacity-50 hover:opacity-100 bg-transparent border-0 cursor-pointer text-base leading-none p-0"
           >
             &times;
           </button>
@@ -75,7 +92,6 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  // Close on Escape key
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
@@ -86,51 +102,129 @@ function ConfirmDialog({
 
   return (
     <div
-      class="fixed inset-0 z-50 grid place-items-center bg-ink/20 backdrop-blur-[2px]"
+      class="fixed inset-0 z-50 grid place-items-center bg-ink/15 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="confirm-title"
     >
-      <div class="bg-surface rounded-2xl shadow-xl max-w-md w-[calc(100%-2rem)] p-6 grid gap-4">
-        <h2 id="confirm-title" class="text-base font-semibold m-0">{title}</h2>
+      <div class="bg-surface rounded-2xl shadow-2xl max-w-sm w-[calc(100%-2rem)] p-6 grid gap-4 animate-fade-in">
+        <h2 class="text-base font-semibold m-0">{title}</h2>
         <p class="text-sm text-muted m-0 leading-relaxed">{body}</p>
-        <div class="flex items-center justify-end gap-3 pt-1">
-          <button
-            type="button"
-            onClick={onCancel}
-            class="border-0 rounded-lg py-2 px-4 bg-transparent text-muted text-sm font-medium cursor-pointer hover:bg-line transition-colors"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            class="border-0 rounded-lg py-2 px-4 bg-accent text-white text-sm font-semibold cursor-pointer hover:bg-accent-hover transition-colors shadow-[0_1px_4px_rgba(37,99,235,0.18)]"
-            autoFocus
-          >
-            {confirmLabel}
-          </button>
+        <div class="flex items-center justify-end gap-2 pt-1">
+          <Btn variant="ghost" onClick={onCancel}>{cancelLabel}</Btn>
+          <Btn variant="primary" onClick={onConfirm}>{confirmLabel}</Btn>
         </div>
       </div>
     </div>
   );
 }
 
-function useToast() {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const dismiss = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-  const show = useCallback((type: ToastType, message: string, duration = 5000) => {
-    const id = ++toastId;
-    setToasts((prev) => [...prev, { id, type, message }]);
-    if (duration > 0) {
-      setTimeout(() => dismiss(id), duration);
-    }
-    return id;
-  }, [dismiss]);
-  return { toasts, show, dismiss };
+// ---------------------------------------------------------------------------
+// Shared UI primitives
+// ---------------------------------------------------------------------------
+const INPUT_CLASS =
+  "w-full py-2.5 px-3 border border-line rounded-lg bg-bg text-ink text-sm font-[inherit] transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 placeholder:text-subtle";
+
+function Btn({
+  variant = "primary",
+  size = "md",
+  disabled,
+  loading,
+  onClick,
+  type = "button",
+  class: className = "",
+  children,
+}: {
+  variant?: "primary" | "secondary" | "ghost";
+  size?: "sm" | "md" | "lg";
+  disabled?: boolean;
+  loading?: boolean;
+  onClick?: () => void;
+  type?: "button" | "submit";
+  class?: string;
+  children: ComponentChildren;
+}) {
+  const base = "inline-flex items-center justify-center gap-2 font-semibold transition-all duration-150 border-0 cursor-pointer disabled:opacity-50 disabled:cursor-default";
+  const sizeClass =
+    size === "sm" ? "text-xs px-3 py-1.5 rounded-lg" :
+    size === "lg" ? "text-sm px-6 py-3 rounded-xl" :
+    "text-sm px-4 py-2.5 rounded-lg";
+  const variantClass =
+    variant === "primary"
+      ? "bg-accent text-white shadow-sm hover:bg-accent-hover"
+      : variant === "secondary"
+        ? "bg-accent-soft text-accent hover:bg-accent/[0.12]"
+        : "bg-transparent text-muted hover:bg-line hover:text-ink";
+
+  return (
+    <button
+      type={type}
+      disabled={disabled || loading}
+      onClick={onClick}
+      class={`${base} ${sizeClass} ${variantClass} ${className}`}
+    >
+      {loading && <Spinner small />}
+      {children}
+    </button>
+  );
+}
+
+function Card({
+  children,
+  class: className = "",
+}: {
+  children: ComponentChildren;
+  class?: string;
+}) {
+  return (
+    <section class={`bg-surface border border-line rounded-2xl p-6 animate-fade-in ${className}`}>
+      {children}
+    </section>
+  );
+}
+
+function Badge({
+  tone = "slate",
+  children,
+}: {
+  tone?: "blue" | "green" | "amber" | "red" | "slate";
+  children: ComponentChildren;
+}) {
+  const cls =
+    tone === "green" ? "bg-green/10 text-green" :
+    tone === "amber" ? "bg-amber/12 text-amber" :
+    tone === "red" ? "bg-red/10 text-red" :
+    tone === "blue" ? "bg-accent/10 text-accent" :
+    "bg-ink/6 text-muted";
+  return (
+    <span class={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${cls}`}>
+      {children}
+    </span>
+  );
+}
+
+function Spinner({ small }: { small?: boolean }) {
+  const size = small ? "w-3.5 h-3.5" : "w-5 h-5";
+  return (
+    <svg class={`${size} animate-spin text-current`} viewBox="0 0 24 24" fill="none">
+      <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+      <path
+        class="opacity-80"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+}
+
+function StatusDot({ ok }: { ok: boolean }) {
+  return (
+    <span
+      class={`inline-block w-2 h-2 rounded-full ${ok ? "bg-green" : "bg-amber"}`}
+      role="img"
+      aria-label={ok ? "Connected" : "Not connected"}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +234,6 @@ export function DashboardPage() {
   const { t, lang } = useI18n();
   const [data, setData] = useState<ApiMeResponse | null>(null);
   const [webhookLogs, setWebhookLogs] = useState<WebhookLogEntry[]>([]);
-  const [activeTab, setActiveTab] = useState<DashboardTab>("settings");
   const [debugSnapshot, setDebugSnapshot] = useState<SyncDebugSnapshot | null>(null);
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugError, setDebugError] = useState("");
@@ -149,21 +242,20 @@ export function DashboardPage() {
   const [syncingFull, setSyncingFull] = useState(false);
   const [syncingQuick, setSyncingQuick] = useState(false);
   const [showSyncConfirm, setShowSyncConfirm] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const toast = useToast();
-
-  // Auto-refresh interval
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshData = useCallback(async () => {
     try {
       const res = await fetchMe();
       if (!res.authenticated) {
-        window.location.href = `${BASE}/sign-in`;
+        redirectToSignIn("/dashboard");
         return;
       }
       setData(res);
     } catch {
-      // silent — don't overwrite existing data on background refresh failure
+      // silent
     }
   }, []);
 
@@ -175,57 +267,47 @@ export function DashboardPage() {
     fetchMe()
       .then((res) => {
         if (!res.authenticated) {
-          window.location.href = `${BASE}/sign-in`;
+          redirectToSignIn("/dashboard");
           return;
         }
         setData(res);
         fetchRecentWebhooks().then(setWebhookLogs).catch(() => {});
       })
-      .catch(() => setError(t("loadError")))
+      .catch((err) => {
+        if (!isAuthRedirectError(err)) setError(t("loadError"));
+      })
       .finally(() => setLoading(false));
 
-    // Auto-refresh every 30 seconds
     refreshTimer.current = setInterval(refreshData, 30000);
     return () => {
       if (refreshTimer.current) clearInterval(refreshTimer.current);
     };
   }, []);
 
+  // Debug loading
+  const debugReady = Boolean(
+    data?.workspaceId && data?.notionConnected && data?.appleCredentials?.hasAppleId && data?.appleCredentials?.hasAppPassword,
+  );
+
   const loadDebug = async () => {
     if (!data?.workspaceId) return;
     setDebugLoading(true);
     setDebugError("");
     try {
-      const snapshot = await fetchDebugSnapshot(data.workspaceId);
-      setDebugSnapshot(snapshot);
-    } catch (debugLoadError) {
-      setDebugError(
-        debugLoadError instanceof Error ? debugLoadError.message : t("debugLoadError"),
-      );
+      setDebugSnapshot(await fetchDebugSnapshot(data.workspaceId));
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
+      setDebugError(err instanceof Error ? err.message : t("debugLoadError"));
     } finally {
       setDebugLoading(false);
     }
   };
 
-  const debugReady = Boolean(
-    data?.workspaceId &&
-      data?.notionConnected &&
-      data?.appleCredentials?.hasAppleId &&
-      data?.appleCredentials?.hasAppPassword,
-  );
-
   useEffect(() => {
-    if (
-      activeTab === "debug" &&
-      debugReady &&
-      data?.workspaceId &&
-      !debugSnapshot &&
-      !debugLoading &&
-      !debugError
-    ) {
+    if (showAdvanced && debugReady && data?.workspaceId && !debugSnapshot && !debugLoading && !debugError) {
       void loadDebug();
     }
-  }, [activeTab, data?.workspaceId, debugReady, debugSnapshot, debugLoading, debugError]);
+  }, [showAdvanced, data?.workspaceId, debugReady, debugSnapshot, debugLoading, debugError]);
 
   // Sync handlers
   const executeSync = async (mode: "full" | "incremental") => {
@@ -240,7 +322,8 @@ export function DashboardPage() {
       } else {
         toast.show("error", result.error || t("syncFailed"));
       }
-    } catch {
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
       toast.show("error", t("syncFailed"));
     } finally {
       setter(false);
@@ -248,19 +331,10 @@ export function DashboardPage() {
   };
 
   const handleSync = (mode: "full" | "incremental") => {
-    if (mode === "full") {
-      setShowSyncConfirm(true);
-    } else {
-      void executeSync(mode);
-    }
+    if (mode === "full") setShowSyncConfirm(true);
+    else void executeSync(mode);
   };
 
-  const confirmFullSync = () => {
-    setShowSyncConfirm(false);
-    void executeSync("full");
-  };
-
-  // Settings save handler
   const handleSaveSettings = async (body: Record<string, unknown>) => {
     try {
       const result = await saveAppleSettings(body);
@@ -270,34 +344,31 @@ export function DashboardPage() {
       } else {
         toast.show("error", result.error || t("saveFailed"));
       }
-    } catch {
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
       toast.show("error", t("saveFailed"));
     }
   };
 
+  // Loading screen
   if (loading) {
     return (
       <div class="min-h-screen grid place-items-center">
-        <div class="grid gap-2 text-center">
-          <LoadingSpinner />
+        <div class="grid gap-3 text-center">
+          <Spinner />
           <p class="text-muted text-sm">{t("loading")}</p>
         </div>
       </div>
     );
   }
 
+  // Error screen
   if (error || !data) {
     return (
       <div class="min-h-screen grid place-items-center">
-        <div class="grid gap-3 text-center max-w-md px-4">
+        <div class="grid gap-4 text-center max-w-xs px-4">
           <p class="text-red text-sm">{error || t("loadError")}</p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            class="mx-auto inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer"
-          >
-            Refresh
-          </button>
+          <Btn variant="primary" onClick={() => window.location.reload()}>Refresh</Btn>
         </div>
       </div>
     );
@@ -305,13 +376,7 @@ export function DashboardPage() {
 
   const cfg = data.config;
   const userName = data.user?.name || "";
-  const workspaceName = cfg?.notion_workspace_name || "";
-  const lastSync = cfg?.last_full_sync_at || "";
-  const appleConfigured = Boolean(
-    data.appleCredentials?.hasAppleId && data.appleCredentials?.hasAppPassword,
-  );
-
-  // Determine if user needs the setup wizard
+  const appleConfigured = Boolean(data.appleCredentials?.hasAppleId && data.appleCredentials?.hasAppPassword);
   const needsSetup = !data.notionConnected || !appleConfigured;
 
   return (
@@ -324,64 +389,54 @@ export function DashboardPage() {
           body={t("syncConfirmBody")}
           confirmLabel={t("syncConfirmOk")}
           cancelLabel={t("syncConfirmCancel")}
-          onConfirm={confirmFullSync}
+          onConfirm={() => { setShowSyncConfirm(false); void executeSync("full"); }}
           onCancel={() => setShowSyncConfirm(false)}
         />
       )}
-      <div class="max-w-[960px] mx-auto px-6 py-8 pb-14 grid gap-6">
-        {/* Page header */}
-        <div class="flex items-center justify-between flex-wrap gap-3">
-          <h1
-            class={`text-[1.75rem] leading-tight font-bold m-0 ${
-              lang === "zh-hans"
-                ? "font-serif-sc"
-                : lang === "zh-hant"
-                  ? "font-serif-tc"
-                  : "font-serif"
-            }`}
-          >
-            {t("greeting")}
-            {userName ? `, ${userName}` : ""}
-          </h1>
-          {!needsSetup && (
-            <div class="flex gap-2.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => {
-                  window.location.href = `${CLERK_ACCOUNTS_URL}/user`;
-                }}
-                class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover"
+
+      <main class="max-w-[960px] mx-auto px-6 py-8 pb-16 grid gap-6">
+        {/* Header */}
+        <div class="flex items-end justify-between flex-wrap gap-4">
+          <div>
+            <h1
+              class={`text-2xl font-bold m-0 tracking-[-0.02em] ${
+                lang === "zh-hans" ? "font-serif-sc" : lang === "zh-hant" ? "font-serif-tc" : "font-serif"
+              }`}
+            >
+              {t("greeting")}{userName ? `, ${userName}` : ""}
+            </h1>
+            {!needsSetup && cfg?.last_full_sync_at && (
+              <p class="text-xs text-subtle mt-1 m-0">
+                {t("lastSyncLabel")}: {humanizeTimestamp(cfg.last_full_sync_at, t)}
+              </p>
+            )}
+          </div>
+          {!needsSetup && data.workspaceId && (
+            <div class="flex gap-2">
+              <Btn
+                variant="secondary"
+                size="sm"
+                disabled={syncingQuick}
+                loading={syncingQuick}
+                onClick={() => handleSync("incremental")}
               >
-                {data.notionConnected ? t("reconnectNotion") : t("connectNotion")}
-              </button>
-              {data.workspaceId && (
-                <>
-                  <button
-                    type="button"
-                    disabled={syncingFull}
-                    onClick={() => handleSync("full")}
-                    class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent-soft text-accent font-semibold text-sm cursor-pointer transition-all duration-150 hover:bg-accent/[0.14] disabled:cursor-default disabled:opacity-60"
-                  >
-                    {syncingFull && <LoadingSpinner small />}
-                    {syncingFull ? t("syncing") : t("syncAll")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={syncingQuick}
-                    onClick={() => handleSync("incremental")}
-                    class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent-soft text-accent font-semibold text-sm cursor-pointer transition-all duration-150 hover:bg-accent/[0.14] disabled:cursor-default disabled:opacity-60"
-                  >
-                    {syncingQuick && <LoadingSpinner small />}
-                    {syncingQuick ? t("syncing") : t("quickSync")}
-                  </button>
-                </>
-              )}
+                {syncingQuick ? t("syncing") : t("quickSync")}
+              </Btn>
+              <Btn
+                variant="primary"
+                size="sm"
+                disabled={syncingFull}
+                loading={syncingFull}
+                onClick={() => handleSync("full")}
+              >
+                {syncingFull ? t("syncing") : t("syncAll")}
+              </Btn>
             </div>
           )}
         </div>
 
-        {/* Setup wizard for first-time users */}
-        {needsSetup && (
+        {/* Setup wizard OR configured dashboard */}
+        {needsSetup ? (
           <SetupWizard
             data={data}
             appleConfigured={appleConfigured}
@@ -389,34 +444,59 @@ export function DashboardPage() {
             onSync={() => handleSync("full")}
             syncingFull={syncingFull}
           />
-        )}
-
-        {/* Regular tabs for configured users */}
-        {!needsSetup && (
+        ) : (
           <>
-            <DashboardTabs activeTab={activeTab} onChange={setActiveTab} />
+            {/* Status bar */}
+            <SyncStatusBar
+              notionConnected={data.notionConnected}
+              appleConfigured={appleConfigured}
+              workspaceName={cfg?.notion_workspace_name || ""}
+            />
 
-            {activeTab === "settings" && (
-              <div role="tabpanel" id="tabpanel-settings" aria-labelledby="tab-settings">
-                <AppleSettingsCard
-                  config={cfg}
-                  credentials={data.appleCredentials}
-                  onSave={handleSaveSettings}
-                />
+            {/* Settings */}
+            <AppleSettingsCard
+              config={cfg}
+              credentials={data.appleCredentials}
+              onSave={handleSaveSettings}
+            />
+
+            {/* Notion connection */}
+            <Card>
+              <div class="flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold m-0">Notion</h3>
+                  <p class="text-xs text-muted m-0 mt-0.5">
+                    {data.notionConnected ? t("notionOk") : t("notionMissing")}
+                  </p>
+                </div>
+                <Btn
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
+                >
+                  {data.notionConnected ? t("reconnectNotion") : t("connectNotion")}
+                </Btn>
               </div>
-            )}
-            {activeTab === "status" && (
-              <div role="tabpanel" id="tabpanel-status" aria-labelledby="tab-status">
-                <StatusCard
-                  notionConnected={data.notionConnected}
-                  appleConfigured={appleConfigured}
-                  workspaceName={workspaceName}
-                  lastSync={lastSync}
-                />
-              </div>
-            )}
-            {activeTab === "debug" && (
-              <div role="tabpanel" id="tabpanel-debug" aria-labelledby="tab-debug">
+            </Card>
+
+            {/* Advanced toggle */}
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              class="flex items-center gap-2 text-xs font-medium text-muted bg-transparent border-0 cursor-pointer px-0 hover:text-ink transition-colors"
+            >
+              <svg
+                class={`w-3 h-3 transition-transform duration-200 ${showAdvanced ? "rotate-90" : ""}`}
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
+              </svg>
+              Advanced
+            </button>
+
+            {showAdvanced && (
+              <div class="grid gap-6 animate-expand">
                 <SyncDebugCard
                   workspaceId={data.workspaceId}
                   ready={debugReady}
@@ -425,16 +505,12 @@ export function DashboardPage() {
                   error={debugError}
                   onLoad={loadDebug}
                 />
-              </div>
-            )}
-            {activeTab === "webhooks" && (
-              <div role="tabpanel" id="tabpanel-webhooks" aria-labelledby="tab-webhooks">
                 <WebhookLogCard logs={webhookLogs} />
               </div>
             )}
           </>
         )}
-      </div>
+      </main>
     </>
   );
 }
@@ -459,29 +535,53 @@ function SetupWizard({
   const currentStep = !data.notionConnected ? 1 : !appleConfigured ? 2 : 3;
 
   return (
-    <section class="p-7 border border-line rounded-[20px] bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+    <Card>
       <h2 class="text-lg font-bold m-0 mb-6">{t("setupTitle")}</h2>
 
       {/* Step indicator */}
-      <div class="grid grid-cols-3 gap-3 mb-8">
-        <StepIndicator step={1} current={currentStep} label={currentStep > 1 ? t("setupStep1Done") : t("setupStep1")} />
-        <StepIndicator step={2} current={currentStep} label={currentStep > 2 ? t("setupStep2Done") : t("setupStep2")} />
-        <StepIndicator step={3} current={currentStep} label={t("setupStep3")} />
+      <div class="flex items-center gap-0 mb-8">
+        {[1, 2, 3].map((step) => {
+          const done = currentStep > step;
+          const active = currentStep === step;
+          const label = step === 1
+            ? (done ? t("setupStep1Done") : t("setupStep1"))
+            : step === 2
+              ? (done ? t("setupStep2Done") : t("setupStep2"))
+              : t("setupStep3");
+          return (
+            <div key={step} class="flex-1 flex items-center">
+              <div class="flex flex-col items-center gap-1.5 flex-none">
+                <div
+                  class={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center ${
+                    done ? "bg-green text-white" : active ? "bg-accent text-white" : "bg-line text-muted"
+                  }`}
+                >
+                  {done ? "\u2713" : step}
+                </div>
+                <span class={`text-[11px] font-medium text-center max-w-[100px] ${active ? "text-ink" : done ? "text-green" : "text-muted"}`}>
+                  {label}
+                </span>
+              </div>
+              {step < 3 && (
+                <div class={`flex-1 h-px mx-3 ${done ? "bg-green" : "bg-line"}`} />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Step content */}
       {currentStep === 1 && (
-        <div class="grid gap-4">
+        <div class="grid gap-4 text-center py-2">
           <p class="text-sm text-muted m-0">{t("signInSub")}</p>
-          <button
-            type="button"
-            onClick={() => {
-              window.location.href = `${CLERK_ACCOUNTS_URL}/user`;
-            }}
-            class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover"
+          <Btn
+            variant="primary"
+            size="lg"
+            class="mx-auto"
+            onClick={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
           >
             {t("connectNotion")}
-          </button>
+          </Btn>
         </div>
       )}
 
@@ -493,134 +593,66 @@ function SetupWizard({
             credentials={data.appleCredentials}
             onSave={onSaveSettings}
             forceEditing
+            compact
           />
         </div>
       )}
 
       {currentStep === 3 && (
-        <div class="grid gap-4 text-center py-4">
+        <div class="grid gap-4 text-center py-6">
           <div class="text-4xl">&#127881;</div>
           <p class="text-sm text-muted m-0">{t("setupStep3Desc")}</p>
-          <button
-            type="button"
+          <Btn
+            variant="primary"
+            size="lg"
+            class="mx-auto"
             disabled={syncingFull}
+            loading={syncingFull}
             onClick={onSync}
-            class="mx-auto inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-6 bg-accent text-white font-semibold text-sm cursor-pointer shadow-[0_2px_8px_rgba(37,99,235,0.15)] transition-all duration-150 hover:bg-accent-hover disabled:opacity-60"
           >
-            {syncingFull && <LoadingSpinner small />}
             {syncingFull ? t("syncing") : t("setupRunSync")}
-          </button>
+          </Btn>
         </div>
       )}
-    </section>
-  );
-}
-
-function StepIndicator({
-  step,
-  current,
-  label,
-}: {
-  step: number;
-  current: number;
-  label: string;
-}) {
-  const done = current > step;
-  const active = current === step;
-  return (
-    <div class="grid gap-2">
-      <div class="flex items-center gap-2">
-        <div
-          class={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center flex-none ${
-            done
-              ? "bg-green text-white"
-              : active
-                ? "bg-accent text-white"
-                : "bg-bg text-muted border border-line"
-          }`}
-        >
-          {done ? "\u2713" : step}
-        </div>
-        <div class={`h-0.5 flex-1 rounded-full ${done ? "bg-green" : "bg-line"}`} />
-      </div>
-      <span class={`text-xs font-semibold ${active ? "text-ink" : done ? "text-green" : "text-muted"}`}>
-        {label}
-      </span>
-    </div>
+    </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard Tabs
+// Sync Status Bar (compact)
 // ---------------------------------------------------------------------------
-function DashboardTabs({
-  activeTab,
-  onChange,
+function SyncStatusBar({
+  notionConnected,
+  appleConfigured,
+  workspaceName,
 }: {
-  activeTab: DashboardTab;
-  onChange: (tab: DashboardTab) => void;
+  notionConnected: boolean;
+  appleConfigured: boolean;
+  workspaceName: string;
 }) {
   const { t } = useI18n();
-  const tabsRef = useRef<HTMLDivElement>(null);
-  const tabs: Array<{ id: DashboardTab; label: string }> = [
-    { id: "settings", label: t("settingsTab") },
-    { id: "status", label: t("statusTab") },
-    { id: "debug", label: t("debugTab") },
-    { id: "webhooks", label: t("webhooksTab") },
-  ];
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    const currentIndex = tabs.findIndex((tab) => tab.id === activeTab);
-    let nextIndex = -1;
-
-    switch (e.key) {
-      case "ArrowRight":
-      case "ArrowDown":
-        nextIndex = (currentIndex + 1) % tabs.length;
-        break;
-      case "ArrowLeft":
-      case "ArrowUp":
-        nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-        break;
-      case "Home":
-        nextIndex = 0;
-        break;
-      case "End":
-        nextIndex = tabs.length - 1;
-        break;
-      default:
-        return;
-    }
-
-    e.preventDefault();
-    onChange(tabs[nextIndex].id);
-    // Focus the newly active tab button
-    const buttons = tabsRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
-    buttons?.[nextIndex]?.focus();
-  };
-
   return (
-    <div ref={tabsRef} class="rounded-[16px] border border-line bg-surface p-2 flex flex-wrap gap-2" role="tablist">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === tab.id}
-          aria-controls={`tabpanel-${tab.id}`}
-          id={`tab-${tab.id}`}
-          tabIndex={activeTab === tab.id ? 0 : -1}
-          onClick={() => onChange(tab.id)}
-          onKeyDown={handleKeyDown}
-          class={`inline-flex items-center justify-center rounded-[12px] px-4 py-2.5 text-sm font-semibold transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${
-            activeTab === tab.id
-              ? "bg-accent text-white shadow-[0_4px_14px_rgba(37,99,235,0.18)]"
-              : "bg-bg text-muted hover:text-ink"
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
+    <div class="flex flex-wrap items-center gap-4 px-5 py-3 bg-surface border border-line rounded-xl text-sm">
+      <div class="flex items-center gap-2">
+        <StatusDot ok={notionConnected} />
+        <span class="text-muted text-xs">Notion</span>
+        <span class="text-ink text-xs font-medium">{notionConnected ? t("notionOk") : t("notionMissing")}</span>
+      </div>
+      <div class="w-px h-4 bg-line" />
+      <div class="flex items-center gap-2">
+        <StatusDot ok={appleConfigured} />
+        <span class="text-muted text-xs">{t("appleLabel")}</span>
+        <span class="text-ink text-xs font-medium">{appleConfigured ? t("appleOk") : t("appleMissing")}</span>
+      </div>
+      {workspaceName && (
+        <>
+          <div class="w-px h-4 bg-line" />
+          <div class="flex items-center gap-2">
+            <span class="text-muted text-xs">{t("workspaceLabel")}</span>
+            <span class="text-ink text-xs font-medium truncate max-w-[140px]">{workspaceName}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -633,75 +665,76 @@ function AppleSettingsCard({
   credentials,
   onSave,
   forceEditing,
+  compact,
 }: {
   config: ApiMeResponse["config"];
   credentials: ApiMeResponse["appleCredentials"];
   onSave: (body: Record<string, unknown>) => Promise<void>;
   forceEditing?: boolean;
+  compact?: boolean;
 }) {
   const { t } = useI18n();
-  const hasSavedSettings = Boolean(
-    credentials?.hasAppleId || credentials?.hasAppPassword || config?.calendar_name,
-  );
-  const [editing, setEditing] = useState(forceEditing || !hasSavedSettings);
+  const hasSaved = Boolean(credentials?.hasAppleId || credentials?.hasAppPassword || config?.calendar_name);
+  const [editing, setEditing] = useState(forceEditing || !hasSaved);
   const [saving, setSaving] = useState(false);
   const [color, setColor] = useState(config?.calendar_color || "#FF7F00");
-  const [calendarTimezone, setCalendarTimezone] = useState(
-    normalizeTimezoneValue(config?.calendar_timezone),
-  );
-  const [dateOnlyTimezone, setDateOnlyTimezone] = useState(
-    normalizeTimezoneValue(config?.date_only_timezone),
-  );
+  const [calTz, setCalTz] = useState(normalizeTimezoneValue(config?.calendar_timezone));
+  const [dayTz, setDayTz] = useState(normalizeTimezoneValue(config?.date_only_timezone));
   const [pollInterval, setPollInterval] = useState(String(config?.poll_interval_minutes ?? 5));
-  const [fullSyncInterval, setFullSyncInterval] = useState(
-    String(config?.full_sync_interval_minutes ?? 60),
-  );
-  const [appleIdValue, setAppleIdValue] = useState("");
-  const [appPwValue, setAppPwValue] = useState("");
-  const [calNameValue, setCalNameValue] = useState(config?.calendar_name || "Notion");
-  const [showPwExplainer, setShowPwExplainer] = useState(false);
+  const [fullSyncInterval, setFullSyncInterval] = useState(String(config?.full_sync_interval_minutes ?? 60));
+  const [appleId, setAppleId] = useState("");
+  const [appPw, setAppPw] = useState("");
+  const [calName, setCalName] = useState(config?.calendar_name || "Notion");
+  const [showPwHelp, setShowPwHelp] = useState(false);
 
-  // Auto-detect timezone on mount
   useEffect(() => {
     const tz = detectIanaTimezone();
     if (!tz) return;
-    setCalendarTimezone((current) => current || tz);
-    setDateOnlyTimezone((current) => current || tz);
+    setCalTz((cur) => cur || tz);
+    setDayTz((cur) => cur || tz);
   }, []);
 
-  const handleSubmit = async (event: Event) => {
-    event.preventDefault();
+  const handleSubmit = async (e: Event) => {
+    e.preventDefault();
     if (!editing) return;
-
-    // Client-side validation
-    if (!credentials?.hasAppleId && !appleIdValue.trim()) return;
-    if (!credentials?.hasAppPassword && !appPwValue.trim()) return;
-
+    if (!credentials?.hasAppleId && !appleId.trim()) return;
+    if (!credentials?.hasAppPassword && !appPw.trim()) return;
     setSaving(true);
     try {
       await onSave({
-        apple_id: appleIdValue || undefined,
-        apple_app_password: appPwValue || undefined,
-        calendar_name: calNameValue,
+        apple_id: appleId || undefined,
+        apple_app_password: appPw || undefined,
+        calendar_name: calName,
         calendar_color: color,
-        calendar_timezone: calendarTimezone,
-        date_only_timezone: dateOnlyTimezone,
+        calendar_timezone: calTz,
+        date_only_timezone: dayTz,
         poll_interval_minutes: Number(pollInterval) || 5,
         full_sync_interval_minutes: Number(fullSyncInterval) || 60,
       });
       setEditing(false);
-      setAppleIdValue("");
-      setAppPwValue("");
+      setAppleId("");
+      setAppPw("");
     } finally {
       setSaving(false);
     }
   };
 
+  const Wrapper = compact ? "div" : Card;
+
   return (
-    <section class={`p-7 border border-line rounded-[20px] bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.03)] ${forceEditing ? "" : ""}`}>
-      {!forceEditing && <h3 class="text-base font-bold m-0 mb-5">{t("appleSection")}</h3>}
+    <Wrapper class="">
+      {!forceEditing && (
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="text-sm font-semibold m-0">{t("appleSection")}</h3>
+          {!editing && (
+            <Btn variant="ghost" size="sm" onClick={() => setEditing(true)}>
+              {t("editBtn")}
+            </Btn>
+          )}
+        </div>
+      )}
       <form onSubmit={handleSubmit} class="grid gap-4">
-        {/* Row: Apple ID + App Password */}
+        {/* Credentials row */}
         <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
           <SecretField
             id="apple_id"
@@ -712,8 +745,8 @@ function AppleSettingsCard({
             placeholder="you@example.com"
             maskedValue={credentials?.appleIdMasked || ""}
             editable={editing}
-            value={appleIdValue}
-            onInput={setAppleIdValue}
+            value={appleId}
+            onInput={setAppleId}
           />
           <div class="grid gap-1.5">
             <SecretField
@@ -722,12 +755,7 @@ function AppleSettingsCard({
               help={
                 <>
                   {t("appPwHelpPrefix")}
-                  <a
-                    href={APPLE_ACCOUNT_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    class="underline decoration-current underline-offset-2 hover:text-ink"
-                  >
+                  <a href={APPLE_ACCOUNT_URL} target="_blank" rel="noreferrer" class="underline underline-offset-2 hover:text-ink">
                     {t("appPwHelpLinkLabel")}
                   </a>
                   {t("appPwHelpSuffix")}
@@ -738,14 +766,14 @@ function AppleSettingsCard({
               placeholder="xxxx-xxxx-xxxx-xxxx"
               maskedValue={credentials?.appPasswordMasked || ""}
               editable={editing}
-              value={appPwValue}
-              onInput={setAppPwValue}
+              value={appPw}
+              onInput={setAppPw}
             />
             {editing && (
               <button
                 type="button"
-                onClick={() => setShowPwExplainer(!showPwExplainer)}
-                class="text-left text-xs text-accent bg-transparent border-0 cursor-pointer p-0 hover:underline"
+                onClick={() => setShowPwHelp(!showPwHelp)}
+                class="text-left text-[11px] text-accent bg-transparent border-0 cursor-pointer p-0 hover:underline"
               >
                 {t("appPwExplainerTitle")}
               </button>
@@ -753,12 +781,11 @@ function AppleSettingsCard({
           </div>
         </div>
 
-        {/* App-specific password explainer */}
-        {showPwExplainer && (
-          <div class="rounded-xl border border-accent/15 bg-accent/5 p-4 grid gap-2">
+        {showPwHelp && (
+          <div class="rounded-xl bg-accent/[0.04] border border-accent/10 p-4 grid gap-2">
             <p class="text-sm font-semibold text-ink m-0">{t("appPwExplainerTitle")}</p>
-            <p class="text-sm text-muted m-0">{t("appPwExplainerBody")}</p>
-            <ol class="text-sm text-muted m-0 pl-5 grid gap-1">
+            <p class="text-xs text-muted m-0">{t("appPwExplainerBody")}</p>
+            <ol class="text-xs text-muted m-0 pl-5 grid gap-1">
               <li>{t("appPwExplainerStep1")}</li>
               <li>{t("appPwExplainerStep2")}</li>
               <li>{t("appPwExplainerStep3")}</li>
@@ -767,191 +794,71 @@ function AppleSettingsCard({
           </div>
         )}
 
-        {/* Row: Calendar Name + Color */}
+        {/* Calendar name + color */}
         <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-          <Field
-            id="calendar_name"
-            label={t("calNameLabel")}
-            help={t("calNameHelp")}
-            value={calNameValue}
-            onInput={setCalNameValue}
-            disabled={!editing}
-          />
+          <Field id="calendar_name" label={t("calNameLabel")} help={t("calNameHelp")} value={calName} onInput={setCalName} disabled={!editing} />
           <div class="grid gap-1.5">
-            <label for="calendar_color" class="text-[13px] font-semibold text-ink">
-              {t("calColorLabel")}
-            </label>
+            <label for="calendar_color" class="text-xs font-medium text-muted">{t("calColorLabel")}</label>
             <div class="flex gap-2 items-center">
               <input
-                id="calendar_color"
-                value={color}
+                id="calendar_color" value={color}
                 onInput={(e) => setColor((e.target as HTMLInputElement).value)}
-                placeholder="#FF7F00"
-                disabled={!editing}
+                placeholder="#FF7F00" disabled={!editing}
                 class={`${INPUT_CLASS} flex-1 disabled:cursor-default disabled:text-muted`}
               />
               <input
-                type="color"
-                value={color}
+                type="color" value={color}
                 onInput={(e) => setColor((e.target as HTMLInputElement).value)}
                 disabled={!editing}
-                class="w-11 h-11 p-1 border border-line rounded-[10px] bg-bg cursor-pointer flex-none disabled:cursor-default disabled:opacity-60"
+                class="w-10 h-10 p-1 border border-line rounded-lg bg-bg cursor-pointer flex-none disabled:cursor-default disabled:opacity-50"
               />
             </div>
-            <span class="text-xs text-subtle leading-snug">{t("calColorHelp")}</span>
+            <span class="text-[11px] text-subtle">{t("calColorHelp")}</span>
           </div>
         </div>
 
-        {/* Row: Timezones */}
+        {/* Timezones */}
         <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-          <TimezoneField
-            id="calendar_timezone"
-            label={t("tzLabel")}
-            help={t("tzHelp")}
-            value={calendarTimezone}
-            onInput={setCalendarTimezone}
-            disabled={!editing}
-          />
-          <TimezoneField
-            id="date_only_timezone"
-            label={t("allDayTzLabel")}
-            help={t("allDayTzHelp")}
-            value={dateOnlyTimezone}
-            onInput={setDateOnlyTimezone}
-            disabled={!editing}
-          />
+          <TimezoneField id="calendar_timezone" label={t("tzLabel")} help={t("tzHelp")} value={calTz} onInput={setCalTz} disabled={!editing} />
+          <TimezoneField id="date_only_timezone" label={t("allDayTzLabel")} help={t("allDayTzHelp")} value={dayTz} onInput={setDayTz} disabled={!editing} />
         </div>
 
-        {/* Row: Intervals */}
+        {/* Intervals */}
         <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
           <div class="grid gap-1.5">
-            <label for="poll_interval_minutes" class="text-[13px] font-semibold text-ink">
-              {t("checkEveryLabel")}
-            </label>
-            <div class="grid grid-cols-[4rem_auto] items-center justify-start gap-2">
+            <label for="poll_interval_minutes" class="text-xs font-medium text-muted">{t("checkEveryLabel")}</label>
+            <div class="flex items-center gap-2">
               <input
-                id="poll_interval_minutes"
-                type="number"
-                min="1"
-                value={pollInterval}
+                id="poll_interval_minutes" type="number" min="1" value={pollInterval}
                 onInput={(e) => setPollInterval((e.target as HTMLInputElement).value)}
                 disabled={!editing}
                 class={`${INPUT_CLASS} w-16 min-w-0 disabled:cursor-default disabled:text-muted`}
               />
-              <span class="text-xs text-subtle whitespace-nowrap">{t("checkEveryUnit")}</span>
+              <span class="text-[11px] text-subtle whitespace-nowrap">{t("checkEveryUnit")}</span>
             </div>
           </div>
           <div class="grid gap-1.5">
-            <label for="full_sync_interval_minutes" class="text-[13px] font-semibold text-ink">
-              {t("fullSyncEveryLabel")}
-            </label>
-            <div class="grid grid-cols-[4rem_auto] items-center justify-start gap-2">
+            <label for="full_sync_interval_minutes" class="text-xs font-medium text-muted">{t("fullSyncEveryLabel")}</label>
+            <div class="flex items-center gap-2">
               <input
-                id="full_sync_interval_minutes"
-                type="number"
-                min="15"
-                value={fullSyncInterval}
+                id="full_sync_interval_minutes" type="number" min="15" value={fullSyncInterval}
                 onInput={(e) => setFullSyncInterval((e.target as HTMLInputElement).value)}
                 disabled={!editing}
                 class={`${INPUT_CLASS} w-16 min-w-0 disabled:cursor-default disabled:text-muted`}
               />
-              <span class="text-xs text-subtle whitespace-nowrap">{t("fullSyncEveryUnit")}</span>
+              <span class="text-[11px] text-subtle whitespace-nowrap">{t("fullSyncEveryUnit")}</span>
             </div>
           </div>
         </div>
 
-        {editing ? (
-          <button
-            type="submit"
-            disabled={saving}
-            class="w-full py-3.5 text-base rounded-xl bg-accent text-white font-semibold border-0 cursor-pointer shadow-[0_4px_14px_rgba(37,99,235,0.18)] transition-all duration-150 hover:bg-accent-hover disabled:opacity-60 disabled:cursor-default flex items-center justify-center gap-2"
-          >
-            {saving && <LoadingSpinner small />}
+        {/* Save button */}
+        {editing && (
+          <Btn variant="primary" size="lg" type="submit" disabled={saving} loading={saving} class="w-full mt-1">
             {saving ? t("saving") : t("saveBtn")}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            class="w-full py-3.5 text-base rounded-xl bg-accent text-white font-semibold border-0 cursor-pointer shadow-[0_4px_14px_rgba(37,99,235,0.18)] transition-all duration-150 hover:bg-accent-hover"
-          >
-            {t("editBtn")}
-          </button>
+          </Btn>
         )}
       </form>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Status Card
-// ---------------------------------------------------------------------------
-function StatusCard({
-  notionConnected,
-  appleConfigured,
-  workspaceName,
-  lastSync,
-}: {
-  notionConnected: boolean;
-  appleConfigured: boolean;
-  workspaceName: string;
-  lastSync: string;
-}) {
-  const { t } = useI18n();
-  return (
-    <section class="p-7 border border-line rounded-[20px] bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <h3 class="text-base font-bold m-0 mb-5">{t("statusLabel")}</h3>
-      <div class="grid grid-cols-2 max-md:grid-cols-1 gap-3">
-        <StatusItem
-          label={t("notionLabel")}
-          value={notionConnected ? t("notionOk") : t("notionMissing")}
-          ok={notionConnected}
-        />
-        <StatusItem
-          label={t("appleLabel")}
-          value={appleConfigured ? t("appleOk") : t("appleMissing")}
-          ok={appleConfigured}
-        />
-        <StatusItem label={t("workspaceLabel")} value={workspaceName || t("workspaceNone")} />
-        <StatusItem
-          label={t("lastSyncLabel")}
-          value={lastSync ? humanizeTimestamp(lastSync, t) : t("lastSyncNever")}
-          tooltip={lastSync ? formatTimestamp(lastSync) : undefined}
-        />
-      </div>
-    </section>
-  );
-}
-
-function StatusItem({
-  label,
-  value,
-  ok,
-  tooltip,
-}: {
-  label: string;
-  value: string;
-  ok?: boolean;
-  tooltip?: string;
-}) {
-  return (
-    <div class="flex items-center justify-between py-3.5 px-4 rounded-xl border border-line bg-bg">
-      <span class="text-[13px] font-semibold text-ink">{label}</span>
-      <span class="inline-flex min-w-0 items-center justify-end gap-1.5" title={tooltip}>
-        <span class="text-[13px] text-muted text-right max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap">
-          {value}
-        </span>
-        {ok !== undefined && (
-          <span
-            class={`inline-block w-2 h-2 rounded-full flex-none ${
-              ok ? "bg-green" : "bg-amber"
-            }`}
-            role="img"
-            aria-label={ok ? "Connected" : "Not connected"}
-          />
-        )}
-      </span>
-    </div>
+    </Wrapper>
   );
 }
 
@@ -984,96 +891,82 @@ function SyncDebugCard({
   };
 
   return (
-    <section class="p-7 border border-line rounded-[20px] bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <div class="flex items-start justify-between gap-4 flex-wrap">
-        <div class="grid gap-1">
-          <h3 class="text-base font-bold m-0">{t("debugLabel")}</h3>
-          <p class="text-sm text-muted m-0">{t("debugHelp")}</p>
+    <Card>
+      <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
+        <div>
+          <h3 class="text-sm font-semibold m-0">{t("debugLabel")}</h3>
+          <p class="text-xs text-muted m-0 mt-0.5">{t("debugHelp")}</p>
         </div>
-        <button
-          type="button"
+        <Btn
+          variant="secondary"
+          size="sm"
           disabled={!workspaceId || !ready || loading}
+          loading={loading}
           onClick={onLoad}
-          class="inline-flex items-center justify-center gap-1.5 border-0 rounded-[10px] py-3 px-5 bg-accent-soft text-accent font-semibold text-sm cursor-pointer transition-all duration-150 hover:bg-accent/[0.14] disabled:cursor-default disabled:text-muted disabled:bg-bg"
         >
-          {loading && <LoadingSpinner small />}
-          {loading ? t("debugLoading") : snapshot ? t("debugRefresh") : t("debugLoad")}
-        </button>
+          {snapshot ? t("debugRefresh") : t("debugLoad")}
+        </Btn>
       </div>
 
       {!workspaceId ? (
-        <p class="text-sm text-muted mt-4">{t("debugNoWorkspace")}</p>
+        <p class="text-xs text-muted">{t("debugNoWorkspace")}</p>
       ) : !ready ? (
-        <p class="text-sm text-muted mt-4">{t("debugUnavailable")}</p>
+        <p class="text-xs text-muted">{t("debugUnavailable")}</p>
       ) : loading && !snapshot ? (
-        <div class="flex items-center gap-2 mt-4">
-          <LoadingSpinner small />
-          <p class="text-sm text-muted m-0">{t("debugLoading")}</p>
+        <div class="flex items-center gap-2">
+          <Spinner small />
+          <p class="text-xs text-muted m-0">{t("debugLoading")}</p>
         </div>
       ) : error ? (
-        <p class="text-sm text-red mt-4">{error || t("debugLoadError")}</p>
+        <p class="text-xs text-red">{error}</p>
       ) : !snapshot ? (
-        <p class="text-sm text-muted mt-4">{t("debugEmpty")}</p>
+        <p class="text-xs text-muted">{t("debugEmpty")}</p>
       ) : (
-        <div class="grid gap-4 mt-5">
-          <div class="grid grid-cols-3 max-md:grid-cols-2 max-sm:grid-cols-1 gap-3">
-            <DebugMetric label={t("debugPendingCount")} value={snapshot.summary.pendingRemoteCount} />
-            <DebugMetric label={t("debugWarningCount")} value={snapshot.summary.warningCount} />
-            <DebugMetric label={t("debugNotionCount")} value={snapshot.summary.notionTaskCount} />
-            <DebugMetric label={t("debugCalendarCount")} value={snapshot.summary.managedCalendarEventCount} />
-            <DebugMetric label={t("debugUnmanagedCount")} value={snapshot.summary.unmanagedCalendarEventCount} />
-            <DebugMetric label={t("debugLedgerCount")} value={snapshot.summary.ledgerRecordCount} />
+        <div class="grid gap-4">
+          {/* Metric chips */}
+          <div class="flex flex-wrap gap-2">
+            <MetricChip label={t("debugNotionCount")} value={snapshot.summary.notionTaskCount} />
+            <MetricChip label={t("debugCalendarCount")} value={snapshot.summary.managedCalendarEventCount} />
+            <MetricChip label={t("debugLedgerCount")} value={snapshot.summary.ledgerRecordCount} />
+            <MetricChip label={t("debugPendingCount")} value={snapshot.summary.pendingRemoteCount} tone={snapshot.summary.pendingRemoteCount > 0 ? "amber" : undefined} />
+            <MetricChip label={t("debugWarningCount")} value={snapshot.summary.warningCount} tone={snapshot.summary.warningCount > 0 ? "red" : undefined} />
           </div>
 
-          <div class="text-xs text-subtle leading-snug">
-            {t("debugGeneratedAt")}: {formatTimestamp(snapshot.generatedAt)} | Calendar:{" "}
+          <p class="text-[11px] text-subtle m-0">
+            {t("debugGeneratedAt")}: {formatTimestamp(snapshot.generatedAt)}
+            {" \u00b7 "}
             <span class="font-mono">{snapshot.calendarHref}</span>
-          </div>
+          </p>
 
-          <div class="grid grid-cols-3 max-md:grid-cols-2 max-sm:grid-cols-1 gap-3">
-            {sections.map((section) => (
-              <DebugMetric key={section.id} label={section.title} value={section.entries.length} />
-            ))}
-          </div>
+          {/* Debug sections */}
+          {sections.map((section) => (
+            <DebugSection key={section.id} section={section} tableLabels={tableLabels} />
+          ))}
 
-          <div class="grid gap-4">
-            {sections.map((section) => (
-              <DebugSection key={section.id} section={section} tableLabels={tableLabels} />
-            ))}
-          </div>
-
+          {/* Unmanaged events */}
           {snapshot.unmanagedCalendarEvents.length > 0 && (
-            <div class="grid gap-3">
-              <h4 class="text-sm font-semibold m-0">{t("debugUnmanagedSection")}</h4>
-              <p class="text-xs text-muted m-0">{t("debugUnmanagedHelp")}</p>
+            <div class="grid gap-2">
+              <h4 class="text-xs font-semibold m-0">{t("debugUnmanagedSection")}</h4>
+              <p class="text-[11px] text-muted m-0">{t("debugUnmanagedHelp")}</p>
               <div class="overflow-x-auto">
-                <table class="w-full text-sm border-collapse">
+                <table class="w-full text-xs border-collapse">
                   <thead>
-                    <tr class="text-left text-[12px] text-muted border-b border-line whitespace-nowrap">
+                    <tr class="text-left text-[11px] text-muted border-b border-line">
                       <th class="py-2 pr-3 font-semibold">{tableLabels.item}</th>
                       <th class="py-2 pr-3 font-semibold">{tableLabels.schedule}</th>
                       <th class="py-2 font-semibold">{tableLabels.notes}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.unmanagedCalendarEvents.map((event) => (
-                      <tr key={event.href} class="align-top border-b border-line/60 last:border-0">
-                        <td class="py-3 pr-3 min-w-[280px] max-w-[360px]">
-                          <div class="text-sm font-semibold text-ink truncate" title={event.title || event.href}>
-                            {event.title || event.href.split("/").pop() || event.href}
-                          </div>
+                    {snapshot.unmanagedCalendarEvents.map((ev) => (
+                      <tr key={ev.href} class="align-top border-b border-line/50 last:border-0">
+                        <td class="py-2 pr-3">
+                          <span class="font-medium text-ink truncate block max-w-[280px]" title={ev.title || ev.href}>
+                            {ev.title || ev.href.split("/").pop() || ev.href}
+                          </span>
                         </td>
-                        <td class="py-3 pr-3 min-w-[180px] whitespace-nowrap text-sm text-ink">
-                          {formatDateRange(event.startDate, event.endDate)}
-                        </td>
-                        <td class="py-3 min-w-[320px] max-w-[560px]">
-                          <div
-                            class="text-sm text-ink truncate"
-                            title={`${event.href}\n${event.notionId ? `Notion ID: ${event.notionId}` : "No Notion mapping"}\nLast modified: ${valueOrDash(event.lastModified)}`}
-                          >
-                            {event.href}
-                          </div>
-                        </td>
+                        <td class="py-2 pr-3 whitespace-nowrap text-muted">{formatDateRange(ev.startDate, ev.endDate)}</td>
+                        <td class="py-2 text-muted truncate max-w-[300px]" title={ev.href}>{ev.href}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1083,15 +976,16 @@ function SyncDebugCard({
           )}
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
-function DebugMetric({ label, value }: { label: string; value: number }) {
+function MetricChip({ label, value, tone }: { label: string; value: number; tone?: "amber" | "red" }) {
+  const cls = tone === "red" ? "border-red/15 text-red" : tone === "amber" ? "border-amber/15 text-amber" : "border-line text-ink";
   return (
-    <div class="rounded-xl border border-line bg-bg px-4 py-3 grid gap-1">
-      <span class="text-xs font-semibold text-muted">{label}</span>
-      <span class="text-lg font-bold text-ink">{value}</span>
+    <div class={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-bg text-xs ${cls}`}>
+      <span class="text-muted font-medium">{label}</span>
+      <span class="font-bold">{value}</span>
     </div>
   );
 }
@@ -1101,44 +995,51 @@ function DebugSection({
   tableLabels,
 }: {
   section: DebugSectionModel;
-  tableLabels: {
-    item: string;
-    schedule: string;
-    action: string;
-    sync: string;
-    notes: string;
-  };
+  tableLabels: { item: string; schedule: string; action: string; sync: string; notes: string };
 }) {
+  const [expanded, setExpanded] = useState(section.tone === "red" || section.tone === "amber");
+
   return (
-    <section class="rounded-[18px] border border-line bg-bg p-4 grid gap-3">
-      <div class="flex items-start justify-between gap-3 flex-wrap">
-        <div class="grid gap-1">
-          <div class="flex items-center gap-2 flex-wrap">
-            <DebugBadge tone={section.tone} label={section.title} />
-            <span class="text-xs font-semibold text-muted">{section.entries.length}</span>
-          </div>
-          <p class="text-sm text-muted m-0">{section.description}</p>
+    <div class="rounded-xl border border-line bg-bg">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        class="w-full flex items-center justify-between gap-3 px-4 py-3 bg-transparent border-0 cursor-pointer text-left"
+      >
+        <div class="flex items-center gap-2">
+          <Badge tone={section.tone}>{section.title}</Badge>
+          <span class="text-xs text-muted">{section.entries.length}</span>
         </div>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm border-collapse">
-          <thead>
-            <tr class="text-left text-[12px] text-muted border-b border-line whitespace-nowrap">
-              <th class="py-2 pr-3 font-semibold">{tableLabels.item}</th>
-              <th class="py-2 pr-3 font-semibold">{tableLabels.schedule}</th>
-              <th class="py-2 pr-3 font-semibold">{tableLabels.action}</th>
-              <th class="py-2 pr-3 font-semibold">{tableLabels.sync}</th>
-              <th class="py-2 font-semibold">{tableLabels.notes}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {section.entries.map((entry) => (
-              <DebugEntryRow key={entry.pageId} entry={entry} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+        <svg
+          class={`w-3.5 h-3.5 text-muted transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+        </svg>
+      </button>
+      {expanded && (
+        <div class="px-4 pb-3 overflow-x-auto">
+          <p class="text-[11px] text-muted m-0 mb-2">{section.description}</p>
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="text-left text-[11px] text-muted border-b border-line">
+                <th class="py-1.5 pr-3 font-semibold">{tableLabels.item}</th>
+                <th class="py-1.5 pr-3 font-semibold">{tableLabels.schedule}</th>
+                <th class="py-1.5 pr-3 font-semibold">{tableLabels.action}</th>
+                <th class="py-1.5 pr-3 font-semibold">{tableLabels.sync}</th>
+                <th class="py-1.5 font-semibold">{tableLabels.notes}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {section.entries.map((entry) => (
+                <DebugEntryRow key={entry.pageId} entry={entry} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1150,65 +1051,30 @@ function DebugEntryRow({ entry }: { entry: SyncDebugEntry }) {
     asString(entry.notion?.startDate) || asString(entry.calendar?.startDate),
     asString(entry.notion?.endDate) || asString(entry.calendar?.endDate),
   );
-  const syncSummary = [
-    `N:${formatOperation(entry.operations.notion, t)}`,
-    `C:${formatOperation(entry.operations.calendar, t)}`,
-    `L:${formatOperation(entry.operations.ledger, t)}`,
-  ].join(" ");
 
   return (
-    <tr class="align-top border-b border-line/60 last:border-0" title={tooltip}>
-      <td class="py-3 pr-3 min-w-[280px] max-w-[360px]">
-        <div class="flex items-center gap-2 whitespace-nowrap overflow-hidden">
-          <span class="text-sm font-semibold text-ink truncate">{entry.title}</span>
-          <DebugBadge tone="slate" label={formatRelation(entry.relation, t)} />
+    <tr class="align-top border-b border-line/50 last:border-0" title={tooltip}>
+      <td class="py-2 pr-3 max-w-[240px]">
+        <div class="flex items-center gap-1.5">
+          <span class="font-medium text-ink truncate">{entry.title}</span>
+          <Badge tone="slate">{formatRelation(entry.relation, t)}</Badge>
         </div>
       </td>
-      <td class="py-3 pr-3 min-w-[180px] whitespace-nowrap text-sm text-ink">
-        {schedule}
-      </td>
-      <td class="py-3 pr-3 min-w-[200px]">
-        <div class="flex items-center gap-2 flex-nowrap whitespace-nowrap">
-          <DebugBadge tone={actionTone(entry.action)} label={formatAction(entry.action, t)} />
-          {entry.pendingRemoteSync && <DebugBadge tone="amber" label={t("pendingRemoteSync")} />}
-          {entry.warnings.length > 0 && (
-            <DebugBadge tone="red" label={t("warningCount").replace("{n}", String(entry.warnings.length))} />
-          )}
+      <td class="py-2 pr-3 whitespace-nowrap text-muted">{schedule}</td>
+      <td class="py-2 pr-3">
+        <div class="flex items-center gap-1.5 flex-nowrap whitespace-nowrap">
+          <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
+          {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
+          {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
         </div>
       </td>
-      <td class="py-3 pr-3 min-w-[150px] whitespace-nowrap text-xs text-muted">
-        {syncSummary}
+      <td class="py-2 pr-3 whitespace-nowrap text-[11px] text-muted">
+        N:{formatOperation(entry.operations.notion, t)} C:{formatOperation(entry.operations.calendar, t)} L:{formatOperation(entry.operations.ledger, t)}
       </td>
-      <td class="py-3 min-w-[340px] max-w-[560px]">
-        <div class="text-sm text-ink truncate" title={tooltip}>
-          {notes}
-        </div>
+      <td class="py-2 max-w-[300px]">
+        <span class="text-muted truncate block" title={tooltip}>{notes}</span>
       </td>
     </tr>
-  );
-}
-
-function DebugBadge({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: "blue" | "green" | "amber" | "red" | "slate";
-}) {
-  const toneClass =
-    tone === "green"
-      ? "bg-green/10 text-green"
-      : tone === "amber"
-        ? "bg-amber/15 text-amber"
-        : tone === "red"
-          ? "bg-red/10 text-red"
-          : tone === "slate"
-            ? "bg-ink/8 text-ink"
-            : "bg-accent/10 text-accent";
-  return (
-    <span class={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold ${toneClass}`}>
-      {label}
-    </span>
   );
 }
 
@@ -1218,15 +1084,15 @@ function DebugBadge({
 function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
   const { t } = useI18n();
   return (
-    <section class="p-7 border border-line rounded-[20px] bg-surface shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <h3 class="text-base font-bold m-0 mb-5">{t("webhookLogLabel")}</h3>
+    <Card>
+      <h3 class="text-sm font-semibold m-0 mb-4">{t("webhookLogLabel")}</h3>
       {logs.length === 0 ? (
-        <p class="text-sm text-muted">{t("webhookLogEmpty")}</p>
+        <p class="text-xs text-muted">{t("webhookLogEmpty")}</p>
       ) : (
         <div class="overflow-x-auto">
-          <table class="w-full text-sm border-collapse">
+          <table class="w-full text-xs border-collapse">
             <thead>
-              <tr class="text-left text-[13px] text-muted border-b border-line">
+              <tr class="text-left text-[11px] text-muted border-b border-line">
                 <th class="py-2 pr-3 font-semibold">{t("webhookLogTime")}</th>
                 <th class="py-2 pr-3 font-semibold">{t("webhookLogEvents")}</th>
                 <th class="py-2 pr-3 font-semibold">{t("webhookLogPages")}</th>
@@ -1236,29 +1102,23 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
             <tbody>
               {logs.map((log) => (
                 <tr key={log.id} class="border-b border-line/50 last:border-0">
-                  <td class="py-2.5 pr-3 text-ink whitespace-nowrap" title={formatTimestamp(log.createdAt)}>
+                  <td class="py-2 pr-3 text-ink whitespace-nowrap" title={formatTimestamp(log.createdAt)}>
                     {humanizeTimestamp(log.createdAt, t)}
                   </td>
-                  <td class="py-2.5 pr-3 text-muted">
+                  <td class="py-2 pr-3 text-muted">
                     {Array.isArray(log.eventTypes) && log.eventTypes.length > 0
                       ? log.eventTypes.map((et) => et.replace("page.", "")).join(", ")
                       : "\u2014"}
                   </td>
-                  <td class="py-2.5 pr-3 text-muted font-mono text-xs">
+                  <td class="py-2 pr-3 text-muted font-mono">
                     {Array.isArray(log.pageIds) && log.pageIds.length > 0
                       ? `${log.pageIds.length} page${log.pageIds.length > 1 ? "s" : ""}`
                       : "\u2014"}
                   </td>
-                  <td class="py-2.5">
-                    <span
-                      class={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
-                        log.result && (log.result as Record<string, unknown>).ok
-                          ? "bg-green/10 text-green"
-                          : "bg-red/10 text-red"
-                      }`}
-                    >
+                  <td class="py-2">
+                    <Badge tone={log.result && (log.result as Record<string, unknown>).ok ? "green" : "red"}>
                       {log.result && (log.result as Record<string, unknown>).ok ? "OK" : "Error"}
-                    </span>
+                    </Badge>
                   </td>
                 </tr>
               ))}
@@ -1266,7 +1126,7 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
           </table>
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -1274,127 +1134,59 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
 // Form Fields
 // ---------------------------------------------------------------------------
 function TimezoneField({
-  id,
-  label,
-  help,
-  value,
-  onInput,
-  disabled,
+  id, label, help, value, onInput, disabled,
 }: {
-  id: string;
-  label: string;
-  help: ComponentChildren;
-  value: string;
-  onInput: (value: string) => void;
-  disabled?: boolean;
+  id: string; label: string; help: ComponentChildren; value: string; onInput: (v: string) => void; disabled?: boolean;
 }) {
   const resolvedValue = normalizeTimezoneValue(value) || detectIanaTimezone() || "UTC";
-  const hasOption = TIMEZONE_OPTIONS.some((option) => option.value === resolvedValue);
-  const options = hasOption
-    ? TIMEZONE_OPTIONS
-    : [{ value: resolvedValue, label: formatTimezoneOptionLabel(resolvedValue) }, ...TIMEZONE_OPTIONS];
+  const hasOption = TIMEZONE_OPTIONS.some((o) => o.value === resolvedValue);
+  const options = hasOption ? TIMEZONE_OPTIONS : [{ value: resolvedValue, label: formatTimezoneOptionLabel(resolvedValue) }, ...TIMEZONE_OPTIONS];
 
   return (
     <div class="grid gap-1.5">
-      <label for={id} class="text-[13px] font-semibold text-ink">
-        {label}
-      </label>
+      <label for={id} class="text-xs font-medium text-muted">{label}</label>
       <select
-        id={id}
-        name={id}
-        value={resolvedValue}
-        onInput={(event) => onInput((event.target as HTMLSelectElement).value)}
+        id={id} name={id} value={resolvedValue}
+        onInput={(e) => onInput((e.target as HTMLSelectElement).value)}
         disabled={disabled}
         class={`${INPUT_CLASS} disabled:cursor-default disabled:text-muted`}
       >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <span class="text-xs text-subtle leading-snug">{help}</span>
+      <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
 }
 
-const INPUT_CLASS =
-  "w-full py-[11px] px-3.5 border border-line rounded-[10px] bg-bg text-ink text-sm font-[inherit] transition-[border-color] duration-150 focus:outline-none focus:border-accent focus:shadow-[0_0_0_3px_rgba(37,99,235,0.08)]";
-
 function Field({
-  id,
-  label,
-  help,
-  type = "text",
-  required,
-  placeholder,
-  value,
-  onInput,
-  disabled,
+  id, label, help, type = "text", required, placeholder, value, onInput, disabled,
 }: {
-  id: string;
-  label: string;
-  help: ComponentChildren;
-  type?: string;
-  required?: boolean;
-  placeholder?: string;
-  value: string;
-  onInput: (v: string) => void;
-  disabled?: boolean;
+  id: string; label: string; help: ComponentChildren; type?: string; required?: boolean; placeholder?: string; value: string; onInput: (v: string) => void; disabled?: boolean;
 }) {
   return (
     <div class="grid gap-1.5">
-      <label for={id} class="text-[13px] font-semibold text-ink">
-        {label}
-      </label>
+      <label for={id} class="text-xs font-medium text-muted">{label}</label>
       <input
-        id={id}
-        name={id}
-        type={type}
-        required={required}
-        placeholder={placeholder}
-        value={value}
-        onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+        id={id} name={id} type={type} required={required} placeholder={placeholder}
+        value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
         disabled={disabled}
         class={`${INPUT_CLASS} disabled:cursor-default disabled:text-muted`}
       />
-      <span class="text-xs text-subtle leading-snug">{help}</span>
+      <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
 }
 
 function SecretField({
-  id,
-  label,
-  help,
-  type = "text",
-  required,
-  placeholder,
-  maskedValue,
-  editable,
-  value,
-  onInput,
+  id, label, help, type = "text", required, placeholder, maskedValue, editable, value, onInput,
 }: {
-  id: string;
-  label: string;
-  help: ComponentChildren;
-  type?: string;
-  required?: boolean;
-  placeholder?: string;
-  maskedValue?: string;
-  editable: boolean;
-  value: string;
-  onInput: (v: string) => void;
+  id: string; label: string; help: ComponentChildren; type?: string; required?: boolean; placeholder?: string; maskedValue?: string; editable: boolean; value: string; onInput: (v: string) => void;
 }) {
   return (
     <div class="grid gap-1.5">
-      <label for={id} class="text-[13px] font-semibold text-ink">
-        {label}
-      </label>
+      <label for={id} class="text-xs font-medium text-muted">{label}</label>
       <input
-        id={id}
-        name={id}
-        type={editable ? type : "text"}
+        id={id} name={id} type={editable ? type : "text"}
         required={editable && required}
         placeholder={editable ? placeholder : undefined}
         value={editable ? value : maskedValue}
@@ -1402,29 +1194,8 @@ function SecretField({
         disabled={!editable}
         class={`${INPUT_CLASS} disabled:opacity-100 disabled:cursor-default disabled:text-muted`}
       />
-      <span class="text-xs text-subtle leading-snug">{help}</span>
+      <span class="text-[11px] text-subtle">{help}</span>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Loading Spinner
-// ---------------------------------------------------------------------------
-function LoadingSpinner({ small }: { small?: boolean }) {
-  const size = small ? "w-4 h-4" : "w-6 h-6";
-  return (
-    <svg
-      class={`${size} animate-spin text-current`}
-      viewBox="0 0 24 24"
-      fill="none"
-    >
-      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-      <path
-        class="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-      />
-    </svg>
   );
 }
 
@@ -1436,8 +1207,7 @@ type TFunc = (key: keyof Translations) => string;
 function humanizeTimestamp(iso: string, t: TFunc): string {
   try {
     const d = new Date(iso);
-    const now = Date.now();
-    const diffMs = now - d.getTime();
+    const diffMs = Date.now() - d.getTime();
     if (diffMs < 0) return formatTimestamp(iso);
     const diffMin = Math.floor(diffMs / 60000);
     if (diffMin < 1) return t("timeJustNow");
@@ -1447,24 +1217,15 @@ function humanizeTimestamp(iso: string, t: TFunc): string {
     const diffDays = Math.floor(diffHours / 24);
     if (diffDays < 30) return t("timeDaysAgo").replace("{n}", String(diffDays));
     return formatTimestamp(iso);
-  } catch {
-    return iso;
-  }
+  } catch { return iso; }
 }
 
 function formatTimestamp(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
-  } catch {
-    return iso;
-  }
+  } catch { return iso; }
 }
 
 function formatDateRange(start?: string | null, end?: string | null): string {
@@ -1476,8 +1237,7 @@ function formatDateRange(start?: string | null, end?: string | null): string {
 
 function valueOrDash(value: unknown): string {
   if (typeof value !== "string") return "\u2014";
-  const normalized = value.trim();
-  return normalized || "\u2014";
+  return value.trim() || "\u2014";
 }
 
 function asString(value: unknown): string | null {
@@ -1486,16 +1246,10 @@ function asString(value: unknown): string | null {
 
 function buildDebugNotes(entry: SyncDebugEntry): string {
   const parts = [entry.reason];
-  if (entry.warnings.length > 0) {
-    parts.push(`Warnings: ${entry.warnings.join("; ")}`);
-  }
-  if (entry.duplicateCalendarEvents.length > 0) {
-    parts.push(`Duplicates: ${entry.duplicateCalendarEvents.length}`);
-  }
-  const eventHref = valueOrDash(entry.calendar?.eventHref || entry.ledger?.eventHref);
-  if (eventHref !== "\u2014") {
-    parts.push(`Event: ${eventHref}`);
-  }
+  if (entry.warnings.length > 0) parts.push(`Warnings: ${entry.warnings.join("; ")}`);
+  if (entry.duplicateCalendarEvents.length > 0) parts.push(`Duplicates: ${entry.duplicateCalendarEvents.length}`);
+  const href = valueOrDash(entry.calendar?.eventHref || entry.ledger?.eventHref);
+  if (href !== "\u2014") parts.push(`Event: ${href}`);
   return parts.join(" | ");
 }
 
@@ -1505,65 +1259,48 @@ function buildDebugTooltip(entry: SyncDebugEntry, t: TFunc): string {
     `Page: ${entry.pageId}`,
     `Relation: ${formatRelation(entry.relation, t)}`,
     `Action: ${formatAction(entry.action, t)}`,
-    `Schedule: ${formatDateRange(
-      asString(entry.notion?.startDate) || asString(entry.calendar?.startDate),
-      asString(entry.notion?.endDate) || asString(entry.calendar?.endDate),
-    )}`,
-    `Sync: N:${formatOperation(entry.operations.notion, t)} C:${formatOperation(entry.operations.calendar, t)} L:${formatOperation(entry.operations.ledger, t)}`,
-    `Notes: ${buildDebugNotes(entry)}`,
     `Notion hash: ${valueOrDash(entry.notionHash)}`,
     `Calendar hash: ${valueOrDash(entry.calendarHash)}`,
   ].join("\n");
 }
 
 function formatAction(action: SyncDebugAction, t: TFunc): string {
-  switch (action) {
-    case "create_calendar_event": return t("actionCreateCalendar");
-    case "update_calendar_event": return t("actionUpdateCalendar");
-    case "update_notion_page": return t("actionUpdateNotion");
-    case "clear_notion_schedule": return t("actionClearSchedule");
-    case "delete_calendar_event": return t("actionDeleteCalendar");
-    case "delete_ledger_record": return t("actionDeleteLedger");
-    case "update_ledger_record": return t("actionUpdateLedger");
-    default: return t("actionNoop");
-  }
+  const map: Record<string, keyof Translations> = {
+    create_calendar_event: "actionCreateCalendar",
+    update_calendar_event: "actionUpdateCalendar",
+    update_notion_page: "actionUpdateNotion",
+    clear_notion_schedule: "actionClearSchedule",
+    delete_calendar_event: "actionDeleteCalendar",
+    delete_ledger_record: "actionDeleteLedger",
+    update_ledger_record: "actionUpdateLedger",
+  };
+  return t(map[action] || "actionNoop");
 }
 
 function formatRelation(relation: SyncDebugRelation, t: TFunc): string {
-  switch (relation) {
-    case "matched": return t("relationMatched");
-    case "notion_only": return t("relationNotionOnly");
-    case "calendar_only": return t("relationCalendarOnly");
-    default: return t("relationLedgerOnly");
-  }
+  const map: Record<string, keyof Translations> = {
+    matched: "relationMatched",
+    notion_only: "relationNotionOnly",
+    calendar_only: "relationCalendarOnly",
+    ledger_only: "relationLedgerOnly",
+  };
+  return t(map[relation] || "relationLedgerOnly");
 }
 
 function formatOperation(operation: string, t: TFunc): string {
-  switch (operation) {
-    case "clear_schedule": return t("opClear");
-    case "upsert": return t("opUpsert");
-    case "create": return t("opCreate");
-    case "update": return t("opUpdate");
-    case "delete": return t("opDelete");
-    default: return t("opNone");
-  }
+  const map: Record<string, keyof Translations> = {
+    clear_schedule: "opClear", upsert: "opUpsert", create: "opCreate", update: "opUpdate", delete: "opDelete",
+  };
+  return t(map[operation] || "opNone");
 }
 
 function actionTone(action: SyncDebugAction): "blue" | "green" | "amber" | "red" | "slate" {
   switch (action) {
-    case "create_calendar_event":
-    case "update_calendar_event":
-    case "update_notion_page":
-      return "blue";
-    case "update_ledger_record":
-      return "green";
-    case "clear_notion_schedule":
-      return "amber";
-    case "delete_calendar_event":
-    case "delete_ledger_record":
-      return "red";
-    default:
-      return "slate";
+    case "create_calendar_event": case "update_calendar_event": case "update_notion_page": return "blue";
+    case "update_ledger_record": return "green";
+    case "clear_notion_schedule": return "amber";
+    case "delete_calendar_event": case "delete_ledger_record": return "red";
+    default: return "slate";
   }
 }
 
@@ -1575,72 +1312,15 @@ type DebugSectionModel = {
   entries: SyncDebugEntry[];
 };
 
-function buildDebugSections(
-  entries: SyncDebugEntry[],
-  t: TFunc,
-): DebugSectionModel[] {
-  const sections: DebugSectionModel[] = [
-    {
-      id: "attention",
-      title: t("debugSectionAttention"),
-      description: t("debugSectionAttentionHelp"),
-      tone: "red",
-      entries: entries.filter((entry) => entry.warnings.length > 0),
-    },
-    {
-      id: "create",
-      title: t("debugSectionCreate"),
-      description: t("debugSectionCreateHelp"),
-      tone: "blue",
-      entries: entries.filter(
-        (entry) => entry.warnings.length === 0 && entry.action === "create_calendar_event",
-      ),
-    },
-    {
-      id: "update",
-      title: t("debugSectionUpdate"),
-      description: t("debugSectionUpdateHelp"),
-      tone: "amber",
-      entries: entries.filter(
-        (entry) =>
-          entry.warnings.length === 0 &&
-          (entry.action === "update_calendar_event" || entry.action === "update_notion_page"),
-      ),
-    },
-    {
-      id: "cleanup",
-      title: t("debugSectionCleanup"),
-      description: t("debugSectionCleanupHelp"),
-      tone: "amber",
-      entries: entries.filter(
-        (entry) =>
-          entry.warnings.length === 0 &&
-          (entry.action === "clear_notion_schedule" ||
-            entry.action === "delete_calendar_event" ||
-            entry.action === "delete_ledger_record"),
-      ),
-    },
-    {
-      id: "ledger",
-      title: t("debugSectionLedger"),
-      description: t("debugSectionLedgerHelp"),
-      tone: "green",
-      entries: entries.filter(
-        (entry) => entry.warnings.length === 0 && entry.action === "update_ledger_record",
-      ),
-    },
-    {
-      id: "aligned",
-      title: t("debugSectionAligned"),
-      description: t("debugSectionAlignedHelp"),
-      tone: "slate",
-      entries: entries.filter(
-        (entry) => entry.warnings.length === 0 && entry.action === "noop",
-      ),
-    },
-  ];
-
-  return sections.filter((section) => section.entries.length > 0);
+function buildDebugSections(entries: SyncDebugEntry[], t: TFunc): DebugSectionModel[] {
+  return [
+    { id: "attention", title: t("debugSectionAttention"), description: t("debugSectionAttentionHelp"), tone: "red" as const, entries: entries.filter((e) => e.warnings.length > 0) },
+    { id: "create", title: t("debugSectionCreate"), description: t("debugSectionCreateHelp"), tone: "blue" as const, entries: entries.filter((e) => e.warnings.length === 0 && e.action === "create_calendar_event") },
+    { id: "update", title: t("debugSectionUpdate"), description: t("debugSectionUpdateHelp"), tone: "amber" as const, entries: entries.filter((e) => e.warnings.length === 0 && (e.action === "update_calendar_event" || e.action === "update_notion_page")) },
+    { id: "cleanup", title: t("debugSectionCleanup"), description: t("debugSectionCleanupHelp"), tone: "amber" as const, entries: entries.filter((e) => e.warnings.length === 0 && (e.action === "clear_notion_schedule" || e.action === "delete_calendar_event" || e.action === "delete_ledger_record")) },
+    { id: "ledger", title: t("debugSectionLedger"), description: t("debugSectionLedgerHelp"), tone: "green" as const, entries: entries.filter((e) => e.warnings.length === 0 && e.action === "update_ledger_record") },
+    { id: "aligned", title: t("debugSectionAligned"), description: t("debugSectionAlignedHelp"), tone: "slate" as const, entries: entries.filter((e) => e.warnings.length === 0 && e.action === "noop") },
+  ].filter((s) => s.entries.length > 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1694,58 +1374,39 @@ const TIMEZONE_OPTIONS = buildTimezoneOptions();
 function buildTimezoneOptions(): TimezoneOption[] {
   let values: string[] = [];
   try {
-    if (typeof Intl.supportedValuesOf === "function") {
-      values = Intl.supportedValuesOf("timeZone");
-    }
+    if (typeof Intl.supportedValuesOf === "function") values = Intl.supportedValuesOf("timeZone");
   } catch {}
   if (!values.length) values = [...FALLBACK_TIMEZONES];
-  return [...new Set(values)].map((value) => ({
-    value,
-    label: formatTimezoneOptionLabel(value),
-  }));
+  return [...new Set(values)].map((v) => ({ value: v, label: formatTimezoneOptionLabel(v) }));
 }
 
 function formatTimezoneOptionLabel(value: string): string {
-  const officialLabel = TIMEZONE_DISPLAY_LABELS[value];
-  if (officialLabel) return officialLabel;
+  const known = TIMEZONE_DISPLAY_LABELS[value];
+  if (known) return known;
   const offset = formatUtcOffsetLabel(value);
-  const cityLabel = fallbackTimezoneCityLabel(value);
-  return offset ? `${offset} - ${cityLabel}` : cityLabel;
+  const city = value.split("/").pop()?.replace(/_/g, " ") || value;
+  return offset ? `${offset} - ${city}` : city;
 }
 
 function detectIanaTimezone(): string | null {
   try {
-    const value = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return normalizeTimezoneValue(value);
-  } catch {
-    return null;
-  }
+    return normalizeTimezoneValue(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  } catch { return null; }
 }
 
 function normalizeTimezoneValue(value: unknown): string {
   if (typeof value !== "string") return "";
-  const normalized = value.trim();
-  if (!normalized) return "";
-  return WINDOWS_TIMEZONE_TO_IANA[normalized] || normalized;
-}
-
-function fallbackTimezoneCityLabel(value: string): string {
-  const parts = value.split("/");
-  return parts[parts.length - 1]?.replace(/_/g, " ") || value;
+  const s = value.trim();
+  if (!s) return "";
+  return WINDOWS_TIMEZONE_TO_IANA[s] || s;
 }
 
 function formatUtcOffsetLabel(timeZone: string): string {
   try {
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      timeZoneName: "shortOffset",
-    });
-    const parts = formatter.formatToParts(new Date());
-    const rawOffset = parts.find((part) => part.type === "timeZoneName")?.value || "";
-    return normalizeOffsetLabel(rawOffset);
-  } catch {
-    return "";
-  }
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).formatToParts(new Date());
+    const raw = parts.find((p) => p.type === "timeZoneName")?.value || "";
+    return normalizeOffsetLabel(raw);
+  } catch { return ""; }
 }
 
 function normalizeOffsetLabel(value: string): string {
@@ -1753,8 +1414,6 @@ function normalizeOffsetLabel(value: string): string {
   if (value === "GMT" || value === "UTC") return "UTC+00:00";
   const match = value.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i);
   if (!match) return value.replace(/^GMT/i, "UTC");
-  const [, sign, hourText, minuteText] = match;
-  const hour = hourText.padStart(2, "0");
-  const minute = (minuteText || "00").padStart(2, "0");
-  return `UTC${sign}${hour}:${minute}`;
+  const [, sign, h, m] = match;
+  return `UTC${sign}${h.padStart(2, "0")}:${(m || "00").padStart(2, "0")}`;
 }
