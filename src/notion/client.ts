@@ -275,8 +275,14 @@ export function parsePageToTask(page: Record<string, unknown>): TaskInfo {
   let description: string | null = null;
   if (normalizeText(descriptionProp?.type) === "rich_text") {
     const richText = Array.isArray(descriptionProp?.rich_text) ? descriptionProp.rich_text : [];
-    const first = richText.length > 0 ? asRecord(richText[0]) : null;
-    description = normalizeText(first?.plain_text);
+    // Concatenate ALL rich_text blocks to avoid truncating multi-block content.
+    const fullText = richText
+      .map((item: unknown) => {
+        const record = asRecord(item);
+        return normalizeText(record?.plain_text) || normalizeText(asRecord(record?.text)?.content) || "";
+      })
+      .join("");
+    description = normalizeText(fullText);
   }
 
   return {

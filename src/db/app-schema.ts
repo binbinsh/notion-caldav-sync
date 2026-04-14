@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS sync_ledger (
   last_push_token TEXT,
   deleted_on_caldav_at TEXT,
   deleted_in_notion_at TEXT,
-  cleared_due_in_notion_at TEXT
+  cleared_due_in_notion_at TEXT,
+  last_synced_payload TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS sync_ledger_tenant_page_uidx ON sync_ledger (tenant_id, page_id);
 CREATE INDEX IF NOT EXISTS sync_ledger_tenant_idx ON sync_ledger (tenant_id);
@@ -73,3 +74,11 @@ CREATE TABLE IF NOT EXISTS webhook_log (
 CREATE INDEX IF NOT EXISTS webhook_log_tenant_idx ON webhook_log (tenant_id);
 CREATE INDEX IF NOT EXISTS webhook_log_created_at_idx ON webhook_log (created_at);
 `;
+
+/**
+ * Migrations that add columns to existing tables.
+ * Each statement is run individually; "duplicate column" errors are silently ignored.
+ */
+export const schemaMigrations: string[] = [
+  `ALTER TABLE sync_ledger ADD COLUMN last_synced_payload TEXT`,
+];

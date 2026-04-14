@@ -249,6 +249,7 @@ export class LedgerRecord {
     readonly deletedOnCaldavAt: string | null = null,
     readonly deletedInNotionAt: string | null = null,
     readonly clearedDueInNotionAt: string | null = null,
+    readonly lastSyncedPayload: string | null = null,
   ) {}
 
   with(values: Partial<LedgerRecord>): LedgerRecord {
@@ -268,6 +269,7 @@ export class LedgerRecord {
       pick("deletedOnCaldavAt", this.deletedOnCaldavAt),
       pick("deletedInNotionAt", this.deletedInNotionAt),
       pick("clearedDueInNotionAt", this.clearedDueInNotionAt),
+      pick("lastSyncedPayload", this.lastSyncedPayload),
     );
   }
 
@@ -285,6 +287,7 @@ export class LedgerRecord {
       deletedOnCaldavAt: this.deletedOnCaldavAt,
       deletedInNotionAt: this.deletedInNotionAt,
       clearedDueInNotionAt: this.clearedDueInNotionAt,
+      lastSyncedPayload: this.lastSyncedPayload,
     };
   }
 
@@ -307,6 +310,7 @@ export class LedgerRecord {
       cleanText(data.deletedOnCaldavAt),
       cleanText(data.deletedInNotionAt),
       cleanText(data.clearedDueInNotionAt),
+      cleanText(data.lastSyncedPayload),
     );
   }
 }

@@ -4,6 +4,23 @@ import { STATUS_CANONICAL_VARIANTS, STATUS_EMOJI_SETS } from "../sync/constants"
 
 const DEFAULT_TIMED_EVENT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 
+// Map canonical Notion statuses to iCalendar VEVENT STATUS values (RFC 5545).
+const NOTION_STATUS_TO_ICS: Record<string, string> = {
+  Todo: "TENTATIVE",
+  "In progress": "CONFIRMED",
+  Completed: "CONFIRMED",
+  Overdue: "CONFIRMED",
+  Cancelled: "CANCELLED",
+};
+
+// Reverse: map iCalendar STATUS back to a canonical Notion status hint.
+// This is a weak signal — the description Status header takes precedence.
+const ICS_STATUS_TO_NOTION: Record<string, string> = {
+  TENTATIVE: "Todo",
+  CANCELLED: "Cancelled",
+  // CONFIRMED is ambiguous (In progress or Completed), so we don't map it.
+};
+
 const emojiStatus = Object.fromEntries(
   Object.values(STATUS_EMOJI_SETS).flatMap((emojiSet) =>
     Object.entries(emojiSet).map(([canonical, emoji]) => [emoji.trim(), canonical]),
@@ -72,6 +89,12 @@ export function buildEvent(input: {
     (event as any).categories([{ name: input.category }]);
   }
 
+  // Set iCalendar STATUS property based on Notion task status.
+  const icsStatus = NOTION_STATUS_TO_ICS[input.statusName];
+  if (icsStatus) {
+    (event as any).status(icsStatus);
+  }
+
   if (input.startIso) {
     if (input.startIso.includes("T")) {
       const start = new Date(input.startIso);
@@ -102,6 +125,9 @@ export function buildEvent(input: {
     }
   }
   let output = calendar.toString();
+  // Inject X-NOTION-PAGE-ID custom property for reliable round-trip identification.
+  // This survives server-side UID normalization and filename changes.
+  output = output.replace(/(UID:[^\r\n]+\r\n)/, `$1X-NOTION-PAGE-ID:${input.notionId}\r\n`);
   if (input.color) {
     output = output.replace(/(SUMMARY:[^\r\n]+\r\n)/, `$1COLOR:${input.color}\r\n`);
   }
@@ -121,7 +147,9 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   let status = summaryStatus;
   let category = firstText(arrayify(event.component.getFirstPropertyValue("categories")));
   const color = normalizeText(event.component.getFirstPropertyValue("color"));
-  const descriptionValue = normalizeText(event.description);
+  const rawDescription = normalizeText(event.description);
+  // Normalize whitespace: CalDAV servers may add \r\n; canonicalize to \n.
+  const descriptionValue = rawDescription ? rawDescription.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : null;
   let description: string | null = null;
   let url = normalizeText(event.component.getFirstPropertyValue("url"));
 
@@ -135,6 +163,15 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
     description = parsed.body || parsed.headers.Description || null;
     if (!summaryStatus || summaryStatus === "Overdue") {
       status = parsed.headers.Status || status;
+    }
+  }
+
+  // Fall back to iCalendar STATUS property if no status was extracted from
+  // the summary emoji or the description headers.
+  if (!status) {
+    const veventStatus = normalizeText(vevent.getFirstPropertyValue("status"));
+    if (veventStatus) {
+      status = ICS_STATUS_TO_NOTION[veventStatus.toUpperCase()] || null;
     }
   }
 
@@ -167,9 +204,13 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   }
 
   const uid = normalizeText(event.uid);
-  const notionId = uid && uid.startsWith("notion-") && uid.includes("@")
-    ? uid.split("@", 1)[0].replace("notion-", "")
-    : null;
+  // Prefer X-NOTION-PAGE-ID custom property for reliable identification.
+  // Falls back to extracting from UID (notion-{pageId}@sync).
+  const xNotionPageId = normalizeText(vevent.getFirstPropertyValue("x-notion-page-id"));
+  const notionId = xNotionPageId
+    || (uid && uid.startsWith("notion-") && uid.includes("@")
+        ? uid.split("@", 1)[0].replace("notion-", "")
+        : null);
   const placeholder = vevent.getFirstPropertyValue("x-notion-placeholder") ? "1" : null;
 
   return {
@@ -239,6 +280,11 @@ function extractSummaryStatus(summary: string): { status: string | null; title: 
   return { status: null, title: summary };
 }
 
+// Known metadata header keys that we embed in the ICS description.
+// Only these are extracted as structured headers; everything else is
+// treated as user-authored body text to preserve round-trip fidelity.
+const KNOWN_HEADER_KEYS = new Set(["Source", "Status", "Notion URL", "Category", "Description"]);
+
 function parseDescriptionFields(text: string): {
   headers: Record<string, string>;
   body: string | null;
@@ -254,15 +300,32 @@ function parseDescriptionFields(text: string): {
   const headerCandidates = headerText.includes("\n")
     ? headerText.split("\n").map((line) => line.trim()).filter(Boolean)
     : headerText.split("|").map((line) => line.trim()).filter(Boolean);
+
+  // Collect lines that don't match a known header — these are user content
+  // that ended up before the paragraph break.
+  const unknownLines: string[] = [];
   for (const item of headerCandidates) {
     const separator = item.indexOf(":");
     if (separator <= 0) {
+      unknownLines.push(item);
       continue;
     }
     const key = item.slice(0, separator).trim();
     const value = item.slice(separator + 1).trim();
-    headers[key] = value;
+    if (KNOWN_HEADER_KEYS.has(key)) {
+      headers[key] = value;
+    } else {
+      // Not a known metadata header — treat the whole line as body content.
+      unknownLines.push(item);
+    }
   }
+
+  // Prepend any unknown lines to the body so user content isn't lost.
+  if (unknownLines.length > 0) {
+    const unknownText = unknownLines.join("\n").trim();
+    body = body ? `${unknownText}\n\n${body}` : unknownText;
+  }
+
   if (!body && headers.Description) {
     body = headers.Description;
   }

@@ -220,4 +220,124 @@ END:VCALENDAR
     expect(parsed.category).toBe("Work");
     expect(parsed.description).toBeNull();
   });
+
+  it("buildEvent sets STATUS property for Todo status", () => {
+    const ics = buildEvent({
+      notionId: "task-status-1",
+      title: "New task",
+      statusEmoji: "⬜",
+      statusName: "Todo",
+      startIso: "2026-04-10T09:00:00Z",
+      endIso: null,
+      reminderIso: null,
+      description: null,
+    });
+
+    expect(ics).toContain("STATUS:TENTATIVE");
+  });
+
+  it("buildEvent sets STATUS:CONFIRMED for In progress", () => {
+    const ics = buildEvent({
+      notionId: "task-status-2",
+      title: "Working on it",
+      statusEmoji: "⚙️",
+      statusName: "In progress",
+      startIso: "2026-04-10T09:00:00Z",
+      endIso: null,
+      reminderIso: null,
+      description: null,
+    });
+
+    expect(ics).toContain("STATUS:CONFIRMED");
+  });
+
+  it("buildEvent sets STATUS:CANCELLED for Cancelled", () => {
+    const ics = buildEvent({
+      notionId: "task-status-3",
+      title: "Cancelled task",
+      statusEmoji: "❌",
+      statusName: "Cancelled",
+      startIso: "2026-04-10T09:00:00Z",
+      endIso: null,
+      reminderIso: null,
+      description: null,
+    });
+
+    expect(ics).toContain("STATUS:CANCELLED");
+  });
+
+  it("parseIcsMinimal extracts STATUS:TENTATIVE as Todo fallback", () => {
+    // Simulate an ICS with STATUS:TENTATIVE but no emoji in summary
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:notion-status-test@sync",
+      "SUMMARY:No emoji title",
+      "STATUS:TENTATIVE",
+      "DTSTART:20260410T090000Z",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const parsed = parseIcsMinimal(ics);
+
+    expect(parsed.status).toBe("Todo");
+    expect(parsed.title).toBe("No emoji title");
+  });
+
+  it("parseIcsMinimal extracts STATUS:CANCELLED as Cancelled fallback", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:notion-cancelled-test@sync",
+      "SUMMARY:Cancelled event",
+      "STATUS:CANCELLED",
+      "DTSTART:20260410T090000Z",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const parsed = parseIcsMinimal(ics);
+
+    expect(parsed.status).toBe("Cancelled");
+  });
+
+  it("description with unknown header keys preserves them as body text", () => {
+    const ics = buildEvent({
+      notionId: "task-desc-1",
+      title: "Desc test",
+      statusEmoji: "",
+      statusName: "Todo",
+      startIso: "2026-04-10T09:00:00Z",
+      endIso: null,
+      reminderIso: null,
+      description: "Meeting notes: discussed roadmap\nAction items: follow up",
+    });
+
+    const parsed = parseIcsMinimal(ics);
+
+    // Lines like "Meeting notes: discussed roadmap" should not be eaten as
+    // metadata headers — they should be preserved as body text.
+    expect(parsed.description).toContain("Meeting notes: discussed roadmap");
+    expect(parsed.description).toContain("Action items: follow up");
+  });
+
+  it("description round-trips correctly with metadata headers", () => {
+    const ics = buildEvent({
+      notionId: "task-roundtrip",
+      title: "Round trip",
+      statusEmoji: "⬜",
+      statusName: "Todo",
+      startIso: "2026-04-10T09:00:00Z",
+      endIso: null,
+      reminderIso: null,
+      description: "Buy groceries and cook dinner",
+      category: "Personal",
+    });
+
+    const parsed = parseIcsMinimal(ics);
+
+    expect(parsed.description).toBe("Buy groceries and cook dinner");
+    expect(parsed.category).toBe("Personal");
+  });
 });

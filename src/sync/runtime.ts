@@ -12,7 +12,7 @@ export function buildLedger(storage: KVLikeStorage | null | undefined): SyncLedg
 export function buildService(input: {
   bindings: LiveBindings;
   storage: KVLikeStorage;
-  log?: (message: string) => void;
+  log?: (message: string, context?: Record<string, unknown>) => void;
 }): SyncService {
   return new SyncService(
     new LiveSyncFacade(input.bindings),

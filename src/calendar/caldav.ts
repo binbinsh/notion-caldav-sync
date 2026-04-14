@@ -6,7 +6,7 @@ import {
   listCalendars,
   mkcalendar,
 } from "./discovery";
-import { getHeader, httpRequest, httpRequestXml } from "./webdav";
+import { basicAuthHeader, getHeader, httpRequest, httpRequestXml } from "./webdav";
 
 export const CALDAV_ORIGIN = "https://caldav.icloud.com/";
 export const DEFAULT_CALENDAR_NAME = "Notion";
@@ -42,27 +42,351 @@ export type CalendarSettings = {
   full_sync_interval_minutes?: number | null;
 };
 
+// ---------------------------------------------------------------------------
+// CalDavSession: reusable session that eliminates per-operation login overhead.
+// Create once per sync cycle, reuse for all operations.
+// ---------------------------------------------------------------------------
+
+export class CalDavSession {
+  private clientPromise: Promise<DAVClient> | null = null;
+  private calendarsCache: DAVCalendar[] | null = null;
+
+  constructor(
+    private readonly appleId: string,
+    private readonly appleAppPassword: string,
+  ) {}
+
+  private async getClient(): Promise<DAVClient> {
+    if (!this.clientPromise) {
+      this.clientPromise = (async () => {
+        const client = new DAVClient({
+          serverUrl: CALDAV_ORIGIN,
+          credentials: {
+            username: this.appleId,
+            password: this.appleAppPassword,
+          },
+          authMethod: "Basic",
+          defaultAccountType: "caldav",
+          fetch,
+        });
+        await client.login();
+        return client;
+      })();
+    }
+    return this.clientPromise;
+  }
+
+  private async getCalendars(): Promise<DAVCalendar[]> {
+    if (!this.calendarsCache) {
+      const client = await this.getClient();
+      this.calendarsCache = await client.fetchCalendars();
+    }
+    return this.calendarsCache;
+  }
+
+  /** Invalidate cached calendars (e.g., after creating a new calendar). */
+  invalidateCalendarsCache(): void {
+    this.calendarsCache = null;
+  }
+
+  private async findCalendarByHref(calendarHref: string): Promise<DAVCalendar | null> {
+    const calendars = await this.getCalendars();
+    const normalizedTarget = normalizeCalendarResourcePath(calendarHref);
+    return (
+      calendars.find((c) => normalizeCalendarResourcePath(c.url) === normalizedTarget) ||
+      null
+    );
+  }
+
+  private async findCalendarByObjectUrl(objectUrl: string): Promise<DAVCalendar | null> {
+    const calendars = await this.getCalendars();
+    const normalizedObjectUrl = normalizeCalendarResourcePath(objectUrl);
+    for (const calendar of calendars) {
+      const base = normalizeCalendarResourcePath(calendar.url);
+      if (normalizedObjectUrl.startsWith(`${base}/`)) {
+        return calendar;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * List event metadata (href, etag, notionId) using a lightweight PROPFIND.
+   * Falls back to fetchCalendarObjects if PROPFIND is not supported.
+   */
+  async listEvents(calendarHref: string): Promise<Array<{ href: string; etag: string | null; notionId: string | null }>> {
+    // Try lightweight PROPFIND first (only requests getetag, avoids fetching full ICS)
+    try {
+      const target = calendarHref.endsWith("/") ? calendarHref : `${calendarHref}/`;
+      const body = builder.build({
+        "?xml": { "@_version": "1.0", "@_encoding": "utf-8" },
+        "d:propfind": {
+          "@_xmlns:d": "DAV:",
+          "d:prop": {
+            "d:getetag": "",
+            "d:getcontenttype": "",
+          },
+        },
+      });
+      const response = await httpRequestXml({
+        method: "PROPFIND",
+        url: target,
+        username: this.appleId,
+        password: this.appleAppPassword,
+        headers: { Depth: "1", "Content-Type": "application/xml; charset=utf-8" },
+        body,
+      });
+      if (response.status < 400 && response.text) {
+        const parsed = parser.parse(response.text);
+        const responses = arrayify(deepGet(parsed, ["multistatus", "response"]));
+        const results: Array<{ href: string; etag: string | null; notionId: string | null }> = [];
+        for (const item of responses) {
+          const href = normalizeText(deepGet(item, ["href"]));
+          if (!href || !href.toLowerCase().endsWith(".ics")) continue;
+          const fullHref = resolveHref(href, calendarHref);
+          const etag = normalizeEtag(deepGet(item, ["propstat", "prop", "getetag"]));
+          results.push({
+            href: fullHref,
+            etag,
+            notionId: notionIdFromHref(fullHref),
+          });
+        }
+        return results;
+      }
+    } catch {
+      // Fall through to DAVClient approach
+    }
+
+    // Fallback: use tsdav client (fetches full ICS data — slower)
+    const calendar = await this.findCalendarByHref(calendarHref);
+    if (!calendar) {
+      return [];
+    }
+    const client = await this.getClient();
+    const objects = await client.fetchCalendarObjects({
+      calendar,
+      useMultiGet: true,
+    });
+    return objects
+      .filter((object) => object.url.toLowerCase().endsWith(".ics"))
+      .map((object) => ({
+        href: object.url,
+        etag: normalizeText(object.etag) || null,
+        notionId: notionIdFromHref(object.url),
+      }));
+  }
+
+  /**
+   * Read a single event's ICS data. Uses a direct GET request (1 round-trip)
+   * instead of the previous login+findCalendar+fetchCalendarObjects (3+ round-trips).
+   */
+  async readEvent(eventUrl: string): Promise<{ href: string; etag: string | null; ics: string } | null> {
+    // Direct GET request — single round-trip
+    try {
+      const response = await httpRequest({
+        method: "GET",
+        url: eventUrl,
+        username: this.appleId,
+        password: this.appleAppPassword,
+        headers: { Accept: "text/calendar" },
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (response.status >= 400) {
+        return null;
+      }
+      const ics = new TextDecoder().decode(response.body);
+      if (!ics.trim()) {
+        return null;
+      }
+      const etag = normalizeEtag(response.headers.etag);
+      return { href: eventUrl, etag, ics };
+    } catch {
+      // Fall back to tsdav client approach
+      const calendar = await this.findCalendarByObjectUrl(eventUrl);
+      if (!calendar) {
+        return null;
+      }
+      const client = await this.getClient();
+      const objectUrl = new URL(eventUrl).pathname;
+      const objects = await client.fetchCalendarObjects({
+        calendar,
+        objectUrls: [objectUrl],
+        useMultiGet: true,
+      });
+      const object = objects[0];
+      if (!object || typeof object.data !== "string") {
+        return null;
+      }
+      return {
+        href: eventUrl,
+        etag: normalizeText(object.etag) || null,
+        ics: object.data,
+      };
+    }
+  }
+
+  /**
+   * Put (create or update) a calendar event. Uses a single PUT request with
+   * Content-Type: text/calendar, then reads the ETag from the response header.
+   * Falls back to tsdav if the direct PUT fails.
+   */
+  async putEvent(eventUrl: string, ics: string): Promise<{ etag: string | null }> {
+    // Direct PUT request — single round-trip for the write
+    try {
+      const response = await httpRequest({
+        method: "PUT",
+        url: eventUrl,
+        username: this.appleId,
+        password: this.appleAppPassword,
+        headers: {
+          "Content-Type": "text/calendar; charset=utf-8",
+        },
+        body: ics,
+      });
+      if (response.status >= 400 && response.status !== 412) {
+        throw new Error(`CalDAV PUT failed with status ${response.status}`);
+      }
+      // Try to get the ETag from the response
+      let etag = normalizeEtag(response.headers.etag);
+      if (!etag) {
+        // Some servers don't return ETag on PUT response; re-fetch it with a HEAD/GET
+        const headResponse = await httpRequest({
+          method: "HEAD",
+          url: eventUrl,
+          username: this.appleId,
+          password: this.appleAppPassword,
+          expectBody: false,
+        }).catch(() => null);
+        etag = headResponse ? normalizeEtag(headResponse.headers.etag) : null;
+      }
+      return { etag };
+    } catch (putError) {
+      // Fall back to tsdav client approach
+      const calendar = await this.findCalendarByObjectUrl(eventUrl);
+      if (!calendar) {
+        throw new Error(`Calendar not found for event URL ${eventUrl}`);
+      }
+      const client = await this.getClient();
+      const objectUrl = new URL(eventUrl).pathname;
+      const objects = await client.fetchCalendarObjects({
+        calendar,
+        objectUrls: [objectUrl],
+        useMultiGet: true,
+      });
+      const existing = objects[0];
+      if (existing) {
+        await client.updateCalendarObject({
+          calendarObject: {
+            ...existing,
+            data: ics,
+          },
+        });
+      } else {
+        const filename = eventUrl.split("/").pop() || `${crypto.randomUUID()}.ics`;
+        await client.createCalendarObject({
+          calendar,
+          iCalString: ics,
+          filename,
+        });
+      }
+      // Re-fetch to get the new ETag
+      const updated = await client.fetchCalendarObjects({
+        calendar,
+        objectUrls: [objectUrl],
+        useMultiGet: true,
+      }).catch(() => []);
+      return { etag: normalizeText(updated[0]?.etag) || null };
+    }
+  }
+
+  /**
+   * Delete a calendar event. Uses a single DELETE request (1 round-trip).
+   */
+  async deleteEvent(eventUrl: string): Promise<void> {
+    try {
+      const response = await httpRequest({
+        method: "DELETE",
+        url: eventUrl,
+        username: this.appleId,
+        password: this.appleAppPassword,
+        expectBody: false,
+      });
+      // 204/200 = success, 404 = already gone (both fine)
+      if (response.status >= 400 && response.status !== 404) {
+        throw new Error(`CalDAV DELETE failed with status ${response.status}`);
+      }
+    } catch {
+      // Fall back to tsdav approach
+      const calendar = await this.findCalendarByObjectUrl(eventUrl);
+      if (!calendar) {
+        return;
+      }
+      const client = await this.getClient();
+      const objectUrl = new URL(eventUrl).pathname;
+      const objects = await client.fetchCalendarObjects({
+        calendar,
+        objectUrls: [objectUrl],
+        useMultiGet: true,
+      });
+      const existing = objects[0];
+      if (existing) {
+        await client.deleteCalendarObject({ calendarObject: existing }).catch(() => undefined);
+        return;
+      }
+      await client.deleteObject({ url: eventUrl }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Get the ctag of a calendar collection.
+   * Returns null if the server doesn't support ctag.
+   */
+  async getCalendarCtag(calendarHref: string): Promise<string | null> {
+    const target = calendarHref.endsWith("/") ? calendarHref : `${calendarHref}/`;
+    const body = builder.build({
+      "?xml": { "@_version": "1.0", "@_encoding": "utf-8" },
+      "d:propfind": {
+        "@_xmlns:d": "DAV:",
+        "@_xmlns:cs": "http://calendarserver.org/ns/",
+        "d:prop": {
+          "cs:getctag": "",
+        },
+      },
+    });
+    try {
+      const response = await httpRequestXml({
+        method: "PROPFIND",
+        url: target,
+        username: this.appleId,
+        password: this.appleAppPassword,
+        headers: { Depth: "0", "Content-Type": "application/xml; charset=utf-8" },
+        body,
+      });
+      if (response.status >= 400 || !response.text) {
+        return null;
+      }
+      const parsed = parser.parse(response.text);
+      return normalizeText(deepGet(parsed, ["multistatus", "response", "propstat", "prop", "getctag"]));
+    } catch {
+      return null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy function-based API (delegates to a one-shot CalDavSession).
+// Kept for backward-compatibility with existing call sites.
+// ---------------------------------------------------------------------------
+
 export async function listEvents(input: {
   calendarHref: string;
   appleId: string;
   appleAppPassword: string;
 }): Promise<Array<{ href: string; etag: string | null; notionId: string | null }>> {
-  const client = await createClient(input.appleId, input.appleAppPassword);
-  const calendar = await findCalendarByHref(client, input.calendarHref);
-  if (!calendar) {
-    return [];
-  }
-  const objects = await client.fetchCalendarObjects({
-    calendar,
-    useMultiGet: true,
-  });
-  return objects
-    .filter((object) => object.url.toLowerCase().endsWith(".ics"))
-    .map((object) => ({
-      href: object.url,
-      etag: normalizeText(object.etag) || null,
-      notionId: notionIdFromHref(object.url),
-    }));
+  const session = new CalDavSession(input.appleId, input.appleAppPassword);
+  return session.listEvents(input.calendarHref);
 }
 
 export async function readEvent(input: {
@@ -70,26 +394,8 @@ export async function readEvent(input: {
   appleId: string;
   appleAppPassword: string;
 }): Promise<{ href: string; etag: string | null; ics: string } | null> {
-  const client = await createClient(input.appleId, input.appleAppPassword);
-  const calendar = await findCalendarByObjectUrl(client, input.eventUrl);
-  if (!calendar) {
-    return null;
-  }
-  const objectUrl = new URL(input.eventUrl).pathname;
-  const objects = await client.fetchCalendarObjects({
-    calendar,
-    objectUrls: [objectUrl],
-    useMultiGet: true,
-  });
-  const object = objects[0];
-  if (!object || typeof object.data !== "string") {
-    return null;
-  }
-  return {
-    href: input.eventUrl,
-    etag: normalizeText(object.etag) || null,
-    ics: object.data,
-  };
+  const session = new CalDavSession(input.appleId, input.appleAppPassword);
+  return session.readEvent(input.eventUrl);
 }
 
 export async function putEvent(input: {
@@ -98,40 +404,8 @@ export async function putEvent(input: {
   appleId: string;
   appleAppPassword: string;
 }): Promise<{ etag: string | null }> {
-  const client = await createClient(input.appleId, input.appleAppPassword);
-  const calendar = await findCalendarByObjectUrl(client, input.eventUrl);
-  if (!calendar) {
-    throw new Error(`Calendar not found for event URL ${input.eventUrl}`);
-  }
-  const objectUrl = new URL(input.eventUrl).pathname;
-  const objects = await client.fetchCalendarObjects({
-    calendar,
-    objectUrls: [objectUrl],
-    useMultiGet: true,
-  });
-  const existing = objects[0];
-  if (existing) {
-    await client.updateCalendarObject({
-      calendarObject: {
-        ...existing,
-        data: input.ics,
-      },
-    });
-  } else {
-    const filename = input.eventUrl.split("/").pop() || `${crypto.randomUUID()}.ics`;
-    await client.createCalendarObject({
-      calendar,
-      iCalString: input.ics,
-      filename,
-    });
-  }
-  // Re-fetch to get the new ETag
-  const updated = await client.fetchCalendarObjects({
-    calendar,
-    objectUrls: [objectUrl],
-    useMultiGet: true,
-  }).catch(() => []);
-  return { etag: normalizeText(updated[0]?.etag) || null };
+  const session = new CalDavSession(input.appleId, input.appleAppPassword);
+  return session.putEvent(input.eventUrl, input.ics);
 }
 
 export async function deleteEvent(input: {
@@ -139,23 +413,8 @@ export async function deleteEvent(input: {
   appleId: string;
   appleAppPassword: string;
 }): Promise<void> {
-  const client = await createClient(input.appleId, input.appleAppPassword);
-  const calendar = await findCalendarByObjectUrl(client, input.eventUrl);
-  if (!calendar) {
-    return;
-  }
-  const objectUrl = new URL(input.eventUrl).pathname;
-  const objects = await client.fetchCalendarObjects({
-    calendar,
-    objectUrls: [objectUrl],
-    useMultiGet: true,
-  });
-  const existing = objects[0];
-  if (existing) {
-    await client.deleteCalendarObject({ calendarObject: existing }).catch(() => undefined);
-    return;
-  }
-  await client.deleteObject({ url: input.eventUrl }).catch(() => undefined);
+  const session = new CalDavSession(input.appleId, input.appleAppPassword);
+  return session.deleteEvent(input.eventUrl);
 }
 
 export async function ensureCalendar(input: {
@@ -223,6 +482,10 @@ export async function ensureCalendar(input: {
       normalizeText(input.settings.calendar_timezone),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
 async function fetchCalendarProperties(input: {
   calendarHref: string;
@@ -293,42 +556,6 @@ async function applyCalendarColor(input: {
     body,
     expectBody: false,
   });
-}
-
-async function createClient(appleId: string, appleAppPassword: string): Promise<DAVClient> {
-  const client = new DAVClient({
-    serverUrl: CALDAV_ORIGIN,
-    credentials: {
-      username: appleId,
-      password: appleAppPassword,
-    },
-    authMethod: "Basic",
-    defaultAccountType: "caldav",
-    fetch,
-  });
-  await client.login();
-  return client;
-}
-
-async function findCalendarByHref(client: DAVClient, calendarHref: string): Promise<DAVCalendar | null> {
-  const calendars = await client.fetchCalendars();
-  const normalizedTarget = normalizeCalendarResourcePath(calendarHref);
-  return (
-    calendars.find((calendar) => normalizeCalendarResourcePath(calendar.url) === normalizedTarget) ||
-    null
-  );
-}
-
-async function findCalendarByObjectUrl(client: DAVClient, objectUrl: string): Promise<DAVCalendar | null> {
-  const calendars = await client.fetchCalendars();
-  const normalizedObjectUrl = normalizeCalendarResourcePath(objectUrl);
-  for (const calendar of calendars) {
-    const base = normalizeCalendarResourcePath(calendar.url);
-    if (normalizedObjectUrl.startsWith(`${base}/`)) {
-      return calendar;
-    }
-  }
-  return null;
 }
 
 export function normalizeCalendarResourcePath(value: string): string {
@@ -407,4 +634,22 @@ function normalizeText(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized || null;
+}
+
+function normalizeEtag(value: unknown): string | null {
+  const text = normalizeText(value);
+  if (!text) return null;
+  // Strip surrounding quotes if present (common in HTTP headers)
+  return text.replace(/^"(.*)"$/, "$1").trim() || null;
+}
+
+function resolveHref(href: string, baseUrl: string): string {
+  if (href.startsWith("http://") || href.startsWith("https://")) {
+    return href;
+  }
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return href;
+  }
 }

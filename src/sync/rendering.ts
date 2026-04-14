@@ -156,12 +156,35 @@ export function canonicalPayload(input: {
   description?: string | null;
   pageUrl?: string | null;
 }): Record<string, string | null> {
+  const startDate = input.startDate || null;
+  let endDate = input.endDate || null;
+
+  // Normalize same-day all-day events: if endDate equals startDate and both
+  // are date-only values, treat as a single-day event (endDate = null).
+  // ICS round-trips lose this distinction because the exclusive end date
+  // (start + 1 day) is converted back to the same start date, which the
+  // parser then normalizes to null.
+  if (
+    endDate &&
+    startDate &&
+    endDate === startDate &&
+    !startDate.includes("T")
+  ) {
+    endDate = null;
+  }
+
+  // For all-day events, reminders are not stored in the ICS VALARM
+  // (only timed events get alarms). Normalize reminder to null for
+  // date-only events so the canonical hash matches the round-trip.
+  const isAllDay = startDate != null && !startDate.includes("T");
+  const reminder = isAllDay ? null : input.reminder || null;
+
   return {
     title: (input.title || "").trim(),
     status: normalizeStatusName(input.status) || "Todo",
-    startDate: input.startDate || null,
-    endDate: input.endDate || null,
-    reminder: input.reminder || null,
+    startDate,
+    endDate,
+    reminder,
     category: input.category || null,
     description: input.description || null,
     pageUrl: input.pageUrl || null,

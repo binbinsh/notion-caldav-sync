@@ -1,10 +1,7 @@
 import { Client } from "@notionhq/client";
 import {
-  deleteEvent as calendarDeleteEvent,
+  CalDavSession,
   ensureCalendar as calendarEnsure,
-  listEvents as calendarListEvents,
-  putEvent as calendarPutEvent,
-  readEvent as calendarReadEvent,
 } from "../calendar/caldav";
 import { buildEvent, parseIcsMinimal } from "../calendar/ics";
 import { STATUS_EMOJI_SETS, isTaskProperties, normalizeStatusName } from "./constants";
@@ -36,13 +33,16 @@ export type LiveBindings = {
 
 export class LiveSyncFacade {
   private readonly notionClient: Client;
+  private readonly caldavSession: CalDavSession;
   private readonly dbTitleCache = new Map<string, string>();
   private readonly dbPropsCache = new Map<string, Record<string, Record<string, unknown>>>();
   private readonly notionRateLimiter = new RateLimiter(3, 3); // 3 req/s for Notion API
   private readonly caldavRateLimiter = new RateLimiter(10, 10); // 10 req/s for CalDAV
+  private ensureCalendarCache: Record<string, unknown> | null = null;
 
   constructor(private readonly bindings: LiveBindings) {
     this.notionClient = createNotionClient(bindings.notionToken, bindings.notionVersion);
+    this.caldavSession = new CalDavSession(bindings.appleId, bindings.appleAppPassword);
   }
 
   private async notionCall<T>(fn: () => Promise<T>): Promise<T> {
@@ -69,7 +69,8 @@ export class LiveSyncFacade {
   }
 
   async ensureCalendar() {
-    return this.caldavCall(() =>
+    if (this.ensureCalendarCache) return this.ensureCalendarCache;
+    const result = await this.caldavCall(() =>
       calendarEnsure({
         bindings: {
           appleId: this.bindings.appleId,
@@ -78,26 +79,34 @@ export class LiveSyncFacade {
         settings: this.bindings.calendarSettings || {},
       }),
     );
+    this.ensureCalendarCache = result;
+    return result;
   }
 
   async listNotionTasks(): Promise<NotionTask[]> {
     const databases = await this.notionCall(() => listDatabases(this.notionClient));
-    const tasks: NotionTask[] = [];
-    for (const db of databases) {
-      const props = await this.getCachedDatabaseProperties(db.id);
-      if (!isTaskProperties(props)) {
-        continue;
-      }
-      const dbTitle = await this.getCachedDatabaseTitle(db.id, db.title);
-      const pages = await this.notionCall(() => queryDatabasePages(this.notionClient, db.id));
-      for (const page of pages) {
-        const task = this.hydrateTask(page, db.id, dbTitle, props);
-        if (task) {
-          tasks.push(task);
+    // Phase 2: Parallel database queries — filter, fetch props/pages concurrently
+    const dbResults = await parallelMap(
+      databases,
+      async (db) => {
+        const props = await this.getCachedDatabaseProperties(db.id);
+        if (!isTaskProperties(props)) {
+          return [];
         }
-      }
-    }
-    return tasks;
+        const dbTitle = await this.getCachedDatabaseTitle(db.id, db.title);
+        const pages = await this.notionCall(() => queryDatabasePages(this.notionClient, db.id));
+        const tasks: NotionTask[] = [];
+        for (const page of pages) {
+          const task = this.hydrateTask(page, db.id, dbTitle, props);
+          if (task) {
+            tasks.push(task);
+          }
+        }
+        return tasks;
+      },
+      3, // bounded concurrency for Notion rate limits
+    );
+    return dbResults.flat();
   }
 
   async getNotionTask(pageId: string): Promise<NotionTask | null> {
@@ -199,23 +208,11 @@ export class LiveSyncFacade {
   }
 
   async listCalendarEvents(calendarHref: string) {
-    return this.caldavCall(() =>
-      calendarListEvents({
-        calendarHref,
-        appleId: this.bindings.appleId,
-        appleAppPassword: this.bindings.appleAppPassword,
-      }),
-    );
+    return this.caldavCall(() => this.caldavSession.listEvents(calendarHref));
   }
 
   async listCalendarDebugEvents(calendarHref: string): Promise<CalendarDebugEvent[]> {
-    const events = await this.caldavCall(() =>
-      calendarListEvents({
-        calendarHref,
-        appleId: this.bindings.appleId,
-        appleAppPassword: this.bindings.appleAppPassword,
-      }),
-    );
+    const events = await this.caldavCall(() => this.caldavSession.listEvents(calendarHref));
     const details = await parallelMap(
       events,
       async (event) => {
@@ -225,11 +222,7 @@ export class LiveSyncFacade {
         }
 
         const payload = await this.caldavCall(() =>
-          calendarReadEvent({
-            eventUrl: href,
-            appleId: this.bindings.appleId,
-            appleAppPassword: this.bindings.appleAppPassword,
-          }),
+          this.caldavSession.readEvent(href),
         ).catch(() => null);
         if (!payload) {
           return {
@@ -264,7 +257,7 @@ export class LiveSyncFacade {
           pageUrl: parsed.url,
         } satisfies CalendarDebugEvent;
       },
-      5, // bounded concurrency
+      8, // Phase 4: increased concurrency for reused session
     );
 
     return details
@@ -277,11 +270,7 @@ export class LiveSyncFacade {
     options: { etag?: string | null },
   ): Promise<CalendarTask | null> {
     const payload = await this.caldavCall(() =>
-      calendarReadEvent({
-        eventUrl: eventHref,
-        appleId: this.bindings.appleId,
-        appleAppPassword: this.bindings.appleAppPassword,
-      }),
+      this.caldavSession.readEvent(eventHref),
     );
     if (!payload) {
       return null;
@@ -332,24 +321,18 @@ export class LiveSyncFacade {
       lastModified: notionTask.lastEditedTime,
     });
     const result = await this.caldavCall(() =>
-      calendarPutEvent({
-        eventUrl: eventHref,
-        ics,
-        appleId: this.bindings.appleId,
-        appleAppPassword: this.bindings.appleAppPassword,
-      }),
+      this.caldavSession.putEvent(eventHref, ics),
     );
     return { eventHref, etag: result.etag };
   }
 
   async deleteCalendarEvent(eventHref: string): Promise<void> {
-    await this.caldavCall(() =>
-      calendarDeleteEvent({
-        eventUrl: eventHref,
-        appleId: this.bindings.appleId,
-        appleAppPassword: this.bindings.appleAppPassword,
-      }),
-    );
+    await this.caldavCall(() => this.caldavSession.deleteEvent(eventHref));
+  }
+
+  /** Expose the CalDAV session's ctag method for change detection. */
+  async getCalendarCtag(calendarHref: string): Promise<string | null> {
+    return this.caldavCall(() => this.caldavSession.getCalendarCtag(calendarHref));
   }
 
   private async getCachedDatabaseProperties(databaseId: string) {

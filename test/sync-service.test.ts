@@ -625,4 +625,231 @@ describe("SyncService", () => {
     // page-1 should still be synced (created on calendar)
     expect(facade.putCalendarCalls).toContain("page-1");
   });
+
+  it("returns structured SyncResult from syncNotionPageIds", async () => {
+    const facade = new FakeFacade();
+    facade.notionTasks.set("page-1", notionTask({ pageId: "page-1" }));
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    const result = await service.syncNotionPageIds(["page-1"]);
+
+    expect(result.source).toBe("notion_webhook");
+    expect(result.startedAt).toBeDefined();
+    expect(result.completedAt).toBeDefined();
+    expect(result.totalProcessed).toBe(1);
+    expect(result.totalErrors).toBe(0);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.pageId).toBe("page-1");
+    expect(result.entries[0]?.action).toBe("created");
+  });
+
+  it("returns structured SyncResult from syncCaldavIncremental", async () => {
+    const facade = new FakeFacade();
+    const calendar = calendarTask({ pageId: "page-1" });
+    facade.notionTasks.set("page-1", notionTask({ pageId: "page-1" }));
+    facade.calendarTasks.set(calendar.eventHref, calendar);
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    const result = await service.syncCaldavIncremental();
+
+    expect(result.source).toBe("caldav_incremental");
+    expect(result.entries.length).toBeGreaterThanOrEqual(1);
+    expect(result.totalErrors).toBe(0);
+  });
+
+  it("returns structured SyncResult from runFullReconcile", async () => {
+    const facade = new FakeFacade();
+    facade.notionTasks.set("page-1", notionTask({ pageId: "page-1" }));
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    const result = await service.runFullReconcile();
+
+    expect(result.source).toBe("full_reconcile");
+    expect(result.entries.length).toBeGreaterThanOrEqual(1);
+    expect(result.totalErrors).toBe(0);
+  });
+
+  it("SyncResult includes error entries when sync fails", async () => {
+    const facade = new FakeFacade();
+    facade.notionTasks.set("page-1", notionTask({ pageId: "page-1" }));
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    const originalPut = facade.putCalendarTask.bind(facade);
+    facade.putCalendarTask = async (...args) => {
+      if (args[2].pageId === "page-1") {
+        throw new Error("Calendar write failed");
+      }
+      return originalPut(...args);
+    };
+
+    const result = await service.syncNotionPageIds(["page-1"]);
+
+    expect(result.totalErrors).toBe(1);
+    expect(result.entries[0]?.action).toBe("error");
+    expect(result.entries[0]?.error).toContain("Calendar write failed");
+  });
+
+  it("field-level merge preserves non-conflicting edits from both sides", async () => {
+    // Set up: Notion changed title, CalDAV changed description (newer timestamp)
+    const facade = new FakeFacade();
+    const notion = notionTask({
+      pageId: "page-1",
+      title: "Updated title",      // Changed from base
+      description: "Original body", // Same as base
+      lastEditedTime: iso(5),
+    });
+    const calendar = calendarTask({
+      pageId: "page-1",
+      title: "Task",                // Same as base
+      description: "Updated body",  // Changed from base
+      lastModified: iso(10),        // CalDAV is newer (by >60s) = winner
+    });
+    facade.notionTasks.set("page-1", notion);
+    facade.calendarTasks.set(calendar.eventHref, calendar);
+
+    const ledger = new InMemoryLedger();
+    // Store a base payload representing the last synced state
+    const basePayload = JSON.stringify({
+      title: "Task",
+      status: "Todo",
+      startDate: "2026-04-10T09:00:00+00:00",
+      endDate: "2026-04-10T10:00:00+00:00",
+      reminder: "2026-04-10T08:45:00+00:00",
+      category: "Work",
+      description: "Original body",
+      pageUrl: "https://www.notion.so/page1",
+    });
+    await ledger.putRecord(new LedgerRecord(
+      "page-1",
+      calendar.eventHref,
+      calendar.etag,
+      iso(0), // lastNotionEditedTime
+      null, null, null, null, null, null, null, null,
+      basePayload, // lastSyncedPayload
+    ));
+
+    const service = new SyncService(facade, ledger);
+    await service.runFullReconcile();
+
+    // Notion changed title (only Notion changed it) → title should be "Updated title"
+    // CalDAV changed description (only CalDAV changed it) → description should be "Updated body"
+    // Both sides should be updated
+    const updatedNotion = facade.notionTasks.get("page-1");
+    // Notion should receive CalDAV's description
+    expect(updatedNotion?.description).toBe("Updated body");
+  });
+
+  it("timestamp tiebreaker prefers Notion within 60-second window", async () => {
+    // Both have very close timestamps (within 60s)
+    const facade = new FakeFacade();
+    const notion = notionTask({
+      pageId: "page-1",
+      title: "Notion title",
+      lastEditedTime: "2026-04-10T12:00:00.000Z", // Minute precision
+    });
+    const calendar = calendarTask({
+      pageId: "page-1",
+      title: "CalDAV title",
+      lastModified: "2026-04-10T12:00:30.000Z", // 30s later — within 60s window
+    });
+    facade.notionTasks.set("page-1", notion);
+    facade.calendarTasks.set(calendar.eventHref, calendar);
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    await service.runFullReconcile();
+
+    // Notion should win (tiebreaker within 60s window prefers Notion)
+    expect(facade.putCalendarCalls).toContain("page-1");
+    expect(facade.updateNotionCalls).not.toContain("page-1");
+  });
+
+  it("removes stale tombstones older than 7 days during full reconcile", async () => {
+    const facade = new FakeFacade();
+    const ledger = new InMemoryLedger();
+    // Create a tombstone record that was deleted 8 days ago
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    await ledger.putRecord(new LedgerRecord(
+      "stale-page",
+      null, // no active event href = tombstone
+      null, null, null, null, null, null, null,
+      eightDaysAgo, // deletedOnCaldavAt
+      null, null, null,
+    ));
+    // Also create a fresh tombstone that should NOT be removed
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await ledger.putRecord(new LedgerRecord(
+      "fresh-page",
+      null, null, null, null, null, null, null, null,
+      oneHourAgo, // deletedOnCaldavAt
+      null, null, null,
+    ));
+
+    const service = new SyncService(facade, ledger);
+    await service.runFullReconcile();
+
+    // Stale tombstone should be removed
+    expect(await ledger.getRecord("stale-page")).toBeNull();
+    // Fresh tombstone should still exist
+    expect(await ledger.getRecord("fresh-page")).not.toBeNull();
+  });
+
+  it("detects and removes duplicate calendar events in full reconcile", async () => {
+    const facade = new FakeFacade();
+    facade.notionTasks.set("page-1", notionTask({ pageId: "page-1" }));
+
+    // Create two calendar events for the same page
+    const calendar1 = calendarTask({ pageId: "page-1" });
+    const calendar2 = new CalendarTask(
+      "page-1",
+      "https://calendar/page-1-dup.ics", // Different href
+      '"etag-dup"',
+      "Task", "Todo",
+      "2026-04-10T09:00:00+00:00",
+      "2026-04-10T10:00:00+00:00",
+      "2026-04-10T08:45:00+00:00",
+      "Work", "Original body",
+      iso(), "https://www.notion.so/page1",
+    );
+    facade.calendarTasks.set(calendar1.eventHref, calendar1);
+    facade.calendarTasks.set(calendar2.eventHref, calendar2);
+
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    await service.runFullReconcile();
+
+    // One of the duplicates should be deleted
+    expect(facade.deleteCalendarCalls).toHaveLength(1);
+    // The remaining event should still exist
+    expect(facade.calendarTasks.size).toBe(1);
+  });
+
+  it("structured log callback receives context object", async () => {
+    const facade = new FakeFacade();
+    facade.notionTasks.set("page-1", notionTask({ pageId: "page-1" }));
+    const ledger = new InMemoryLedger();
+    const logEntries: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const service = new SyncService(facade, ledger, (message, context) => {
+      logEntries.push({ message, context });
+    });
+
+    // Cause a failure to generate a log entry
+    const originalPut = facade.putCalendarTask.bind(facade);
+    facade.putCalendarTask = async (...args) => {
+      throw new Error("Deliberate failure");
+    };
+
+    await service.syncNotionPageIds(["page-1"]);
+
+    // Should have at least one log entry with structured context
+    const errorLog = logEntries.find((e) => e.context?.op === "sync_page");
+    expect(errorLog).toBeDefined();
+    expect(errorLog?.context?.pageId).toBe("page-1");
+    expect(errorLog?.context?.error).toContain("Deliberate failure");
+  });
 });

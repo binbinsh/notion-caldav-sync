@@ -12,6 +12,7 @@ type SyncLedgerRow = {
   deleted_on_caldav_at: string | null;
   deleted_in_notion_at: string | null;
   cleared_due_in_notion_at: string | null;
+  last_synced_payload: string | null;
 };
 
 export class D1TenantLedgerStorage {
@@ -52,6 +53,7 @@ export class D1TenantLedgerStorage {
       deletedOnCaldavAt: row.deleted_on_caldav_at,
       deletedInNotionAt: row.deleted_in_notion_at,
       clearedDueInNotionAt: row.cleared_due_in_notion_at,
+      lastSyncedPayload: row.last_synced_payload,
     };
   }
 
@@ -77,8 +79,9 @@ export class D1TenantLedgerStorage {
             last_push_token,
             deleted_on_caldav_at,
             deleted_in_notion_at,
-            cleared_due_in_notion_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cleared_due_in_notion_at,
+            last_synced_payload
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(tenant_id, page_id) DO UPDATE SET
             event_href = excluded.event_href,
             event_etag = excluded.event_etag,
@@ -90,7 +93,8 @@ export class D1TenantLedgerStorage {
             last_push_token = excluded.last_push_token,
             deleted_on_caldav_at = excluded.deleted_on_caldav_at,
             deleted_in_notion_at = excluded.deleted_in_notion_at,
-            cleared_due_in_notion_at = excluded.cleared_due_in_notion_at
+            cleared_due_in_notion_at = excluded.cleared_due_in_notion_at,
+            last_synced_payload = excluded.last_synced_payload
         `,
       )
       .bind(
@@ -107,6 +111,7 @@ export class D1TenantLedgerStorage {
         this.stringValue(record.deletedOnCaldavAt),
         this.stringValue(record.deletedInNotionAt),
         this.stringValue(record.clearedDueInNotionAt),
+        this.stringValue(record.lastSyncedPayload),
       )
       .run();
   }
@@ -120,6 +125,85 @@ export class D1TenantLedgerStorage {
       .prepare(`DELETE FROM sync_ledger WHERE tenant_id = ? AND page_id = ?`)
       .bind(this.tenantId, pageId)
       .run();
+  }
+
+  /**
+   * Batch put multiple records in a single D1 batch call.
+   * Significantly more efficient than individual put() calls for bulk writes.
+   */
+  async batchPut(entries: Array<{ key: string; value: unknown }>): Promise<void> {
+    if (entries.length === 0) return;
+    const statements = entries
+      .map(({ key, value }) => {
+        const pageId = this.pageIdFromKey(key);
+        if (!pageId || typeof value !== "object" || value === null) return null;
+        const record = value as Record<string, unknown>;
+        return this.db
+          .prepare(
+            `
+              INSERT INTO sync_ledger (
+                tenant_id, page_id, event_href, event_etag,
+                last_notion_edited_time, last_notion_hash,
+                last_caldav_hash, last_caldav_modified,
+                last_push_origin, last_push_token,
+                deleted_on_caldav_at, deleted_in_notion_at,
+                cleared_due_in_notion_at, last_synced_payload
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(tenant_id, page_id) DO UPDATE SET
+                event_href = excluded.event_href,
+                event_etag = excluded.event_etag,
+                last_notion_edited_time = excluded.last_notion_edited_time,
+                last_notion_hash = excluded.last_notion_hash,
+                last_caldav_hash = excluded.last_caldav_hash,
+                last_caldav_modified = excluded.last_caldav_modified,
+                last_push_origin = excluded.last_push_origin,
+                last_push_token = excluded.last_push_token,
+                deleted_on_caldav_at = excluded.deleted_on_caldav_at,
+                deleted_in_notion_at = excluded.deleted_in_notion_at,
+                cleared_due_in_notion_at = excluded.cleared_due_in_notion_at,
+                last_synced_payload = excluded.last_synced_payload
+            `,
+          )
+          .bind(
+            this.tenantId,
+            pageId,
+            this.stringValue(record.eventHref),
+            this.stringValue(record.eventEtag),
+            this.stringValue(record.lastNotionEditedTime),
+            this.stringValue(record.lastNotionHash),
+            this.stringValue(record.lastCaldavHash),
+            this.stringValue(record.lastCaldavModified),
+            this.stringValue(record.lastPushOrigin),
+            this.stringValue(record.lastPushToken),
+            this.stringValue(record.deletedOnCaldavAt),
+            this.stringValue(record.deletedInNotionAt),
+            this.stringValue(record.clearedDueInNotionAt),
+            this.stringValue(record.lastSyncedPayload),
+          );
+      })
+      .filter((s): s is D1PreparedStatement => s !== null);
+    if (statements.length > 0) {
+      await this.db.batch(statements);
+    }
+  }
+
+  /**
+   * Batch delete multiple records in a single D1 batch call.
+   */
+  async batchDelete(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const statements = keys
+      .map((key) => {
+        const pageId = this.pageIdFromKey(key);
+        if (!pageId) return null;
+        return this.db
+          .prepare(`DELETE FROM sync_ledger WHERE tenant_id = ? AND page_id = ?`)
+          .bind(this.tenantId, pageId);
+      })
+      .filter((s): s is D1PreparedStatement => s !== null);
+    if (statements.length > 0) {
+      await this.db.batch(statements);
+    }
   }
 
   async list(options?: { prefix?: string }): Promise<{ keys: Array<{ name: string }> }> {
@@ -160,6 +244,7 @@ export class D1TenantLedgerStorage {
       deletedOnCaldavAt: row.deleted_on_caldav_at,
       deletedInNotionAt: row.deleted_in_notion_at,
       clearedDueInNotionAt: row.cleared_due_in_notion_at,
+      lastSyncedPayload: row.last_synced_payload,
     }));
   }
 

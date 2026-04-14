@@ -156,10 +156,12 @@ export class TenantSyncObject {
 
   private async runScheduledSync(tenantId: string) {
     const runtime = await this.buildRuntime(tenantId);
-    await runtime.service.syncCaldavIncremental();
+    // Phase 3 fix: when full sync is due, skip incremental (full supersedes it).
     if (this.fullSyncDue(runtime.config.last_full_sync_at, runtime.config.full_sync_interval_minutes)) {
       await runtime.service.runFullReconcile();
       await this.markLastFullSync(tenantId);
+    } else {
+      await runtime.service.syncCaldavIncremental();
     }
     await this.scheduleNextAlarm(runtime.config.poll_interval_minutes || 5, tenantId);
   }
@@ -263,7 +265,13 @@ export class TenantSyncObject {
         },
       },
       storage: new D1TenantLedgerStorage(this.env.AUTH_DB, tenantId),
-      log: (message) => console.log(`[tenant-sync:${tenantId}] ${message}`),
+      log: (message, context) => {
+        if (context) {
+          console.log(`[tenant-sync:${tenantId}] ${message}`, JSON.stringify(context));
+        } else {
+          console.log(`[tenant-sync:${tenantId}] ${message}`);
+        }
+      },
     });
 
     const result = {
