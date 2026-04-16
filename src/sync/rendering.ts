@@ -99,41 +99,7 @@ export function parseIsoDateTime(
     const tz = options?.dateOnlyTimezoneName;
     if (tz && tz !== "UTC") {
       try {
-        // Build a wall-clock date string in the target timezone, then parse
-        // it back to get the correct UTC instant.
-        const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-        const formatter = new Intl.DateTimeFormat("en-US", {
-          timeZone: tz,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        });
-        // Get the timezone offset by comparing the wall clock in the target tz
-        // with what we want. We create a reference date in UTC and see what time
-        // the timezone formatter renders it as.
-        const refUtc = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-        const parts = formatter.formatToParts(refUtc);
-        const getPart = (type: string) =>
-          Number.parseInt(parts.find((p) => p.type === type)?.value || "0", 10);
-        const tzHour = getPart("hour");
-        const tzMinute = getPart("minute");
-        const tzDay = getPart("day");
-        // Compute offset including minutes (handles UTC+5:30, UTC+5:45, etc.)
-        const utcRefHour = 12;
-        const utcRefMinute = 0;
-        let offsetMinutes = (tzHour - utcRefHour) * 60 + (tzMinute - utcRefMinute);
-        // Handle day boundary crossing
-        if (tzDay > day) {
-          offsetMinutes += 24 * 60;
-        } else if (tzDay < day) {
-          offsetMinutes -= 24 * 60;
-        }
-        const offsetMs = offsetMinutes * 60 * 1000;
-        return new Date(wallClock.getTime() - offsetMs);
+        return parseDateOnlyInTimezone({ year, month, day, hour, minute, second, timeZone: tz });
       } catch {
         // Fall back to UTC if timezone is invalid
         return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
@@ -230,4 +196,91 @@ function stableJSONStringify(payload: Record<string, string | null>): string {
       return acc;
     }, {});
   return JSON.stringify(sorted);
+}
+
+type DateParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function parseDateOnlyInTimezone(input: DateParts & { timeZone: string }): Date {
+  const target = {
+    year: input.year,
+    month: input.month,
+    day: input.day,
+    hour: input.hour,
+    minute: input.minute,
+    second: input.second,
+  };
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: input.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+  });
+
+  // Iteratively adjust the UTC guess until the timezone-rendered wall clock
+  // matches the target local date/time. This handles DST and month boundaries.
+  let candidateMs = datePartsToUtcMs(target);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const actual = extractDateParts(formatter.formatToParts(new Date(candidateMs)));
+    const diffMs = datePartsToUtcMs(target) - datePartsToUtcMs(actual);
+    if (diffMs === 0) {
+      return new Date(candidateMs);
+    }
+    candidateMs += diffMs;
+  }
+
+  const final = extractDateParts(formatter.formatToParts(new Date(candidateMs)));
+  if (datePartsEqual(final, target)) {
+    return new Date(candidateMs);
+  }
+
+  return new Date(datePartsToUtcMs(target));
+}
+
+function extractDateParts(parts: Intl.DateTimeFormatPart[]): DateParts {
+  const values = Object.create(null) as Record<string, number>;
+  for (const part of parts) {
+    if (
+      part.type === "year"
+      || part.type === "month"
+      || part.type === "day"
+      || part.type === "hour"
+      || part.type === "minute"
+      || part.type === "second"
+    ) {
+      values[part.type] = Number.parseInt(part.value, 10);
+    }
+  }
+  return {
+    year: values.year || 0,
+    month: values.month || 0,
+    day: values.day || 0,
+    hour: values.hour || 0,
+    minute: values.minute || 0,
+    second: values.second || 0,
+  };
+}
+
+function datePartsToUtcMs(parts: DateParts): number {
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+}
+
+function datePartsEqual(left: DateParts, right: DateParts): boolean {
+  return left.year === right.year
+    && left.month === right.month
+    && left.day === right.day
+    && left.hour === right.hour
+    && left.minute === right.minute
+    && left.second === right.second;
 }

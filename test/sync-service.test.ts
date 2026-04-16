@@ -299,12 +299,25 @@ describe("SyncService", () => {
         "page-1",
         calendar.eventHref,
         calendar.etag,
-        null,
-        null,
+        notion.lastEditedTime,
+        payloadHash,
         null,
         null,
         "notion",
         payloadHash,
+        null,
+        null,
+        null,
+        JSON.stringify(canonicalPayload({
+          title: notion.title,
+          status: notion.status,
+          startDate: notion.startDate,
+          endDate: notion.endDate,
+          reminder: notion.reminder,
+          category: notion.category,
+          description: notion.description,
+          pageUrl: notion.pageUrl,
+        })),
       ),
     );
     const service = new SyncService(facade, ledger);
@@ -313,6 +326,73 @@ describe("SyncService", () => {
 
     expect(facade.updateNotionCalls).toEqual([]);
     expect(facade.putCalendarCalls).toEqual([]);
+  });
+
+  it("does not skip a newer notion edit after a prior notion push", async () => {
+    const facade = new FakeFacade();
+    const oldNotion = notionTask();
+    const updatedNotion = notionTask({
+      startDate: "2026-03-08",
+      endDate: null,
+      reminder: null,
+      lastEditedTime: iso(5),
+    });
+    const calendar = calendarTask();
+    facade.notionTasks.set("page-1", updatedNotion);
+    facade.calendarTasks.set(calendar.eventHref, calendar);
+
+    const oldPayload = canonicalPayload({
+      title: oldNotion.title,
+      status: oldNotion.status,
+      startDate: oldNotion.startDate,
+      endDate: oldNotion.endDate,
+      reminder: oldNotion.reminder,
+      category: oldNotion.category,
+      description: oldNotion.description,
+      pageUrl: oldNotion.pageUrl,
+    });
+    const oldNotionHash = await canonicalHash(oldPayload);
+    const oldCalendarHash = await canonicalHash(
+      canonicalPayload({
+        title: calendar.title,
+        status: calendar.status,
+        startDate: calendar.startDate,
+        endDate: calendar.endDate,
+        reminder: calendar.reminder,
+        category: calendar.category,
+        description: calendar.description,
+        pageUrl: calendar.pageUrl,
+      }),
+    );
+
+    const ledger = new InMemoryLedger();
+    await ledger.putRecord(
+      new LedgerRecord(
+        "page-1",
+        calendar.eventHref,
+        calendar.etag,
+        oldNotion.lastEditedTime,
+        oldNotionHash,
+        oldCalendarHash,
+        calendar.lastModified,
+        "notion",
+        oldCalendarHash,
+        null,
+        null,
+        null,
+        JSON.stringify(oldPayload),
+      ),
+    );
+
+    const service = new SyncService(facade, ledger);
+
+    await service.syncNotionPageIds(["page-1"]);
+
+    expect(facade.putCalendarCalls).toEqual(["page-1"]);
+    const updatedCalendar = facade.calendarTasks.get(calendar.eventHref);
+    expect(updatedCalendar?.startDate).toBe("2026-03-08");
+    expect(updatedCalendar?.endDate).toBeNull();
+    expect(updatedCalendar?.reminder).toBeNull();
   });
 
   it("builds a debug snapshot with pending sync actions and unmanaged events", async () => {

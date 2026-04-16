@@ -93,6 +93,22 @@ describe("ics extended", () => {
     expect(parsed.reminder).toBe("2026-04-10T13:45:00.000Z");
   });
 
+  it("does not emit METHOD:PUBLISH so iCloud keeps VALARM entries", () => {
+    const ics = buildEvent({
+      notionId: "task-method-1",
+      title: "Method test",
+      statusEmoji: "",
+      statusName: "Todo",
+      startIso: "2026-04-10T14:00:00Z",
+      endIso: "2026-04-10T15:00:00Z",
+      reminderIso: "2026-04-10T13:45:00Z",
+      description: null,
+    });
+
+    expect(ics).not.toContain("METHOD:PUBLISH");
+    expect(ics).toContain("BEGIN:VALARM");
+  });
+
   it("reminder is not set for all-day events", () => {
     const ics = buildEvent({
       notionId: "task-794",

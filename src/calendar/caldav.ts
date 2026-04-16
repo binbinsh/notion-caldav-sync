@@ -50,11 +50,14 @@ export type CalendarSettings = {
 export class CalDavSession {
   private clientPromise: Promise<DAVClient> | null = null;
   private calendarsCache: DAVCalendar[] | null = null;
+  private readonly normalizedAppleAppPassword: string;
 
   constructor(
     private readonly appleId: string,
     private readonly appleAppPassword: string,
-  ) {}
+  ) {
+    this.normalizedAppleAppPassword = normalizeAppleAppPassword(appleAppPassword);
+  }
 
   private async getClient(): Promise<DAVClient> {
     if (!this.clientPromise) {
@@ -63,7 +66,7 @@ export class CalDavSession {
           serverUrl: CALDAV_ORIGIN,
           credentials: {
             username: this.appleId,
-            password: this.appleAppPassword,
+            password: this.normalizedAppleAppPassword,
           },
           authMethod: "Basic",
           defaultAccountType: "caldav",
@@ -132,7 +135,7 @@ export class CalDavSession {
         method: "PROPFIND",
         url: target,
         username: this.appleId,
-        password: this.appleAppPassword,
+        password: this.normalizedAppleAppPassword,
         headers: { Depth: "1", "Content-Type": "application/xml; charset=utf-8" },
         body,
       });
@@ -187,7 +190,7 @@ export class CalDavSession {
         method: "GET",
         url: eventUrl,
         username: this.appleId,
-        password: this.appleAppPassword,
+        password: this.normalizedAppleAppPassword,
         headers: { Accept: "text/calendar" },
       });
       if (response.status === 404) {
@@ -239,7 +242,7 @@ export class CalDavSession {
         method: "PUT",
         url: eventUrl,
         username: this.appleId,
-        password: this.appleAppPassword,
+        password: this.normalizedAppleAppPassword,
         headers: {
           "Content-Type": "text/calendar; charset=utf-8",
         },
@@ -256,7 +259,7 @@ export class CalDavSession {
           method: "HEAD",
           url: eventUrl,
           username: this.appleId,
-          password: this.appleAppPassword,
+          password: this.normalizedAppleAppPassword,
           expectBody: false,
         }).catch(() => null);
         etag = headResponse ? normalizeEtag(headResponse.headers.etag) : null;
@@ -310,7 +313,7 @@ export class CalDavSession {
         method: "DELETE",
         url: eventUrl,
         username: this.appleId,
-        password: this.appleAppPassword,
+        password: this.normalizedAppleAppPassword,
         expectBody: false,
       });
       // 204/200 = success, 404 = already gone (both fine)
@@ -360,7 +363,7 @@ export class CalDavSession {
         method: "PROPFIND",
         url: target,
         username: this.appleId,
-        password: this.appleAppPassword,
+        password: this.normalizedAppleAppPassword,
         headers: { Depth: "0", "Content-Type": "application/xml; charset=utf-8" },
         body,
       });
@@ -424,24 +427,25 @@ export async function ensureCalendar(input: {
   const calendarName = normalizeText(input.settings.calendar_name) || DEFAULT_CALENDAR_NAME;
   let calendarHref = normalizeText(input.settings.calendar_href);
   let calendarColor = normalizeCalendarColor(input.settings.calendar_color) || DEFAULT_CALENDAR_COLOR;
+  const appleAppPassword = normalizeAppleAppPassword(input.bindings.appleAppPassword);
 
   if (!calendarHref) {
     const principal = await discoverPrincipal({
       caldavOrigin: CALDAV_ORIGIN,
       appleId: input.bindings.appleId,
-      appleAppPassword: input.bindings.appleAppPassword,
+      appleAppPassword,
     });
     const home = await discoverCalendarHome({
       origin: CALDAV_ORIGIN,
       principalHref: principal,
       appleId: input.bindings.appleId,
-      appleAppPassword: input.bindings.appleAppPassword,
+      appleAppPassword,
     });
     const calendars = await listCalendars({
       origin: CALDAV_ORIGIN,
       homeSetUrl: home,
       appleId: input.bindings.appleId,
-      appleAppPassword: input.bindings.appleAppPassword,
+      appleAppPassword,
     });
     const target = calendars.find((calendar) => calendar.displayName.trim() === calendarName);
     calendarHref =
@@ -451,21 +455,21 @@ export async function ensureCalendar(input: {
         homeSetUrl: home,
         name: calendarName,
         appleId: input.bindings.appleId,
-        appleAppPassword: input.bindings.appleAppPassword,
+        appleAppPassword,
       }));
   }
 
   const remote = await fetchCalendarProperties({
     calendarHref,
     appleId: input.bindings.appleId,
-    appleAppPassword: input.bindings.appleAppPassword,
+    appleAppPassword,
   });
   if (normalizeCalendarColor(calendarColor)) {
     await applyCalendarColor({
       calendarHref,
       color: calendarColor,
       appleId: input.bindings.appleId,
-      appleAppPassword: input.bindings.appleAppPassword,
+      appleAppPassword,
     }).catch(() => undefined);
   }
 
@@ -564,6 +568,10 @@ export function normalizeCalendarResourcePath(value: string): string {
   } catch {
     return value.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/\/$/, "");
   }
+}
+
+export function normalizeAppleAppPassword(value: string): string {
+  return value.replace(/[\s-]+/g, "").trim();
 }
 
 function notionIdFromHref(href: string): string | null {

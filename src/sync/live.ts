@@ -419,7 +419,8 @@ export function buildPropertiesForCalendarTask(
 
   const normalizedStatus = normalizeStatusName(calendarTask.status) || calendarTask.status;
   if (schema.statusProperty && normalizedStatus) {
-    if (!currentNotionTask || currentNotionTask.status !== normalizedStatus) {
+    const currentCanonicalStatus = normalizeStatusName(currentNotionTask?.status) || currentNotionTask?.status;
+    if (!currentNotionTask || currentCanonicalStatus !== normalizedStatus) {
       if (schema.statusType === "status") {
         properties[schema.statusProperty] = { status: { name: normalizedStatus } };
       } else if (schema.statusType === "select") {

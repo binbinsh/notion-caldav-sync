@@ -112,6 +112,14 @@ describe("buildPropertiesForCalendarTask", () => {
     expect(props.Status).toEqual({ status: { name: "Completed" } });
   });
 
+  it("does not rewrite equivalent canonical statuses", () => {
+    const notion = makeNotionTask({ status: "Not started" });
+    const cal = makeCalendarTask({ status: "Todo" });
+    const props = buildPropertiesForCalendarTask(schema(), cal, notion);
+
+    expect(props).toEqual({});
+  });
+
   it("only updates date when start date changed", () => {
     const notion = makeNotionTask({ startDate: "2026-04-10T09:00:00Z" });
     const cal = makeCalendarTask({ startDate: "2026-04-11T09:00:00Z" });

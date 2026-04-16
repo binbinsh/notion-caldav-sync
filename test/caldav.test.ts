@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCalendarResourcePath } from "../src/calendar/caldav";
+import { normalizeAppleAppPassword, normalizeCalendarResourcePath } from "../src/calendar/caldav";
 
 describe("normalizeCalendarResourcePath", () => {
   it("treats iCloud calendar resources with different hosts as the same path", () => {
@@ -18,5 +18,9 @@ describe("normalizeCalendarResourcePath", () => {
     expect(
       normalizeCalendarResourcePath("https://p177-caldav.icloud.com/11471285202/calendars/notion.calendar/"),
     ).toBe("/11471285202/calendars/notion.calendar");
+  });
+
+  it("accepts Apple app passwords with hyphens and spaces", () => {
+    expect(normalizeAppleAppPassword(" abcd-efgh ijkl-mnop ")).toBe("abcdefghijklmnop");
   });
 });

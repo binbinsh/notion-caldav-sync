@@ -66,7 +66,6 @@ export function buildEvent(input: {
 }): string {
   const calendar = ical({
     prodId: { company: "Notion Sync", product: "Notion Sync" },
-    method: "PUBLISH" as any,
     name: "Notion",
   });
 

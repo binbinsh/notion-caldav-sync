@@ -670,63 +670,6 @@ export class SyncService {
     }
 
     const calendarHash = await this.calendarHashForTask(calendarTask);
-
-    if (
-      (record.lastPushOrigin === "notion" && record.lastPushToken === calendarHash) ||
-      (record.lastPushOrigin === "caldav" && record.lastPushToken === notionHash)
-    ) {
-      const syncedPayload = JSON.stringify(canonicalPayload({
-        title: notionTask.title,
-        status: notionTask.status,
-        startDate: notionTask.startDate,
-        endDate: notionTask.endDate,
-        reminder: notionTask.reminder,
-        category: notionTask.category,
-        description: notionTask.description,
-        pageUrl: notionTask.pageUrl,
-      }));
-      await this.ledger.putRecord(
-        record.with({
-          eventHref: calendarTask.eventHref,
-          eventEtag: calendarTask.etag,
-          lastNotionEditedTime: notionTask.lastEditedTime,
-          lastNotionHash: notionHash,
-          lastCaldavHash: calendarHash,
-          lastCaldavModified: calendarTask.lastModified,
-          lastSyncedPayload: syncedPayload,
-        }),
-      );
-      return "skipped";
-    }
-
-    if (notionHash === calendarHash) {
-      const syncedPayload = JSON.stringify(canonicalPayload({
-        title: notionTask.title,
-        status: notionTask.status,
-        startDate: notionTask.startDate,
-        endDate: notionTask.endDate,
-        reminder: notionTask.reminder,
-        category: notionTask.category,
-        description: notionTask.description,
-        pageUrl: notionTask.pageUrl,
-      }));
-      await this.ledger.putRecord(
-        record.with({
-          eventHref: calendarTask.eventHref,
-          eventEtag: calendarTask.etag,
-          lastNotionEditedTime: notionTask.lastEditedTime,
-          lastNotionHash: notionHash,
-          lastCaldavHash: calendarHash,
-          lastCaldavModified: calendarTask.lastModified,
-          deletedOnCaldavAt: null,
-          deletedInNotionAt: null,
-          lastSyncedPayload: syncedPayload,
-        }),
-      );
-      return "skipped";
-    }
-
-    const winner = this.chooseWinner(notionTask, calendarTask);
     const notionPayload = canonicalPayload({
       title: notionTask.title,
       status: notionTask.status,
@@ -747,6 +690,62 @@ export class SyncService {
       description: calendarTask.description,
       pageUrl: calendarTask.pageUrl,
     });
+    const notionMatchesLastSync = payloadMatchesLastSync(
+      notionPayload,
+      record.lastSyncedPayload,
+      record.lastNotionHash,
+      notionHash,
+    );
+    const calendarMatchesLastSync = payloadMatchesLastSync(
+      calendarPayload,
+      record.lastSyncedPayload,
+      record.lastCaldavHash,
+      calendarHash,
+    );
+
+    if (
+      (record.lastPushOrigin === "notion"
+        && record.lastPushToken === calendarHash
+        && notionMatchesLastSync)
+      ||
+      (record.lastPushOrigin === "caldav"
+        && record.lastPushToken === notionHash
+        && calendarMatchesLastSync)
+    ) {
+      const syncedPayload = JSON.stringify(notionPayload);
+      await this.ledger.putRecord(
+        record.with({
+          eventHref: calendarTask.eventHref,
+          eventEtag: calendarTask.etag,
+          lastNotionEditedTime: notionTask.lastEditedTime,
+          lastNotionHash: notionHash,
+          lastCaldavHash: calendarHash,
+          lastCaldavModified: calendarTask.lastModified,
+          lastSyncedPayload: syncedPayload,
+        }),
+      );
+      return "skipped";
+    }
+
+    if (notionHash === calendarHash) {
+      const syncedPayload = JSON.stringify(notionPayload);
+      await this.ledger.putRecord(
+        record.with({
+          eventHref: calendarTask.eventHref,
+          eventEtag: calendarTask.etag,
+          lastNotionEditedTime: notionTask.lastEditedTime,
+          lastNotionHash: notionHash,
+          lastCaldavHash: calendarHash,
+          lastCaldavModified: calendarTask.lastModified,
+          deletedOnCaldavAt: null,
+          deletedInNotionAt: null,
+          lastSyncedPayload: syncedPayload,
+        }),
+      );
+      return "skipped";
+    }
+
+    const winner = this.chooseWinner(notionTask, calendarTask);
     const merged = mergePayloads(notionPayload, calendarPayload, record.lastSyncedPayload, winner);
     const mergedPayloadJson = JSON.stringify(merged);
 
@@ -1520,6 +1519,24 @@ function mergePayloads(
     merged[field] = winner === "notion" ? notionVal : calendarVal;
   }
   return merged;
+}
+
+function payloadMatchesLastSync(
+  payload: CanonicalPayload,
+  lastSyncedPayloadJson: string | null,
+  fallbackHash: string | null,
+  payloadHash: string,
+): boolean {
+  if (lastSyncedPayloadJson) {
+    try {
+      const base = JSON.parse(lastSyncedPayloadJson) as CanonicalPayload;
+      return payloadsEqual(payload, base);
+    } catch {
+      // Fall through to hash-based fallback.
+    }
+  }
+
+  return Boolean(fallbackHash && fallbackHash === payloadHash);
 }
 
 function payloadsEqual(

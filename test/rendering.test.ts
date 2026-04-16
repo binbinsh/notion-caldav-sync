@@ -121,6 +121,33 @@ describe("parseIsoDateTime", () => {
     expect(result!.toISOString()).toBe("2026-04-10T18:29:59.000Z");
   });
 
+  it("handles DST start day for date-only values", () => {
+    const result = parseIsoDateTime("2026-03-08", {
+      dateOnlyTimezoneName: "America/New_York",
+    });
+    expect(result).not.toBeNull();
+    // 2026-03-08T00:00:00 EST = 2026-03-08T05:00:00 UTC
+    expect(result!.toISOString()).toBe("2026-03-08T05:00:00.000Z");
+  });
+
+  it("handles DST end day for date-only values", () => {
+    const result = parseIsoDateTime("2026-11-01", {
+      dateOnlyTimezoneName: "America/New_York",
+    });
+    expect(result).not.toBeNull();
+    // 2026-11-01T00:00:00 EDT = 2026-11-01T04:00:00 UTC
+    expect(result!.toISOString()).toBe("2026-11-01T04:00:00.000Z");
+  });
+
+  it("handles positive-offset month boundaries", () => {
+    const result = parseIsoDateTime("2026-01-31", {
+      dateOnlyTimezoneName: "Pacific/Kiritimati",
+    });
+    expect(result).not.toBeNull();
+    // 2026-01-31T00:00:00 UTC+14 = 2026-01-30T10:00:00 UTC
+    expect(result!.toISOString()).toBe("2026-01-30T10:00:00.000Z");
+  });
+
   it("parses ISO datetime strings", () => {
     const result = parseIsoDateTime("2026-04-10T09:00:00.000Z");
     expect(result).not.toBeNull();

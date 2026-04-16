@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DAVClient } from "tsdav";
 import { createNotionClient, listDatabases } from "../src/notion/client";
+import { normalizeAppleAppPassword } from "../src/calendar/caldav";
 import { loadLocalEnv, requiredEnv } from "./helpers/env";
 
 loadLocalEnv();
@@ -25,7 +26,7 @@ describe("live integrations", () => {
       serverUrl: "https://caldav.icloud.com/",
       credentials: {
         username: process.env.APPLE_ID!,
-        password: process.env.APPLE_APP_PASSWORD!,
+        password: normalizeAppleAppPassword(process.env.APPLE_APP_PASSWORD!),
       },
       authMethod: "Basic",
       defaultAccountType: "caldav",
