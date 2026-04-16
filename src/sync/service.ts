@@ -1263,11 +1263,35 @@ export class SyncService {
     }
 
     const winner = this.chooseWinner(notionTask, calendarTask);
-    if (winner === "caldav") {
+    const notionPayload = canonicalPayload({
+      title: notionTask.title,
+      status: notionTask.status,
+      startDate: notionTask.startDate,
+      endDate: notionTask.endDate,
+      reminder: notionTask.reminder,
+      category: notionTask.category,
+      description: notionTask.description,
+      pageUrl: notionTask.pageUrl,
+    });
+    const calendarPayload = canonicalPayload({
+      title: calendarTask.title,
+      status: calendarTask.status,
+      startDate: calendarTask.startDate,
+      endDate: calendarTask.endDate,
+      reminder: calendarTask.reminder,
+      category: calendarTask.category,
+      description: calendarTask.description,
+      pageUrl: calendarTask.pageUrl,
+    });
+    const merged = mergePayloads(notionPayload, calendarPayload, record.lastSyncedPayload, winner);
+    const notionNeedsUpdate = !payloadsEqual(notionPayload, merged);
+    const calendarNeedsUpdate = !payloadsEqual(calendarPayload, merged);
+
+    if (notionNeedsUpdate && !calendarNeedsUpdate) {
       return {
         relation,
         action: "update_notion_page",
-        reason: "Calendar changed more recently than Notion.",
+        reason: "Calendar has changes that should be written back to Notion.",
         operations: {
           notion: "update",
           calendar: "none",
@@ -1278,10 +1302,27 @@ export class SyncService {
       };
     }
 
+    if (notionNeedsUpdate && calendarNeedsUpdate) {
+      return {
+        relation,
+        action: winner === "caldav" ? "update_notion_page" : "update_calendar_event",
+        reason: "Both sides changed different fields and will be merged before syncing.",
+        operations: {
+          notion: "update",
+          calendar: "update",
+          ledger: "upsert",
+        },
+        notionHash,
+        calendarHash,
+      };
+    }
+
     return {
       relation,
       action: "update_calendar_event",
-      reason: "Notion changed more recently than Calendar.",
+      reason: record.lastSyncedPayload
+        ? "Notion has changes that should be written to Calendar."
+        : "Calendar differs from Notion without a sync base, so Notion stays authoritative.",
       operations: {
         notion: "none",
         calendar: "update",
@@ -1467,10 +1508,10 @@ const MERGE_FIELDS: Array<keyof CanonicalPayload> = [
  *
  * For each field:
  * - If only one side changed it relative to the base, use that side's value.
- * - If both sides changed it (or there is no base to compare), use the timestamp winner's value.
+ * - If both sides changed it, or there is no base to compare, default to Notion.
  *
  * This preserves non-conflicting edits from both sides instead of letting the
- * timestamp winner overwrite fields it didn't touch.
+ * default conflict policy overwrite fields that only changed on one side.
  */
 function mergePayloads(
   notionPayload: CanonicalPayload,
@@ -1512,11 +1553,11 @@ function mergePayloads(
         merged[field] = calendarVal;
         continue;
       }
-      // Both changed this field — fall through to winner
+      // Both changed this field — fall through to the default conflict policy.
     }
 
-    // No base or both changed: use winner's value
-    merged[field] = winner === "notion" ? notionVal : calendarVal;
+    // No base or both changed: default to Notion as the source of truth.
+    merged[field] = notionVal;
   }
   return merged;
 }

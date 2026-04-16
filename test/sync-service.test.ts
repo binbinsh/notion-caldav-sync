@@ -259,7 +259,7 @@ describe("SyncService", () => {
     }
   });
 
-  it("lets newer caldav change win and updates notion", async () => {
+  it("defaults to notion when matched items differ without a sync base", async () => {
     const facade = new FakeFacade();
     const notion = notionTask({ title: "Old title", lastEditedTime: iso(0) });
     const calendar = calendarTask({ title: "New from calendar", lastModified: iso(15) });
@@ -270,9 +270,10 @@ describe("SyncService", () => {
 
     await service.runFullReconcile();
 
-    expect(facade.updateNotionCalls).toEqual(["page-1"]);
-    expect(facade.notionTasks.get("page-1")?.title).toBe("New from calendar");
-    expect(facade.putCalendarCalls).toEqual([]);
+    expect(facade.updateNotionCalls).toEqual([]);
+    expect(facade.putCalendarCalls).toEqual(["page-1"]);
+    const updatedCalendar = facade.calendarTasks.get(calendar.eventHref);
+    expect(updatedCalendar?.title).toBe("Old title");
   });
 
   it("skips echo after recent notion push", async () => {
@@ -395,6 +396,55 @@ describe("SyncService", () => {
     expect(updatedCalendar?.reminder).toBeNull();
   });
 
+  it("applies a calendar-only change when the last synced payload proves notion is unchanged", async () => {
+    const facade = new FakeFacade();
+    const notion = notionTask({ title: "Original title", lastEditedTime: iso(0) });
+    const calendar = calendarTask({
+      title: "Changed on calendar",
+      lastModified: iso(15),
+      etag: '"etag-new"',
+    });
+    facade.notionTasks.set("page-1", notion);
+    facade.calendarTasks.set(calendar.eventHref, calendar);
+
+    const basePayload = canonicalPayload({
+      title: notion.title,
+      status: notion.status,
+      startDate: notion.startDate,
+      endDate: notion.endDate,
+      reminder: notion.reminder,
+      category: notion.category,
+      description: notion.description,
+      pageUrl: notion.pageUrl,
+    });
+    const baseHash = await canonicalHash(basePayload);
+    const ledger = new InMemoryLedger();
+    await ledger.putRecord(
+      new LedgerRecord(
+        "page-1",
+        calendar.eventHref,
+        '"etag-old"',
+        notion.lastEditedTime,
+        baseHash,
+        baseHash,
+        iso(0),
+        null,
+        null,
+        null,
+        null,
+        null,
+        JSON.stringify(basePayload),
+      ),
+    );
+    const service = new SyncService(facade, ledger);
+
+    await service.runFullReconcile();
+
+    expect(facade.updateNotionCalls).toEqual(["page-1"]);
+    expect(facade.notionTasks.get("page-1")?.title).toBe("Changed on calendar");
+    expect(facade.putCalendarCalls).toEqual([]);
+  });
+
   it("builds a debug snapshot with pending sync actions and unmanaged events", async () => {
     const facade = new FakeFacade();
     facade.notionTasks.set("page-1", notionTask({ title: "Notion wins", lastEditedTime: iso(20) }));
@@ -486,7 +536,7 @@ describe("SyncService", () => {
     expect(record?.lastPushOrigin).toBe("notion");
   });
 
-  it("bidirectional: caldav incremental detects etag change and updates notion", async () => {
+  it("bidirectional: caldav incremental defaults to notion when a changed event has no sync base", async () => {
     const facade = new FakeFacade();
 
     // Setup: both sides exist, ledger has old etag
@@ -511,15 +561,16 @@ describe("SyncService", () => {
 
     await service.syncCaldavIncremental();
 
-    // CalDAV is newer so it should win and update Notion
-    expect(facade.updateNotionCalls).toEqual(["page-1"]);
-    expect(facade.notionTasks.get("page-1")?.title).toBe("Changed on phone");
+    expect(facade.updateNotionCalls).toEqual([]);
+    expect(facade.putCalendarCalls).toEqual(["page-1"]);
+    const updatedCalendar = facade.calendarTasks.get(calendar.eventHref);
+    expect(updatedCalendar?.title).toBe(notion.title);
     const record = await ledger.getRecord("page-1");
-    expect(record?.lastPushOrigin).toBe("caldav");
-    expect(record?.eventEtag).toBe('"etag-new"');
+    expect(record?.lastPushOrigin).toBe("notion");
+    expect(record?.eventEtag).toBe('"etag-1"');
   });
 
-  it("webhook sync fetches caldav event from ledger href for proper bidirectional comparison", async () => {
+  it("webhook sync keeps notion authoritative when the pair differs without a sync base", async () => {
     const facade = new FakeFacade();
 
     // Setup: notion page exists, calendar event exists (stored in ledger from prior sync)
@@ -541,10 +592,8 @@ describe("SyncService", () => {
     // Simulate webhook push — syncNotionPageIds now fetches CalDAV event
     await service.syncNotionPageIds(["page-1"]);
 
-    // CalDAV is newer (iso(30) > iso(0)), so it should win
-    expect(facade.updateNotionCalls).toEqual(["page-1"]);
-    expect(facade.notionTasks.get("page-1")?.title).toBe("Updated from iCal");
-    expect(facade.putCalendarCalls).toEqual([]);
+    expect(facade.updateNotionCalls).toEqual([]);
+    expect(facade.putCalendarCalls).toEqual(["page-1"]);
   });
 
   it("webhook sync creates calendar event when no prior ledger record exists", async () => {
