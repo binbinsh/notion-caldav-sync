@@ -1,17 +1,18 @@
 import { Hono } from "hono";
 import {
+  CLERK_ACCOUNTS_URL,
   clerkMiddleware,
   getAuth,
   getNotionOAuthToken,
   type AppEnv,
 } from "./auth/clerk";
 import {
-  buildLocalAuthUrl,
+  buildClerkHostedAuthUrl,
   buildServicePath,
   canonicalizeAuthPath,
   resolveRequestedRedirectUrl,
 } from "./auth/navigation";
-import { renderClerkSignInHtml, renderClerkSignOutHtml } from "./auth/pages";
+import { renderClerkSignOutHtml } from "./auth/pages";
 import { customAppSchemaSQL, schemaMigrations } from "./db/app-schema";
 import {
   getAppState,
@@ -124,17 +125,13 @@ app.get("/sign-in", async (c) => {
   if (userId) {
     return c.redirect(redirectTarget, 302);
   }
-  return c.html(
-    renderClerkSignInHtml(
-      c.env.CLERK_PUBLISHABLE_KEY,
-      redirectTarget,
-      servicePath(c, "/sign-in"),
-    ),
+  return c.redirect(
+    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
+    302,
   );
 });
 
-// Clerk path-based routing navigates to sub-routes like /sign-in/factor-one,
-// /sign-in/sso-callback, etc. Serve the same sign-in page for all of them.
+// Preserve old local sign-in URLs by redirecting them to the shared Clerk hosted page.
 app.get("/sign-in/*", async (c) => {
   const redirectTarget = resolveRequestedRedirectUrl(
     c.req.raw.url,
@@ -146,12 +143,9 @@ app.get("/sign-in/*", async (c) => {
   if (userId) {
     return c.redirect(redirectTarget, 302);
   }
-  return c.html(
-    renderClerkSignInHtml(
-      c.env.CLERK_PUBLISHABLE_KEY,
-      redirectTarget,
-      servicePath(c, "/sign-in"),
-    ),
+  return c.redirect(
+    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
+    302,
   );
 });
 
@@ -187,7 +181,7 @@ app.get("/sign-out/*", async (c) => {
 app.get("/dashboard", async (c) => {
   const { userId } = getAuth(c);
   if (!userId) {
-    return redirectToLocalSignIn(c, servicePathWithCurrentQuery(c, "/dashboard"));
+    return redirectToHostedSignIn(c, servicePathWithCurrentQuery(c, "/dashboard"));
   }
   return serveIndexHtml(c.env);
 });
@@ -724,7 +718,7 @@ function requireAuthenticatedUser(
   if (options.wantsJson) {
     return Response.json({ ok: false, error: options.jsonError }, { status: 401 });
   }
-  return redirectToLocalSignIn(c, options.returnPath);
+  return redirectToHostedSignIn(c, options.returnPath);
 }
 
 async function triggerWorkspaceSync(
@@ -1061,14 +1055,14 @@ function servicePathWithCurrentQuery(
   return `${servicePath(c, path)}${new URL(c.req.raw.url).search}`;
 }
 
-function redirectToLocalSignIn(
+function redirectToHostedSignIn(
   c: { var: { serviceBasePath: string }; req: { raw: Request } },
   returnPath: string,
 ): Response {
   return new Response(null, {
     status: 302,
     headers: {
-      location: buildLocalAuthUrl(c.req.raw.url, c.var.serviceBasePath, "sign-in", returnPath),
+      location: buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", returnPath),
     },
   });
 }

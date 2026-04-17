@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildLocalAuthUrl,
+  buildClerkHostedAuthUrl,
   canonicalizeAuthPath,
   resolveRequestedRedirectUrl,
 } from "../src/auth/navigation";
@@ -9,9 +9,16 @@ describe("auth navigation", () => {
   const requestUrl = "https://superplanner.ai/dashboard";
   const serviceBasePath = "/caldav-sync";
 
-  it("builds product-scoped local auth urls", () => {
-    expect(buildLocalAuthUrl(requestUrl, serviceBasePath, "sign-in", "/caldav-sync/dashboard")).toBe(
-      "https://superplanner.ai/caldav-sync/sign-in?redirect_url=https%3A%2F%2Fsuperplanner.ai%2Fcaldav-sync%2Fdashboard",
+  it("builds hosted sign-in urls that redirect back to the service dashboard", () => {
+    expect(
+      buildClerkHostedAuthUrl(
+        "https://accounts.superplanner.ai",
+        requestUrl,
+        "sign-in",
+        "/caldav-sync/dashboard",
+      ),
+    ).toBe(
+      "https://accounts.superplanner.ai/sign-in?redirect_url=https%3A%2F%2Fsuperplanner.ai%2Fcaldav-sync%2Fdashboard",
     );
   });
 

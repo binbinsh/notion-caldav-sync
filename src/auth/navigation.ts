@@ -7,19 +7,6 @@ export function buildServicePath(serviceBasePath: string, path: string): string 
   return `${serviceBasePath}${suffix}` || "/";
 }
 
-export function buildLocalAuthUrl(
-  requestUrl: string,
-  serviceBasePath: string,
-  route: "sign-in" | "sign-out",
-  returnPath: string,
-): string {
-  const redirectUrl = new URL(returnPath, new URL(requestUrl).origin);
-  const authPath = buildServicePath(serviceBasePath, `/${route}`);
-  return `${new URL(requestUrl).origin}${authPath}?${AUTH_REDIRECT_QUERY_PARAM}=${encodeURIComponent(
-    redirectUrl.toString(),
-  )}`;
-}
-
 export function buildClerkHostedAuthUrl(
   accountsUrl: string,
   requestUrl: string,
@@ -27,9 +14,9 @@ export function buildClerkHostedAuthUrl(
   returnPath: string,
 ): string {
   const redirectUrl = new URL(returnPath, new URL(requestUrl).origin);
-  return `${accountsUrl.replace(/\/$/, "")}/${route}?${AUTH_REDIRECT_QUERY_PARAM}=${encodeURIComponent(
-    redirectUrl.toString(),
-  )}`;
+  const url = new URL(`${accountsUrl.replace(/\/$/, "")}/${route}`);
+  url.searchParams.set(AUTH_REDIRECT_QUERY_PARAM, redirectUrl.toString());
+  return url.toString();
 }
 
 export function resolveRequestedRedirectUrl(
