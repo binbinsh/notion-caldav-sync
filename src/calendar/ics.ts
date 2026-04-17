@@ -35,6 +35,7 @@ export type ParsedIcs = {
   notionId: string | null;
   title: string | null;
   status: string | null;
+  displayStatus: string | null;
   startDate: string | null;
   endDate: string | null;
   lastModified: string | null;
@@ -144,6 +145,7 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
 
   const { status: summaryStatus, title } = extractSummaryStatus(event.summary || "");
   let status = summaryStatus;
+  let displayStatus = summaryStatus;
   let category = firstText(arrayify(event.component.getFirstPropertyValue("categories")));
   const color = normalizeText(event.component.getFirstPropertyValue("color"));
   const rawDescription = normalizeText(event.description);
@@ -172,6 +174,9 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
     if (veventStatus) {
       status = ICS_STATUS_TO_NOTION[veventStatus.toUpperCase()] || null;
     }
+  }
+  if (!displayStatus) {
+    displayStatus = status;
   }
 
   const lastModifiedValue = event.component.getFirstPropertyValue("last-modified") as ICAL.Time | null;
@@ -216,6 +221,7 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
     notionId,
     title,
     status,
+    displayStatus,
     startDate,
     endDate,
     lastModified,
@@ -394,6 +400,7 @@ function emptyParsed(): ParsedIcs {
     notionId: null,
     title: null,
     status: null,
+    displayStatus: null,
     startDate: null,
     endDate: null,
     lastModified: null,

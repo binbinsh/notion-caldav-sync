@@ -200,15 +200,14 @@ describe("statusForTask", () => {
 });
 
 describe("descriptionForTask", () => {
-  it("includes database name, status, and url", () => {
+  it("includes database name and status without duplicating the notion url", () => {
     const result = descriptionForTask({
       databaseName: "Tasks",
       status: "todo",
-      pageUrl: "https://www.notion.so/test",
     });
     expect(result).toContain("Source: Tasks");
     expect(result).toContain("Status: Todo");
-    expect(result).toContain("Notion URL: https://www.notion.so/test");
+    expect(result).not.toContain("Notion URL:");
   });
 
   it("includes category and description", () => {

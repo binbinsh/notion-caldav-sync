@@ -1,6 +1,6 @@
 import { SyncLedger } from "./ledger";
 import { CalendarTask, LedgerRecord, NotionTask } from "./models";
-import { canonicalHash, canonicalPayload } from "./rendering";
+import { canonicalHash, canonicalPayload, dateOnlyTimezone, statusForTask } from "./rendering";
 import { parallelMap } from "../lib/retry";
 
 export interface SyncFacade {
@@ -392,6 +392,9 @@ export class SyncService {
         if (record.lastSyncedPayload) {
           try {
             const payload = JSON.parse(record.lastSyncedPayload) as Record<string, string | null>;
+            if (!Object.prototype.hasOwnProperty.call(payload, "displayStatus")) {
+              throw new Error("Missing displayStatus in cached payload.");
+            }
             calendarTasks.set(meta.pageId, new CalendarTask(
               meta.pageId,
               meta.href,
@@ -405,6 +408,7 @@ export class SyncService {
               payload.description ?? null,
               record.lastCaldavModified ?? null,
               payload.pageUrl ?? null,
+              payload.displayStatus ?? null,
             ));
             continue;
           } catch {
@@ -506,6 +510,7 @@ export class SyncService {
         notionTask,
         calendarTask,
         record,
+        settings,
       });
       const warnings = this.buildWarnings({
         notionTask,
@@ -588,7 +593,7 @@ export class SyncService {
     const { notionTask, calendarTask, record, settings, source } = input;
 
     if (notionTask && (notionTask.archived || !notionTask.startDate)) {
-      await this.applyNotionDeletion(notionTask, calendarTask, record);
+      await this.applyNotionDeletion(notionTask, calendarTask, record, settings);
       return "deleted";
     }
 
@@ -602,13 +607,13 @@ export class SyncService {
       return "deleted";
     }
 
-    const notionHash = await this.notionHashForTask(notionTask);
+    const notionHash = await this.notionHashForTask(notionTask, settings);
 
     if (!calendarTask) {
       if (this.shouldHonorRecentCalendarDelete(notionTask, record)) {
         this.log(`[sync] honoring recent CalDAV deletion for ${notionTask.pageId}`, { op: "honor_deletion", pageId: notionTask.pageId });
         const updated = await this.facade.clearNotionSchedule(notionTask);
-        const clearedHash = await this.notionHashForTask(updated);
+        const clearedHash = await this.notionHashForTask(updated, settings);
         await this.ledger.putRecord(
           record.with({
             eventHref: null,
@@ -642,17 +647,8 @@ export class SyncService {
       // Echo-loop fix: read back the event to get the server-normalized hash.
       // Store it as lastPushToken so the next incremental sync recognizes this
       // as our own write and skips it.
-      const readbackHash = await this.readbackCalendarHash(eventHref, newEtag);
-      const syncedPayload = JSON.stringify(canonicalPayload({
-        title: notionTask.title,
-        status: notionTask.status,
-        startDate: notionTask.startDate,
-        endDate: notionTask.endDate,
-        reminder: notionTask.reminder,
-        category: notionTask.category,
-        description: notionTask.description,
-        pageUrl: notionTask.pageUrl,
-      }));
+      const readbackHash = await this.readbackCalendarHash(eventHref, newEtag, settings);
+      const syncedPayload = JSON.stringify(this.notionSyncPayload(notionTask, settings));
       await this.ledger.putRecord(
         record.with({
           eventHref,
@@ -670,26 +666,8 @@ export class SyncService {
     }
 
     const calendarHash = await this.calendarHashForTask(calendarTask);
-    const notionPayload = canonicalPayload({
-      title: notionTask.title,
-      status: notionTask.status,
-      startDate: notionTask.startDate,
-      endDate: notionTask.endDate,
-      reminder: notionTask.reminder,
-      category: notionTask.category,
-      description: notionTask.description,
-      pageUrl: notionTask.pageUrl,
-    });
-    const calendarPayload = canonicalPayload({
-      title: calendarTask.title,
-      status: calendarTask.status,
-      startDate: calendarTask.startDate,
-      endDate: calendarTask.endDate,
-      reminder: calendarTask.reminder,
-      category: calendarTask.category,
-      description: calendarTask.description,
-      pageUrl: calendarTask.pageUrl,
-    });
+    const notionPayload = this.notionSyncPayload(notionTask, settings);
+    const calendarPayload = this.calendarSyncPayload(calendarTask);
     const notionMatchesLastSync = payloadMatchesLastSync(
       notionPayload,
       record.lastSyncedPayload,
@@ -770,7 +748,7 @@ export class SyncService {
         merged.pageUrl,
       );
       const updated = await this.facade.updateNotionFromCalendar(notionTask, mergedCalendarTask);
-      const updatedHash = await this.notionHashForTask(updated);
+      const updatedHash = await this.notionHashForTask(updated, settings);
 
       if (calendarNeedsUpdate) {
         // Both sides need updating — also push merged state to CalDAV
@@ -796,7 +774,7 @@ export class SyncService {
           mergedNotionTask,
           { settings },
         );
-        const mergedReadbackHash = await this.readbackCalendarHash(mergedHref, mergedEtag);
+        const mergedReadbackHash = await this.readbackCalendarHash(mergedHref, mergedEtag, settings);
         await this.ledger.putRecord(
           record.with({
             eventHref: mergedHref,
@@ -855,7 +833,7 @@ export class SyncService {
       mergedNotionTask,
       { settings },
     );
-    const winnerReadbackHash = await this.readbackCalendarHash(winnerHref, winnerEtag);
+    const winnerReadbackHash = await this.readbackCalendarHash(winnerHref, winnerEtag, settings);
     await this.ledger.putRecord(
       record.with({
         eventHref: winnerHref,
@@ -877,23 +855,24 @@ export class SyncService {
     notionTask: NotionTask,
     calendarTask: CalendarTask | null,
     record: LedgerRecord,
+    settings: Record<string, unknown>,
   ): Promise<void> {
     const eventHref = calendarTask?.eventHref || record.eventHref;
     if (eventHref) {
       await this.deleteEventIfPresent(eventHref);
     }
-      const notionHash = await this.notionHashForTask(notionTask);
-      await this.ledger.putRecord(
-        record.with({
-          eventHref: null,
-          eventEtag: null,
-          lastNotionEditedTime: notionTask.lastEditedTime,
-          lastNotionHash: notionHash,
-          deletedInNotionAt: notionTask.lastEditedTime || this.nowIso(),
-          lastPushOrigin: "notion",
-          lastPushToken: notionHash,
-        }),
-      );
+    const notionHash = await this.notionHashForTask(notionTask, settings);
+    await this.ledger.putRecord(
+      record.with({
+        eventHref: null,
+        eventEtag: null,
+        lastNotionEditedTime: notionTask.lastEditedTime,
+        lastNotionHash: notionHash,
+        deletedInNotionAt: notionTask.lastEditedTime || this.nowIso(),
+        lastPushOrigin: "notion",
+        lastPushToken: notionHash,
+      }),
+    );
   }
 
   private async deleteCalendarAndForget(calendarTask: CalendarTask, record: LedgerRecord): Promise<void> {
@@ -1115,10 +1094,11 @@ export class SyncService {
     notionTask: NotionTask | null;
     calendarTask: CalendarTask | null;
     record: LedgerRecord;
+    settings: Record<string, unknown>;
   }): Promise<SyncDecision> {
-    const { notionTask, calendarTask, record } = input;
+    const { notionTask, calendarTask, record, settings } = input;
     const relation = this.resolveRelation(notionTask, calendarTask);
-    const notionHash = notionTask ? await this.notionHashForTask(notionTask) : null;
+    const notionHash = notionTask ? await this.notionHashForTask(notionTask, settings) : null;
     const calendarHash = calendarTask ? await this.calendarHashForTask(calendarTask) : null;
 
     if (notionTask && (notionTask.archived || !notionTask.startDate)) {
@@ -1264,26 +1244,8 @@ export class SyncService {
     }
 
     const winner = this.chooseWinner(notionTask, calendarTask);
-    const notionPayload = canonicalPayload({
-      title: notionTask.title,
-      status: notionTask.status,
-      startDate: notionTask.startDate,
-      endDate: notionTask.endDate,
-      reminder: notionTask.reminder,
-      category: notionTask.category,
-      description: notionTask.description,
-      pageUrl: notionTask.pageUrl,
-    });
-    const calendarPayload = canonicalPayload({
-      title: calendarTask.title,
-      status: calendarTask.status,
-      startDate: calendarTask.startDate,
-      endDate: calendarTask.endDate,
-      reminder: calendarTask.reminder,
-      category: calendarTask.category,
-      description: calendarTask.description,
-      pageUrl: calendarTask.pageUrl,
-    });
+    const notionPayload = this.notionSyncPayload(notionTask, settings);
+    const calendarPayload = this.calendarSyncPayload(calendarTask);
     const merged = mergePayloads(notionPayload, calendarPayload, record.lastSyncedPayload, winner);
     const notionNeedsUpdate = !payloadsEqual(notionPayload, merged);
     const calendarNeedsUpdate = !payloadsEqual(calendarPayload, merged);
@@ -1377,24 +1339,17 @@ export class SyncService {
     return warnings;
   }
 
-  private notionHashForTask(task: NotionTask): Promise<string> {
-    return canonicalHash(
-      canonicalPayload({
-        title: task.title,
-        status: task.status,
-        startDate: task.startDate,
-        endDate: task.endDate,
-        reminder: task.reminder,
-        category: task.category,
-        description: task.description,
-        pageUrl: task.pageUrl,
-      }),
-    );
+  private notionHashForTask(task: NotionTask, settings?: Record<string, unknown>): Promise<string> {
+    return canonicalHash(this.notionSyncPayload(task, settings));
   }
 
   private calendarHashForTask(task: CalendarTask): Promise<string> {
-    return canonicalHash(
-      canonicalPayload({
+    return canonicalHash(this.calendarSyncPayload(task));
+  }
+
+  private notionSyncPayload(task: NotionTask, settings?: Record<string, unknown>): CanonicalPayload {
+    return {
+      ...canonicalPayload({
         title: task.title,
         status: task.status,
         startDate: task.startDate,
@@ -1404,7 +1359,24 @@ export class SyncService {
         description: task.description,
         pageUrl: task.pageUrl,
       }),
-    );
+      displayStatus: statusForTask(task, { dateOnlyTimezoneName: dateOnlyTimezone(settings) }),
+    };
+  }
+
+  private calendarSyncPayload(task: CalendarTask): CanonicalPayload {
+    return {
+      ...canonicalPayload({
+        title: task.title,
+        status: task.status,
+        startDate: task.startDate,
+        endDate: task.endDate,
+        reminder: task.reminder,
+        category: task.category,
+        description: task.description,
+        pageUrl: task.pageUrl,
+      }),
+      displayStatus: task.displayStatus || null,
+    };
   }
 
   /**
@@ -1413,10 +1385,20 @@ export class SyncService {
    * (e.g., whitespace, line folding) and the hash no longer matches.
    * Returns null if the readback fails (we'll fall back to the notionHash).
    */
-  private async readbackCalendarHash(eventHref: string, etag: string | null): Promise<string | null> {
+  private async readbackCalendarHash(
+    eventHref: string,
+    etag: string | null,
+    settings: Record<string, unknown>,
+  ): Promise<string | null> {
     try {
       const calTask = await this.facade.getCalendarTask(eventHref, { etag });
       if (calTask) {
+        if (!calTask.displayStatus) {
+          return canonicalHash({
+            ...this.calendarSyncPayload(calTask),
+            displayStatus: statusForTask(calTask, { dateOnlyTimezoneName: dateOnlyTimezone(settings) }),
+          });
+        }
         return this.calendarHashForTask(calTask);
       }
     } catch {
@@ -1466,6 +1448,7 @@ function serializeCalendarTask(task: CalendarTask): Record<string, unknown> {
     description: task.description,
     lastModified: task.lastModified,
     pageUrl: task.pageUrl,
+    displayStatus: task.displayStatus,
   };
 }
 
@@ -1496,6 +1479,7 @@ type CanonicalPayload = Record<string, string | null>;
 const MERGE_FIELDS: Array<keyof CanonicalPayload> = [
   "title",
   "status",
+  "displayStatus",
   "startDate",
   "endDate",
   "reminder",

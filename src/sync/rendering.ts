@@ -15,17 +15,11 @@ export function dateOnlyTimezone(
 export function descriptionForTask(task: {
   databaseName?: string | null;
   status?: string | null;
-  pageUrl?: string | null;
-  url?: string | null;
   category?: string | null;
   description?: string | null;
 }): string {
   const lines = [`Source: ${task.databaseName || "-"}`];
   lines.push(`Status: ${normalizeStatusName(task.status) || "Todo"}`);
-  const pageUrl = task.pageUrl || task.url;
-  if (pageUrl) {
-    lines.push(`Notion URL: ${pageUrl}`);
-  }
   if (task.category) {
     lines.push(`Category: ${task.category}`);
   }

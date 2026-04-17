@@ -304,6 +304,7 @@ export class LiveSyncFacade {
       parsed.description,
       parsed.lastModified,
       parsed.url,
+      parsed.displayStatus,
     );
   }
 

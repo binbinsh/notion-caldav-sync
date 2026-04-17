@@ -215,6 +215,7 @@ export class CalendarTask {
     readonly description: string | null,
     readonly lastModified: string | null,
     readonly pageUrl: string | null,
+    readonly displayStatus: string | null = null,
   ) {}
 
   toJSON(): Record<string, unknown> {
@@ -231,6 +232,7 @@ export class CalendarTask {
       description: this.description,
       lastModified: this.lastModified,
       pageUrl: this.pageUrl,
+      displayStatus: this.displayStatus,
     };
   }
 }

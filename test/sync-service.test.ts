@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryLedger } from "../src/sync/ledger";
 import { CalendarTask, LedgerRecord, NotionTask, TaskSchema } from "../src/sync/models";
-import { canonicalHash, canonicalPayload } from "../src/sync/rendering";
+import { canonicalHash, canonicalPayload, statusForTask } from "../src/sync/rendering";
 import { SyncService, type CalendarDebugEvent, type SyncFacade } from "../src/sync/service";
 
 function iso(minutes = 0): string {
@@ -41,9 +41,9 @@ function notionTask(input: Partial<{
     "Tasks",
     input.title || "Task",
     input.status || "Todo",
-    input.startDate === undefined ? "2026-04-10T09:00:00+00:00" : input.startDate,
-    input.endDate === undefined ? "2026-04-10T10:00:00+00:00" : input.endDate,
-    input.reminder === undefined ? "2026-04-10T08:45:00+00:00" : input.reminder,
+    input.startDate === undefined ? "2099-04-10T09:00:00+00:00" : input.startDate,
+    input.endDate === undefined ? "2099-04-10T10:00:00+00:00" : input.endDate,
+    input.reminder === undefined ? "2099-04-10T08:45:00+00:00" : input.reminder,
     input.category === undefined ? "Work" : input.category,
     input.description === undefined ? "Original body" : input.description,
     input.archived ?? false,
@@ -64,6 +64,7 @@ function calendarTask(input: Partial<{
   pageUrl: string | null;
   lastModified: string | null;
   etag: string | null;
+  displayStatus: string | null;
 }> = {}): CalendarTask {
   const pageId = input.pageId || "page-1";
   return new CalendarTask(
@@ -72,13 +73,14 @@ function calendarTask(input: Partial<{
     input.etag === undefined ? '"etag-1"' : input.etag,
     input.title || "Task",
     input.status || "Todo",
-    input.startDate === undefined ? "2026-04-10T09:00:00+00:00" : input.startDate,
-    input.endDate === undefined ? "2026-04-10T10:00:00+00:00" : input.endDate,
-    input.reminder === undefined ? "2026-04-10T08:45:00+00:00" : input.reminder,
+    input.startDate === undefined ? "2099-04-10T09:00:00+00:00" : input.startDate,
+    input.endDate === undefined ? "2099-04-10T10:00:00+00:00" : input.endDate,
+    input.reminder === undefined ? "2099-04-10T08:45:00+00:00" : input.reminder,
     input.category === undefined ? "Work" : input.category,
     input.description === undefined ? "Original body" : input.description,
     input.lastModified === undefined ? iso() : input.lastModified,
     input.pageUrl === undefined ? "https://www.notion.so/page1" : input.pageUrl,
+    input.displayStatus === undefined ? (input.status || "Todo") : input.displayStatus,
   );
 }
 
@@ -191,6 +193,7 @@ class FakeFacade implements SyncFacade {
       pageUrl: notionTaskValue.pageUrl,
       lastModified: iso(2),
       etag: `"etag-${this.putCalendarCalls.length}"`,
+      displayStatus: statusForTask(notionTaskValue),
     });
     this.calendarTasks.set(task.eventHref, task);
     return { eventHref: task.eventHref, etag: task.etag };
@@ -329,16 +332,19 @@ describe("SyncService", () => {
         null,
         null,
         null,
-        JSON.stringify(canonicalPayload({
-          title: notion.title,
-          status: notion.status,
-          startDate: notion.startDate,
-          endDate: notion.endDate,
-          reminder: notion.reminder,
-          category: notion.category,
-          description: notion.description,
-          pageUrl: notion.pageUrl,
-        })),
+        JSON.stringify({
+          ...canonicalPayload({
+            title: notion.title,
+            status: notion.status,
+            startDate: notion.startDate,
+            endDate: notion.endDate,
+            reminder: notion.reminder,
+            category: notion.category,
+            description: notion.description,
+            pageUrl: notion.pageUrl,
+          }),
+          displayStatus: statusForTask(notion),
+        }),
       ),
     );
     const service = new SyncService(facade, ledger);
@@ -427,16 +433,19 @@ describe("SyncService", () => {
     facade.notionTasks.set("page-1", notion);
     facade.calendarTasks.set(calendar.eventHref, calendar);
 
-    const basePayload = canonicalPayload({
-      title: notion.title,
-      status: notion.status,
-      startDate: notion.startDate,
-      endDate: notion.endDate,
-      reminder: notion.reminder,
-      category: notion.category,
-      description: notion.description,
-      pageUrl: notion.pageUrl,
-    });
+    const basePayload = {
+      ...canonicalPayload({
+        title: notion.title,
+        status: notion.status,
+        startDate: notion.startDate,
+        endDate: notion.endDate,
+        reminder: notion.reminder,
+        category: notion.category,
+        description: notion.description,
+        pageUrl: notion.pageUrl,
+      }),
+      displayStatus: statusForTask(notion),
+    };
     const baseHash = await canonicalHash(basePayload);
     const ledger = new InMemoryLedger();
     await ledger.putRecord(
@@ -678,6 +687,41 @@ describe("SyncService", () => {
     expect(facade.deleteCalendarCalls).toContain(calendar.eventHref);
   });
 
+  it("refreshes calendar events when only the overdue display state changed", async () => {
+    const fakeNow = new Date(Date.UTC(2026, 3, 11, 12, 0, 0));
+    vi.useFakeTimers({ now: fakeNow });
+    try {
+      const facade = new FakeFacade();
+      const notion = notionTask({
+        status: "Todo",
+        startDate: "2026-04-10T09:00:00+00:00",
+        endDate: "2026-04-10T10:00:00+00:00",
+        lastEditedTime: iso(0),
+      });
+      const calendar = calendarTask({
+        status: "Todo",
+        startDate: notion.startDate,
+        endDate: notion.endDate,
+        lastModified: iso(1),
+        displayStatus: "Todo",
+      });
+      facade.notionTasks.set("page-1", notion);
+      facade.calendarTasks.set(calendar.eventHref, calendar);
+
+      const ledger = new InMemoryLedger();
+      const service = new SyncService(facade, ledger);
+
+      await service.runFullReconcile();
+
+      expect(facade.updateNotionCalls).toEqual([]);
+      expect(facade.putCalendarCalls).toEqual(["page-1"]);
+      const updated = facade.calendarTasks.get(calendar.eventHref);
+      expect(updated?.displayStatus).toBe("Overdue");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("handles both notion and caldav hashes matching (noop)", async () => {
     const facade = new FakeFacade();
     const notion = notionTask();
@@ -865,9 +909,10 @@ describe("SyncService", () => {
     const basePayload = JSON.stringify({
       title: "Task",
       status: "Todo",
-      startDate: "2026-04-10T09:00:00+00:00",
-      endDate: "2026-04-10T10:00:00+00:00",
-      reminder: "2026-04-10T08:45:00+00:00",
+      displayStatus: "Todo",
+      startDate: "2099-04-10T09:00:00+00:00",
+      endDate: "2099-04-10T10:00:00+00:00",
+      reminder: "2099-04-10T08:45:00+00:00",
       category: "Work",
       description: "Original body",
       pageUrl: "https://www.notion.so/page1",
@@ -958,9 +1003,9 @@ describe("SyncService", () => {
       "https://calendar/page-1-dup.ics", // Different href
       '"etag-dup"',
       "Task", "Todo",
-      "2026-04-10T09:00:00+00:00",
-      "2026-04-10T10:00:00+00:00",
-      "2026-04-10T08:45:00+00:00",
+      "2099-04-10T09:00:00+00:00",
+      "2099-04-10T10:00:00+00:00",
+      "2099-04-10T08:45:00+00:00",
       "Work", "Original body",
       iso(), "https://www.notion.so/page1",
     );

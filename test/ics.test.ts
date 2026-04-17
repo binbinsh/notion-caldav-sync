@@ -28,6 +28,7 @@ describe("ics helpers", () => {
     expect(parsed.description).toBe("Pack bags");
     expect(parsed.color).toBe("#FF7F00");
     expect(parsed.category).toBe("Travel");
+    expect(parsed.displayStatus).toBe("Todo");
     expect(parsed.url).toBe("https://www.notion.so/task123");
   });
 
@@ -51,6 +52,7 @@ describe("ics helpers", () => {
 
     expect(parsed.title).toBe("Demo");
     expect(parsed.status).toBe("In progress");
+    expect(parsed.displayStatus).toBe("In progress");
     expect(parsed.startDate).toBe("2024-06-01T14:00:00.000Z");
     expect(parsed.endDate).toBe("2024-06-01T15:00:00.000Z");
     expect(parsed.reminder).toBe("2024-06-01T13:30:00.000Z");
@@ -74,6 +76,7 @@ END:VCALENDAR
     const parsed = parseIcsMinimal(ics);
 
     expect(parsed.status).toBe("Todo");
+    expect(parsed.displayStatus).toBe("Overdue");
     expect(parsed.description).toBe("Body");
   });
 });
