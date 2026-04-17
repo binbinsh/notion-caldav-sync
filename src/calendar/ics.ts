@@ -36,6 +36,7 @@ export type ParsedIcs = {
   title: string | null;
   status: string | null;
   displayStatus: string | null;
+  notesFingerprint: string | null;
   startDate: string | null;
   endDate: string | null;
   lastModified: string | null;
@@ -57,6 +58,7 @@ export function buildEvent(input: {
   statusEmoji: string;
   statusName: string;
   rawStatusName?: string | null;
+  notesFingerprint?: string | null;
   startIso: string | null;
   endIso: string | null;
   reminderIso: string | null;
@@ -132,7 +134,7 @@ export function buildEvent(input: {
   const rawStatus = normalizeStatusName(input.rawStatusName || input.statusName);
   output = output.replace(
     /(UID:[^\r\n]+\r\n)/,
-    `$1X-NOTION-PAGE-ID:${input.notionId}\r\n${rawStatus ? `X-NOTION-STATUS:${rawStatus}\r\n` : ""}`,
+    `$1X-NOTION-PAGE-ID:${input.notionId}\r\n${rawStatus ? `X-NOTION-STATUS:${rawStatus}\r\n` : ""}${input.notesFingerprint ? `X-NOTION-NOTES-HASH:${input.notesFingerprint}\r\n` : ""}`,
   );
   if (input.color) {
     output = output.replace(/(SUMMARY:[^\r\n]+\r\n)/, `$1COLOR:${input.color}\r\n`);
@@ -153,6 +155,7 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   let status = summaryStatus;
   let displayStatus = summaryStatus;
   const customStatus = normalizeStatusName(normalizeText(vevent.getFirstPropertyValue("x-notion-status")));
+  const notesFingerprint = normalizeText(vevent.getFirstPropertyValue("x-notion-notes-hash"));
   let category = firstText(arrayify(event.component.getFirstPropertyValue("categories")));
   const color = normalizeText(event.component.getFirstPropertyValue("color"));
   const rawDescription = normalizeText(event.description);
@@ -230,6 +233,7 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
     title,
     status,
     displayStatus,
+    notesFingerprint,
     startDate,
     endDate,
     lastModified,
@@ -409,6 +413,7 @@ function emptyParsed(): ParsedIcs {
     title: null,
     status: null,
     displayStatus: null,
+    notesFingerprint: null,
     startDate: null,
     endDate: null,
     lastModified: null,

@@ -27,6 +27,19 @@ export function descriptionForTask(task: {
   return lines.join("\n");
 }
 
+export function notesFingerprint(value: string | null | undefined): string | null {
+  if (value == null) {
+    return null;
+  }
+  const bytes = new TextEncoder().encode(value);
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 export function statusForTask(
   task: {
     status?: string | null;

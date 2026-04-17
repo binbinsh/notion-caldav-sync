@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryLedger } from "../src/sync/ledger";
 import { CalendarTask, LedgerRecord, NotionTask, TaskSchema } from "../src/sync/models";
-import { canonicalHash, canonicalPayload, statusForTask } from "../src/sync/rendering";
+import { canonicalHash, canonicalPayload, descriptionForTask, notesFingerprint, statusForTask } from "../src/sync/rendering";
 import { SyncService, type CalendarDebugEvent, type SyncFacade } from "../src/sync/service";
 
 function iso(minutes = 0): string {
@@ -65,8 +65,14 @@ function calendarTask(input: Partial<{
   lastModified: string | null;
   etag: string | null;
   displayStatus: string | null;
+  notesFingerprint: string | null;
 }> = {}): CalendarTask {
   const pageId = input.pageId || "page-1";
+  const renderedNotes = descriptionForTask({
+    databaseName: "Tasks",
+    category: input.category === undefined ? "Work" : input.category,
+    description: input.description === undefined ? "Original body" : input.description,
+  });
   return new CalendarTask(
     pageId,
     `https://calendar/${pageId}.ics`,
@@ -81,6 +87,7 @@ function calendarTask(input: Partial<{
     input.lastModified === undefined ? iso() : input.lastModified,
     input.pageUrl === undefined ? "https://www.notion.so/page1" : input.pageUrl,
     input.displayStatus === undefined ? (input.status || "Todo") : input.displayStatus,
+    input.notesFingerprint === undefined ? notesFingerprint(renderedNotes) : input.notesFingerprint,
   );
 }
 
@@ -344,6 +351,11 @@ describe("SyncService", () => {
             pageUrl: notion.pageUrl,
           }),
           displayStatus: statusForTask(notion),
+          notesFingerprint: notesFingerprint(descriptionForTask({
+            databaseName: notion.databaseName,
+            category: notion.category,
+            description: notion.description,
+          })),
         }),
       ),
     );
@@ -445,6 +457,11 @@ describe("SyncService", () => {
         pageUrl: notion.pageUrl,
       }),
       displayStatus: statusForTask(notion),
+      notesFingerprint: notesFingerprint(descriptionForTask({
+        databaseName: notion.databaseName,
+        category: notion.category,
+        description: notion.description,
+      })),
     };
     const baseHash = await canonicalHash(basePayload);
     const ledger = new InMemoryLedger();
@@ -722,6 +739,44 @@ describe("SyncService", () => {
     }
   });
 
+  it("refreshes calendar events when only the rendered notes fingerprint changed", async () => {
+    const facade = new FakeFacade();
+    const notion = notionTask({
+      category: "Work",
+      description: "Original body",
+    });
+    const calendar = calendarTask({
+      pageId: notion.pageId,
+      title: notion.title,
+      status: notion.status || "Todo",
+      startDate: notion.startDate,
+      endDate: notion.endDate,
+      reminder: notion.reminder,
+      category: notion.category,
+      description: notion.description,
+      pageUrl: notion.pageUrl,
+      notesFingerprint: null,
+    });
+    facade.notionTasks.set("page-1", notion);
+    facade.calendarTasks.set(calendar.eventHref, calendar);
+
+    const ledger = new InMemoryLedger();
+    const service = new SyncService(facade, ledger);
+
+    await service.runFullReconcile();
+
+    expect(facade.updateNotionCalls).toEqual([]);
+    expect(facade.putCalendarCalls).toEqual(["page-1"]);
+    const updated = facade.calendarTasks.get(calendar.eventHref);
+    expect(updated?.notesFingerprint).toBe(
+      notesFingerprint(descriptionForTask({
+        databaseName: notion.databaseName,
+        category: notion.category,
+        description: notion.description,
+      })),
+    );
+  });
+
   it("handles both notion and caldav hashes matching (noop)", async () => {
     const facade = new FakeFacade();
     const notion = notionTask();
@@ -910,6 +965,11 @@ describe("SyncService", () => {
       title: "Task",
       status: "Todo",
       displayStatus: "Todo",
+      notesFingerprint: notesFingerprint(descriptionForTask({
+        databaseName: "Tasks",
+        category: "Work",
+        description: "Original body",
+      })),
       startDate: "2099-04-10T09:00:00+00:00",
       endDate: "2099-04-10T10:00:00+00:00",
       reminder: "2099-04-10T08:45:00+00:00",
@@ -1008,6 +1068,8 @@ describe("SyncService", () => {
       "2099-04-10T08:45:00+00:00",
       "Work", "Original body",
       iso(), "https://www.notion.so/page1",
+      "Todo",
+      notesFingerprint(descriptionForTask({ databaseName: "Tasks", category: "Work", description: "Original body" })),
     );
     facade.calendarTasks.set(calendar1.eventHref, calendar1);
     facade.calendarTasks.set(calendar2.eventHref, calendar2);

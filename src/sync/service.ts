@@ -1,6 +1,6 @@
 import { SyncLedger } from "./ledger";
 import { CalendarTask, LedgerRecord, NotionTask } from "./models";
-import { canonicalHash, canonicalPayload, dateOnlyTimezone, statusForTask } from "./rendering";
+import { canonicalHash, canonicalPayload, dateOnlyTimezone, descriptionForTask, notesFingerprint, statusForTask } from "./rendering";
 import { parallelMap } from "../lib/retry";
 
 export interface SyncFacade {
@@ -409,6 +409,7 @@ export class SyncService {
               record.lastCaldavModified ?? null,
               payload.pageUrl ?? null,
               payload.displayStatus ?? null,
+              payload.notesFingerprint ?? null,
             ));
             continue;
           } catch {
@@ -648,7 +649,9 @@ export class SyncService {
       // Store it as lastPushToken so the next incremental sync recognizes this
       // as our own write and skips it.
       const readbackHash = await this.readbackCalendarHash(eventHref, newEtag, settings);
-      const syncedPayload = JSON.stringify(this.notionSyncPayload(notionTask, settings));
+      const syncedPayload = JSON.stringify(
+        this.syncedLedgerPayload(this.notionSyncPayload(notionTask, settings), this.notionNotesFingerprint(notionTask)),
+      );
       await this.ledger.putRecord(
         record.with({
           eventHref,
@@ -668,6 +671,8 @@ export class SyncService {
     const calendarHash = await this.calendarHashForTask(calendarTask);
     const notionPayload = this.notionSyncPayload(notionTask, settings);
     const calendarPayload = this.calendarSyncPayload(calendarTask);
+    const notionNotesFingerprint = this.notionNotesFingerprint(notionTask);
+    const calendarNotesFingerprint = calendarTask.notesFingerprint;
     const notionMatchesLastSync = payloadMatchesLastSync(
       notionPayload,
       record.lastSyncedPayload,
@@ -690,7 +695,7 @@ export class SyncService {
         && record.lastPushToken === notionHash
         && calendarMatchesLastSync)
     ) {
-      const syncedPayload = JSON.stringify(notionPayload);
+      const syncedPayload = JSON.stringify(this.syncedLedgerPayload(notionPayload, notionNotesFingerprint));
       await this.ledger.putRecord(
         record.with({
           eventHref: calendarTask.eventHref,
@@ -706,7 +711,38 @@ export class SyncService {
     }
 
     if (notionHash === calendarHash) {
-      const syncedPayload = JSON.stringify(notionPayload);
+      if (notionNotesFingerprint !== calendarNotesFingerprint) {
+        this.log(`[sync] refreshing calendar notes for ${notionTask.pageId} via ${source}`, {
+          op: "refresh_calendar_notes",
+          pageId: notionTask.pageId,
+          source,
+        });
+        const { eventHref: notesHref, etag: notesEtag } = await this.facade.putCalendarTask(
+          String(settings.calendar_href),
+          normalizeOptionalString(settings.calendar_color) || "",
+          notionTask,
+          { settings },
+        );
+        const notesReadbackHash = await this.readbackCalendarHash(notesHref, notesEtag, settings);
+        const syncedPayload = JSON.stringify(this.syncedLedgerPayload(notionPayload, notionNotesFingerprint));
+        await this.ledger.putRecord(
+          record.with({
+            eventHref: notesHref,
+            eventEtag: notesEtag,
+            lastNotionEditedTime: notionTask.lastEditedTime,
+            lastNotionHash: notionHash,
+            lastCaldavHash: calendarHash,
+            lastCaldavModified: calendarTask.lastModified,
+            lastPushOrigin: "notion",
+            lastPushToken: notesReadbackHash || notionHash,
+            deletedOnCaldavAt: null,
+            deletedInNotionAt: null,
+            lastSyncedPayload: syncedPayload,
+          }),
+        );
+        return "updated_calendar";
+      }
+      const syncedPayload = JSON.stringify(this.syncedLedgerPayload(notionPayload, notionNotesFingerprint));
       await this.ledger.putRecord(
         record.with({
           eventHref: calendarTask.eventHref,
@@ -725,7 +761,25 @@ export class SyncService {
 
     const winner = this.chooseWinner(notionTask, calendarTask);
     const merged = mergePayloads(notionPayload, calendarPayload, record.lastSyncedPayload, winner);
-    const mergedPayloadJson = JSON.stringify(merged);
+    const mergedNotesFingerprint = this.notionNotesFingerprint(
+      new NotionTask(
+        notionTask.pageId,
+        merged.pageUrl,
+        notionTask.databaseId,
+        notionTask.databaseName,
+        merged.title || "",
+        merged.status,
+        merged.startDate,
+        merged.endDate,
+        merged.reminder,
+        merged.category,
+        merged.description,
+        notionTask.archived,
+        notionTask.lastEditedTime,
+        notionTask.schema,
+      ),
+    );
+    const mergedPayloadJson = JSON.stringify(this.syncedLedgerPayload(merged, mergedNotesFingerprint));
 
     // Determine what each side needs
     const notionNeedsUpdate = !payloadsEqual(notionPayload, merged);
@@ -746,6 +800,8 @@ export class SyncService {
         merged.description,
         calendarTask.lastModified,
         merged.pageUrl,
+        calendarTask.displayStatus,
+        calendarTask.notesFingerprint,
       );
       const updated = await this.facade.updateNotionFromCalendar(notionTask, mergedCalendarTask);
       const updatedHash = await this.notionHashForTask(updated, settings);
@@ -1057,6 +1113,8 @@ export class SyncService {
             event.description,
             event.lastModified,
             event.pageUrl,
+            null,
+            null,
           ),
         );
       }
@@ -1347,6 +1405,20 @@ export class SyncService {
     return canonicalHash(this.calendarSyncPayload(task));
   }
 
+  private notionNotesFingerprint(task: NotionTask): string | null {
+    return notesFingerprint(descriptionForTask(task));
+  }
+
+  private syncedLedgerPayload(
+    payload: CanonicalPayload,
+    currentNotesFingerprint: string | null,
+  ): Record<string, string | null> {
+    return {
+      ...payload,
+      notesFingerprint: currentNotesFingerprint,
+    };
+  }
+
   private notionSyncPayload(task: NotionTask, settings?: Record<string, unknown>): CanonicalPayload {
     return {
       ...canonicalPayload({
@@ -1449,6 +1521,7 @@ function serializeCalendarTask(task: CalendarTask): Record<string, unknown> {
     lastModified: task.lastModified,
     pageUrl: task.pageUrl,
     displayStatus: task.displayStatus,
+    notesFingerprint: task.notesFingerprint,
   };
 }
 

@@ -17,7 +17,7 @@ import {
   updatePageProperties,
 } from "../notion/client";
 import { CalendarTask, NotionTask, TaskSchema } from "./models";
-import { descriptionForTask, statusForTask } from "./rendering";
+import { descriptionForTask, notesFingerprint, statusForTask } from "./rendering";
 import type { CalendarDebugEvent } from "./service";
 import { RateLimiter, parallelMap, withRetry } from "../lib/retry";
 
@@ -305,6 +305,7 @@ export class LiveSyncFacade {
       parsed.lastModified,
       parsed.url,
       parsed.displayStatus,
+      parsed.notesFingerprint,
     );
   }
 
@@ -319,16 +320,18 @@ export class LiveSyncFacade {
       dateOnlyTimezoneName: String(options.settings.date_only_timezone || options.settings.calendar_timezone || "UTC"),
     });
     const statusEmoji = this.resolveStatusEmoji(normalizedStatus);
+    const renderedNotes = descriptionForTask(notionTask);
     const ics = buildEvent({
       notionId: notionTask.pageId,
       title: notionTask.title,
       statusEmoji,
       statusName: normalizedStatus,
       rawStatusName: notionTask.status,
+      notesFingerprint: notesFingerprint(renderedNotes),
       startIso: notionTask.startDate,
       endIso: notionTask.endDate,
       reminderIso: notionTask.reminder,
-      description: descriptionForTask(notionTask),
+      description: renderedNotes,
       category: notionTask.category,
       color: calendarColor,
       url: notionTask.pageUrl || `https://www.notion.so/${notionTask.pageId.replaceAll("-", "")}`,

@@ -1,25 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { statusToEmoji } from "../src/sync/constants";
 import { buildEvent, parseIcsMinimal } from "../src/calendar/ics";
+import { notesFingerprint } from "../src/sync/rendering";
 
 describe("ics helpers", () => {
   it("builds all-day events with exclusive dtend and preserves description", () => {
     const summaryEmoji = statusToEmoji("Todo", "emoji");
+    const renderedNotes = "Pack bags";
     const ics = buildEvent({
       notionId: "task-123",
       title: "Plan trip",
       statusEmoji: summaryEmoji,
       statusName: "Todo",
+      notesFingerprint: notesFingerprint(renderedNotes),
       startIso: "2024-06-01",
       endIso: null,
       reminderIso: null,
-      description: "Pack bags",
+      description: renderedNotes,
       category: "Travel",
       color: "#FF7F00",
       url: "https://www.notion.so/task123",
     });
 
     expect(ics).toContain("X-NOTION-STATUS:Todo");
+    expect(ics).toContain(`X-NOTION-NOTES-HASH:${notesFingerprint(renderedNotes)}`);
 
     const parsed = parseIcsMinimal(ics);
 
@@ -31,6 +35,7 @@ describe("ics helpers", () => {
     expect(parsed.color).toBe("#FF7F00");
     expect(parsed.category).toBe("Travel");
     expect(parsed.displayStatus).toBe("Todo");
+    expect(parsed.notesFingerprint).toBe(notesFingerprint(renderedNotes));
     expect(parsed.url).toBe("https://www.notion.so/task123");
   });
 
