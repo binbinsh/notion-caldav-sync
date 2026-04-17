@@ -51,7 +51,7 @@ function useToast() {
 function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: number) => void }) {
   if (toasts.length === 0) return null;
   return (
-    <div class="fixed top-4 right-4 z-50 grid gap-2 max-w-sm" role="status" aria-live="polite">
+    <div class="fixed bottom-4 right-4 z-50 grid gap-2 max-w-sm" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -127,8 +127,10 @@ function ConfirmDialog({
 // ---------------------------------------------------------------------------
 const INPUT_SHELL_CLASS =
   "flex h-10 w-full items-center overflow-hidden rounded-lg border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10";
+const INPUT_CLASS =
+  "w-full h-10 m-0 appearance-none rounded-lg border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_CONTROL_CLASS =
-  "h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 text-sm font-[inherit] text-ink placeholder:text-subtle focus:outline-none disabled:cursor-default disabled:text-muted disabled:opacity-100";
+  "m-0 h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 py-0 leading-[38px] text-sm font-[inherit] text-ink placeholder:text-subtle focus:outline-none focus:ring-0 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_SUFFIX_CLASS =
   "flex h-full shrink-0 items-center gap-2 border-l border-line px-3 text-[11px] text-subtle whitespace-nowrap";
 
@@ -927,7 +929,11 @@ function AppleSettingsCard({
             id="apple_id"
             label={t("appleIdLabel")}
             help={t("appleIdHelp")}
-            type="email"
+            type="text"
+            inputMode="email"
+            autoComplete="email"
+            autoCapitalize="none"
+            spellcheck={false}
             required={!credentials?.hasAppleId}
             placeholder="you@example.com"
             maskedValue={credentials?.appleIdMasked || ""}
@@ -1361,38 +1367,51 @@ function Field({
   return (
     <div class="grid gap-1.5">
       <label for={id} class="text-xs font-medium text-muted">{label}</label>
-      <div class={INPUT_SHELL_CLASS}>
-        <input
-          id={id} name={id} type={type} required={required} placeholder={placeholder}
-          value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-          disabled={disabled}
-          class={INPUT_CONTROL_CLASS}
-        />
-      </div>
+      <input
+        id={id} name={id} type={type} required={required} placeholder={placeholder}
+        value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+        disabled={disabled}
+        class={INPUT_CLASS}
+      />
       <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
 }
 
 function SecretField({
-  id, label, help, type = "text", required, placeholder, maskedValue, editable, value, onInput,
+  id, label, help, type = "text", inputMode, autoComplete, autoCapitalize, spellcheck, required, placeholder, maskedValue, editable, value, onInput,
 }: {
-  id: string; label: string; help: ComponentChildren; type?: string; required?: boolean; placeholder?: string; maskedValue?: string; editable: boolean; value: string; onInput: (v: string) => void;
+  id: string;
+  label: string;
+  help: ComponentChildren;
+  type?: string;
+  inputMode?: "text" | "email" | "numeric" | "decimal" | "search" | "tel" | "url" | "none";
+  autoComplete?: string;
+  autoCapitalize?: "none" | "off" | "on" | "sentences" | "words" | "characters";
+  spellcheck?: boolean;
+  required?: boolean;
+  placeholder?: string;
+  maskedValue?: string;
+  editable: boolean;
+  value: string;
+  onInput: (v: string) => void;
 }) {
   return (
     <div class="grid gap-1.5">
       <label for={id} class="text-xs font-medium text-muted">{label}</label>
-      <div class={INPUT_SHELL_CLASS}>
-        <input
-          id={id} name={id} type={editable ? type : "text"}
-          required={editable && required}
-          placeholder={editable ? placeholder : undefined}
-          value={editable ? value : maskedValue}
-          onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-          disabled={!editable}
-          class={INPUT_CONTROL_CLASS}
-        />
-      </div>
+      <input
+        id={id} name={id} type={editable ? type : "text"}
+        inputMode={editable ? inputMode : undefined}
+        autoComplete={autoComplete}
+        autoCapitalize={autoCapitalize}
+        spellcheck={spellcheck}
+        required={editable && required}
+        placeholder={editable ? placeholder : undefined}
+        value={editable ? value : maskedValue}
+        onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+        disabled={!editable}
+        class={INPUT_CLASS}
+      />
       <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
