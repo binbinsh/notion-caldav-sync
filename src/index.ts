@@ -30,6 +30,12 @@ import {
 export { TenantSyncObject } from "./durable/tenant-sync";
 import { decryptSecret, encryptSecret, requireMasterKey } from "./lib/secrets";
 import {
+  createNotionClient,
+  getDatabaseProperties,
+  getDatabaseTitle,
+  listDatabases,
+} from "./notion/client";
+import {
   GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY,
   buildWebhookVerificationTokenLookupKeys,
   buildWebhookVerificationTokenStorageKeys,
@@ -38,6 +44,7 @@ import {
   extractRoutingIds,
   needsFullSync,
 } from "./notion/webhook";
+import { isTaskProperties } from "./sync/constants";
 
 const NOTION_VERSION = "2025-09-03";
 
@@ -197,6 +204,7 @@ app.get("/api/me", async (c) => {
       user: null,
       workspaceId: null,
       notionConnected: false,
+      notionBinding: null,
       appleCredentials: null,
       config: null,
     });
@@ -213,51 +221,79 @@ app.get("/api/me", async (c) => {
   const notionToken = await getNotionOAuthToken(clerk, userId);
   const notionConnected = Boolean(notionToken);
 
-  // If we have a Notion token but no stored provider_connection metadata,
-  // fetch metadata from Notion API and persist it for webhook routing.
-  if (notionToken && !providerConnection) {
-    const notionVersion = c.env.NOTION_API_VERSION || NOTION_VERSION;
-    const metadata = await fetchNotionMetadata(notionToken, notionVersion);
-    if (metadata.botId) {
-      await upsertProviderConnection(c.env.AUTH_DB, {
-        tenantId,
-        organizationId: null,
-        userId,
-        providerId: "notion",
-        providerAccountId: metadata.botId,
-        scopes: [],
-        metadata,
-      });
-      await upsertTenantConfig(c.env.AUTH_DB, {
-        tenantId,
-        organizationId: null,
-        userId,
-        calendarName: null,
-        calendarColor: null,
-        calendarTimezone: null,
-        dateOnlyTimezone: null,
-        pollIntervalMinutes: null,
-        fullSyncIntervalMinutes: null,
-        notionWorkspaceId: metadata.workspaceId,
-        notionWorkspaceName: metadata.workspaceName,
-        notionBotId: metadata.botId,
-      });
-    }
-  }
-
-  // Re-fetch config after potential upsert
-  const latestConfig = config ?? (await getTenantConfigByTenantId(c.env.AUTH_DB, tenantId));
-
   // Fetch user info from Clerk
   let userName = "";
   let userEmail = "";
+  let clerkNotionProviderUserId = "";
   try {
     const user = await clerk.users.getUser(userId);
     userName = [user.firstName, user.lastName].filter(Boolean).join(" ");
     userEmail = user.emailAddresses?.[0]?.emailAddress || "";
+    clerkNotionProviderUserId = normalizeText(
+      user.externalAccounts.find((account) => account.provider === "oauth_notion")?.providerUserId,
+    );
   } catch {
     // best-effort
   }
+
+  // Sync local Notion connection metadata with the active Clerk-linked account.
+  if (notionToken) {
+    const clerkBotChanged = clerkNotionProviderUserId && (
+      providerConnection?.bot_id !== clerkNotionProviderUserId
+      || config?.notion_bot_id !== clerkNotionProviderUserId
+    );
+    const metadataMissing = !providerConnection
+      || !providerConnection.workspace_id
+      || !providerConnection.workspace_name
+      || !config
+      || !config.notion_workspace_id
+      || !config.notion_workspace_name;
+    if (clerkBotChanged || metadataMissing) {
+      const notionVersion = c.env.NOTION_API_VERSION || NOTION_VERSION;
+      const metadata = await fetchNotionMetadata(notionToken, notionVersion);
+      if (metadata.botId) {
+        const providerOutOfSync = !providerConnection
+          || providerConnection.bot_id !== metadata.botId
+          || providerConnection.workspace_id !== metadata.workspaceId
+          || providerConnection.workspace_name !== metadata.workspaceName;
+        const configOutOfSync = !config
+          || config.notion_bot_id !== metadata.botId
+          || config.notion_workspace_id !== metadata.workspaceId
+          || config.notion_workspace_name !== metadata.workspaceName;
+        if (providerOutOfSync) {
+          await upsertProviderConnection(c.env.AUTH_DB, {
+            tenantId,
+            organizationId: null,
+            userId,
+            providerId: "notion",
+            providerAccountId: metadata.botId,
+            scopes: [],
+            metadata,
+          });
+        }
+        if (configOutOfSync) {
+          await upsertTenantConfig(c.env.AUTH_DB, {
+            tenantId,
+            organizationId: null,
+            userId,
+            calendarName: null,
+            calendarColor: null,
+            calendarTimezone: null,
+            dateOnlyTimezone: null,
+            pollIntervalMinutes: null,
+            fullSyncIntervalMinutes: null,
+            notionWorkspaceId: metadata.workspaceId,
+            notionWorkspaceName: metadata.workspaceName,
+            notionBotId: metadata.botId,
+            selectedNotionSourceIdsJson: null,
+          });
+        }
+      }
+    }
+  }
+
+  // Re-fetch config after potential upsert so Clerk-linked account changes are reflected immediately.
+  const latestConfig = await getTenantConfigByTenantId(c.env.AUTH_DB, tenantId);
 
   return c.json({
     authenticated: true,
@@ -267,6 +303,9 @@ app.get("/api/me", async (c) => {
     },
     workspaceId: tenantId,
     notionConnected,
+    notionBinding: {
+      selectedSourceIds: parseSelectedNotionSourceIds(latestConfig?.selected_notion_source_ids_json ?? null),
+    },
     appleCredentials,
     config: latestConfig
       ? {
@@ -280,6 +319,89 @@ app.get("/api/me", async (c) => {
           last_full_sync_at: latestConfig.last_full_sync_at ?? null,
         }
       : null,
+  });
+});
+
+app.get("/api/notion/sources", async (c) => {
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson: true,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+
+  const clerk = c.get("clerk");
+  const notionToken = await getNotionOAuthToken(clerk, authResult);
+  if (!notionToken) {
+    return c.json({ ok: false, error: "Please connect your Notion account first." }, 400);
+  }
+
+  const notionClient = createNotionClient(notionToken, c.env.NOTION_API_VERSION || NOTION_VERSION);
+  const sources = await loadCompatibleNotionSources(notionClient);
+  const config = await getTenantConfigByTenantId(c.env.AUTH_DB, authResult);
+  const selected = new Set(parseSelectedNotionSourceIds(config?.selected_notion_source_ids_json ?? null) || []);
+
+  return c.json({
+    ok: true,
+    sources: sources.map((source) => ({
+      ...source,
+      selected: selected.has(source.id),
+    })),
+  });
+});
+
+app.post("/api/notion/sources", async (c) => {
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson: true,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+
+  const body = (await c.req.raw.json().catch(() => ({}))) as Record<string, unknown>;
+  const requestedIds = normalizeStringArray(body.selectedSourceIds);
+  if (requestedIds.length === 0) {
+    return c.json({ ok: false, error: "Please choose at least one Notion page or database to sync." }, 400);
+  }
+
+  const clerk = c.get("clerk");
+  const notionToken = await getNotionOAuthToken(clerk, authResult);
+  if (!notionToken) {
+    return c.json({ ok: false, error: "Please connect your Notion account first." }, 400);
+  }
+
+  const notionClient = createNotionClient(notionToken, c.env.NOTION_API_VERSION || NOTION_VERSION);
+  const sources = await loadCompatibleNotionSources(notionClient);
+  const allowedIds = new Set(sources.map((source) => source.id));
+  const selectedSourceIds = requestedIds.filter((id) => allowedIds.has(id));
+  if (selectedSourceIds.length === 0) {
+    return c.json({ ok: false, error: "None of the selected Notion pages are available to this account." }, 400);
+  }
+
+  await upsertTenantConfig(c.env.AUTH_DB, {
+    tenantId: authResult,
+    organizationId: null,
+    userId: authResult,
+    calendarName: null,
+    calendarColor: null,
+    calendarTimezone: null,
+    dateOnlyTimezone: null,
+    pollIntervalMinutes: null,
+    fullSyncIntervalMinutes: null,
+    notionWorkspaceId: null,
+    notionWorkspaceName: null,
+    notionBotId: null,
+    selectedNotionSourceIdsJson: JSON.stringify(selectedSourceIds),
+  });
+
+  return c.json({
+    ok: true,
+    notice: `Saved ${selectedSourceIds.length} Notion page${selectedSourceIds.length > 1 ? "s" : ""}.`,
+    selectedSourceIds,
   });
 });
 
@@ -410,6 +532,7 @@ app.post("/apple", async (c) => {
     notionWorkspaceId: null,
     notionWorkspaceName: null,
     notionBotId: null,
+    selectedNotionSourceIdsJson: null,
   });
 
   if (wantsJson) {
@@ -1002,6 +1125,49 @@ function timingSafeEqual(left: string, right: string): boolean {
     diff |= leftBytes[index]! ^ rightBytes[index]!;
   }
   return diff === 0;
+}
+
+type NotionBindableSource = {
+  id: string;
+  title: string;
+};
+
+async function loadCompatibleNotionSources(
+  notionClient: ReturnType<typeof createNotionClient>,
+): Promise<NotionBindableSource[]> {
+  const databases = await listDatabases(notionClient);
+  const results = await Promise.all(
+    databases.map(async (database) => {
+      const properties = await getDatabaseProperties(notionClient, database.id);
+      if (!isTaskProperties(properties)) {
+        return null;
+      }
+      return {
+        id: database.id,
+        title: await getDatabaseTitle(notionClient, database.id),
+      } satisfies NotionBindableSource;
+    }),
+  );
+  return results
+    .filter((value): value is NotionBindableSource => Boolean(value))
+    .sort((left, right) => left.title.localeCompare(right.title));
+}
+
+function parseSelectedNotionSourceIds(value: string | null | undefined): string[] | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = safeJsonParse(value);
+  return Array.isArray(parsed)
+    ? parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : null;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.map((item) => normalizeText(item)).filter(Boolean))];
 }
 
 function safeJsonParse(text: string): unknown {

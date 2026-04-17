@@ -256,6 +256,7 @@ export class TenantSyncObject {
         appleAppPassword,
         statusEmojiStyle: "emoji",
         tenantId,
+        selectedNotionSourceIds: parseSelectedNotionSourceIds(config.selected_notion_source_ids_json),
         calendarSettings: {
           calendar_name: config.calendar_name,
           calendar_color: config.calendar_color,
@@ -322,5 +323,19 @@ export class TenantSyncObject {
     }
     const queryValue = url.searchParams.get("tenantId");
     return queryValue?.trim() || null;
+  }
+}
+
+function parseSelectedNotionSourceIds(value: string | null | undefined): string[] | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : null;
+  } catch {
+    return null;
   }
 }

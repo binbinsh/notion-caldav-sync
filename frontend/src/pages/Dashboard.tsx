@@ -4,14 +4,17 @@ import { useI18n, type Translations } from "../lib/i18n";
 import { Topbar } from "../components/Topbar";
 import {
   CLERK_ACCOUNTS_URL,
+  fetchNotionBindingSources,
   fetchDebugSnapshot,
   fetchMe,
   fetchRecentWebhooks,
   isAuthRedirectError,
+  saveNotionBindingSources,
   redirectToSignIn,
   saveAppleSettings,
   triggerSync,
   type ApiMeResponse,
+  type NotionBindingSource,
   type SyncDebugAction,
   type SyncDebugEntry,
   type SyncDebugRelation,
@@ -350,6 +353,21 @@ export function DashboardPage() {
     }
   };
 
+  const handleSaveNotionBinding = async (selectedSourceIds: string[]) => {
+    try {
+      const result = await saveNotionBindingSources(selectedSourceIds);
+      if (result.ok) {
+        toast.show("success", result.notice || t("bindingSaved"));
+        await refreshData();
+      } else {
+        toast.show("error", result.error || t("bindingSaveFailed"));
+      }
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
+      toast.show("error", t("bindingSaveFailed"));
+    }
+  };
+
   // Loading screen
   if (loading) {
     return (
@@ -377,7 +395,10 @@ export function DashboardPage() {
   const cfg = data.config;
   const userName = data.user?.name || "";
   const appleConfigured = Boolean(data.appleCredentials?.hasAppleId && data.appleCredentials?.hasAppPassword);
-  const needsSetup = !data.notionConnected || !appleConfigured;
+  const hasCompletedFirstSync = Boolean(cfg?.last_full_sync_at);
+  const hasNotionBindingSelection = Boolean(data.notionBinding?.selectedSourceIds?.length);
+  const notionSelectionRequired = Boolean(data.notionConnected && !hasNotionBindingSelection && !hasCompletedFirstSync);
+  const needsSetup = !data.notionConnected || notionSelectionRequired || !appleConfigured || !hasCompletedFirstSync;
 
   return (
     <>
@@ -440,7 +461,9 @@ export function DashboardPage() {
           <SetupWizard
             data={data}
             appleConfigured={appleConfigured}
+            notionSelectionRequired={notionSelectionRequired}
             onSaveSettings={handleSaveSettings}
+            onSaveNotionBinding={handleSaveNotionBinding}
             onSync={() => handleSync("full")}
             syncingFull={syncingFull}
           />
@@ -477,6 +500,15 @@ export function DashboardPage() {
                   {data.notionConnected ? t("reconnectNotion") : t("connectNotion")}
                 </Btn>
               </div>
+              {data.notionConnected && (
+                <div class="mt-5 pt-5 border-t border-line">
+                  <NotionBindingCard
+                    selectedSourceIds={data.notionBinding?.selectedSourceIds || null}
+                    onSave={handleSaveNotionBinding}
+                    compact
+                  />
+                </div>
+              )}
             </Card>
 
             {/* Advanced toggle */}
@@ -521,18 +553,22 @@ export function DashboardPage() {
 function SetupWizard({
   data,
   appleConfigured,
+  notionSelectionRequired,
   onSaveSettings,
+  onSaveNotionBinding,
   onSync,
   syncingFull,
 }: {
   data: ApiMeResponse;
   appleConfigured: boolean;
+  notionSelectionRequired: boolean;
   onSaveSettings: (body: Record<string, unknown>) => Promise<void>;
+  onSaveNotionBinding: (selectedSourceIds: string[]) => Promise<void>;
   onSync: () => void;
   syncingFull: boolean;
 }) {
   const { t } = useI18n();
-  const currentStep = !data.notionConnected ? 1 : !appleConfigured ? 2 : 3;
+  const currentStep = !data.notionConnected ? 1 : notionSelectionRequired ? 2 : !appleConfigured ? 3 : 4;
 
   return (
     <Card>
@@ -540,14 +576,16 @@ function SetupWizard({
 
       {/* Step indicator */}
       <div class="flex items-center gap-0 mb-8">
-        {[1, 2, 3].map((step) => {
+        {[1, 2, 3, 4].map((step) => {
           const done = currentStep > step;
           const active = currentStep === step;
           const label = step === 1
             ? (done ? t("setupStep1Done") : t("setupStep1"))
             : step === 2
               ? (done ? t("setupStep2Done") : t("setupStep2"))
-              : t("setupStep3");
+              : step === 3
+                ? (done ? t("setupStep3Done") : t("setupStep3"))
+                : t("setupStep4");
           return (
             <div key={step} class="flex-1 flex items-center">
               <div class="flex flex-col items-center gap-1.5 flex-none">
@@ -573,7 +611,7 @@ function SetupWizard({
       {/* Step content */}
       {currentStep === 1 && (
         <div class="grid gap-4 text-center py-2">
-          <p class="text-sm text-muted m-0">{t("signInSub")}</p>
+          <p class="text-sm text-muted m-0">{t("setupStep1Desc")}</p>
           <Btn
             variant="primary"
             size="lg"
@@ -588,6 +626,18 @@ function SetupWizard({
       {currentStep === 2 && (
         <div class="grid gap-4">
           <p class="text-sm text-muted m-0">{t("setupStep2Desc")}</p>
+          <NotionBindingCard
+            selectedSourceIds={data.notionBinding?.selectedSourceIds || null}
+            onSave={onSaveNotionBinding}
+            forceEditing
+            compact
+          />
+        </div>
+      )}
+
+      {currentStep === 3 && (
+        <div class="grid gap-4">
+          <p class="text-sm text-muted m-0">{t("setupStep3Desc")}</p>
           <AppleSettingsCard
             config={data.config}
             credentials={data.appleCredentials}
@@ -598,10 +648,10 @@ function SetupWizard({
         </div>
       )}
 
-      {currentStep === 3 && (
+      {currentStep === 4 && (
         <div class="grid gap-4 text-center py-6">
           <div class="text-4xl">&#127881;</div>
-          <p class="text-sm text-muted m-0">{t("setupStep3Desc")}</p>
+          <p class="text-sm text-muted m-0">{t("setupStep4Desc")}</p>
           <Btn
             variant="primary"
             size="lg"
@@ -615,6 +665,139 @@ function SetupWizard({
         </div>
       )}
     </Card>
+  );
+}
+
+function NotionBindingCard({
+  selectedSourceIds,
+  onSave,
+  forceEditing,
+  compact,
+}: {
+  selectedSourceIds: string[] | null;
+  onSave: (selectedSourceIds: string[]) => Promise<void>;
+  forceEditing?: boolean;
+  compact?: boolean;
+}) {
+  const { t } = useI18n();
+  const [editing, setEditing] = useState(forceEditing || !selectedSourceIds?.length);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [sources, setSources] = useState<NotionBindingSource[]>([]);
+  const [selected, setSelected] = useState<string[]>(selectedSourceIds || []);
+
+  const loadSources = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const nextSources = await fetchNotionBindingSources();
+      setSources(nextSources);
+      setSelected((current) => current.length > 0 ? current : nextSources.filter((source) => source.selected).map((source) => source.id));
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
+      setError(t("bindingLoadError"));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    setSelected(selectedSourceIds || []);
+  }, [selectedSourceIds]);
+
+  useEffect(() => {
+    if ((editing || !selectedSourceIds?.length) && sources.length === 0 && !loading && !error) {
+      void loadSources();
+    }
+  }, [editing, selectedSourceIds, sources.length, loading, error, loadSources]);
+
+  const toggleSource = (sourceId: string) => {
+    setSelected((current) => current.includes(sourceId)
+      ? current.filter((id) => id !== sourceId)
+      : [...current, sourceId]);
+  };
+
+  const handleSubmit = async (e: Event) => {
+    e.preventDefault();
+    if (selected.length === 0) {
+      setError(t("bindingSelectPrompt"));
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(selected);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const Wrapper = compact ? "div" : Card;
+  const selectedCount = selectedSourceIds?.length || 0;
+
+  return (
+    <Wrapper class="">
+      {!forceEditing && (
+        <div class="flex items-center justify-between mb-4 gap-3">
+          <div>
+            <h3 class="text-sm font-semibold m-0">{t("bindingSection")}</h3>
+            <p class="text-xs text-muted m-0 mt-0.5">
+              {selectedCount > 0
+                ? t("bindingSelectedCount").replace("{n}", String(selectedCount))
+                : t("bindingLegacyAll")}
+            </p>
+          </div>
+          {!editing && (
+            <Btn variant="ghost" size="sm" onClick={() => setEditing(true)}>
+              {t("editBtn")}
+            </Btn>
+          )}
+        </div>
+      )}
+
+      {(forceEditing || editing) ? (
+        <form onSubmit={handleSubmit} class="grid gap-4">
+          <p class="text-sm text-muted m-0">{t("bindingSectionHelp")}</p>
+          {error && <p class="text-xs text-red m-0">{error}</p>}
+          {loading ? (
+            <div class="flex items-center gap-2 text-xs text-muted">
+              <Spinner small />
+              {t("loading")}
+            </div>
+          ) : sources.length === 0 ? (
+            <p class="text-xs text-muted m-0">{t("bindingEmpty")}</p>
+          ) : (
+            <div class="grid gap-2 max-h-72 overflow-auto rounded-xl border border-line bg-bg p-3">
+              {sources.map((source) => (
+                <label key={source.id} class="flex items-start gap-3 text-sm text-ink cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(source.id)}
+                    onChange={() => toggleSource(source.id)}
+                    class="mt-0.5"
+                  />
+                  <span class="leading-relaxed">{source.title}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <Btn variant="primary" size="lg" type="submit" disabled={saving || loading} loading={saving} class="w-full">
+            {saving ? t("saving") : t("bindingSaveBtn")}
+          </Btn>
+        </form>
+      ) : (
+        <div class="grid gap-2">
+          <p class="text-xs text-muted m-0">{t("bindingSectionHelp")}</p>
+          <p class="text-sm text-ink m-0">
+            {selectedCount > 0
+              ? t("bindingSelectedCount").replace("{n}", String(selectedCount))
+              : t("bindingLegacyAll")}
+          </p>
+        </div>
+      )}
+    </Wrapper>
   );
 }
 

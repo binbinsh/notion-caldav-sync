@@ -28,6 +28,7 @@ export type LiveBindings = {
   appleAppPassword: string;
   statusEmojiStyle: string;
   tenantId: string;
+  selectedNotionSourceIds?: string[] | null;
   calendarSettings?: Record<string, unknown>;
 };
 
@@ -39,10 +40,14 @@ export class LiveSyncFacade {
   private readonly notionRateLimiter = new RateLimiter(3, 3); // 3 req/s for Notion API
   private readonly caldavRateLimiter = new RateLimiter(10, 10); // 10 req/s for CalDAV
   private ensureCalendarCache: Record<string, unknown> | null = null;
+  private readonly selectedNotionSourceIds: Set<string> | null;
 
   constructor(private readonly bindings: LiveBindings) {
     this.notionClient = createNotionClient(bindings.notionToken, bindings.notionVersion);
     this.caldavSession = new CalDavSession(bindings.appleId, bindings.appleAppPassword);
+    this.selectedNotionSourceIds = Array.isArray(bindings.selectedNotionSourceIds) && bindings.selectedNotionSourceIds.length > 0
+      ? new Set(bindings.selectedNotionSourceIds)
+      : null;
   }
 
   private async notionCall<T>(fn: () => Promise<T>): Promise<T> {
@@ -85,9 +90,13 @@ export class LiveSyncFacade {
 
   async listNotionTasks(): Promise<NotionTask[]> {
     const databases = await this.notionCall(() => listDatabases(this.notionClient));
+    const selectedSourceIds = this.selectedNotionSourceIds;
+    const targetDatabases = selectedSourceIds
+      ? databases.filter((database) => selectedSourceIds.has(database.id))
+      : databases;
     // Phase 2: Parallel database queries — filter, fetch props/pages concurrently
     const dbResults = await parallelMap(
-      databases,
+      targetDatabases,
       async (db) => {
         const props = await this.getCachedDatabaseProperties(db.id);
         if (!isTaskProperties(props)) {
@@ -115,6 +124,9 @@ export class LiveSyncFacade {
     const databaseId =
       normalizeText(parent.data_source_id) || normalizeText(parent.database_id);
     if (!databaseId) {
+      return null;
+    }
+    if (this.selectedNotionSourceIds && !this.selectedNotionSourceIds.has(databaseId)) {
       return null;
     }
     const props = await this.getCachedDatabaseProperties(databaseId);

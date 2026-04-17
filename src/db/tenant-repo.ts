@@ -11,6 +11,7 @@ export type TenantConfigRow = {
   notion_workspace_id: string | null;
   notion_workspace_name: string | null;
   notion_bot_id: string | null;
+  selected_notion_source_ids_json: string | null;
   created_at: string;
   updated_at: string;
   last_full_sync_at: string | null;
@@ -102,6 +103,7 @@ export async function upsertTenantConfig(
     notionWorkspaceId: string | null;
     notionWorkspaceName: string | null;
     notionBotId: string | null;
+    selectedNotionSourceIdsJson: string | null;
   },
 ): Promise<void> {
   const existing = await getTenantConfigByTenantId(db, input.tenantId);
@@ -123,6 +125,7 @@ export async function upsertTenantConfig(
             notion_workspace_id = COALESCE(?, notion_workspace_id),
             notion_workspace_name = COALESCE(?, notion_workspace_name),
             notion_bot_id = COALESCE(?, notion_bot_id),
+            selected_notion_source_ids_json = COALESCE(?, selected_notion_source_ids_json),
             updated_at = ?
           WHERE tenant_id = ?
         `,
@@ -139,6 +142,7 @@ export async function upsertTenantConfig(
         input.notionWorkspaceId,
         input.notionWorkspaceName,
         input.notionBotId,
+        input.selectedNotionSourceIdsJson,
         now,
         input.tenantId,
       )
@@ -162,10 +166,11 @@ export async function upsertTenantConfig(
           notion_workspace_id,
           notion_workspace_name,
           notion_bot_id,
+          selected_notion_source_ids_json,
           created_at,
           updated_at,
           last_full_sync_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
       `,
     )
     .bind(
@@ -181,6 +186,7 @@ export async function upsertTenantConfig(
       input.notionWorkspaceId,
       input.notionWorkspaceName,
       input.notionBotId,
+      input.selectedNotionSourceIdsJson,
       now,
       now,
     )

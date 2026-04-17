@@ -11,6 +11,9 @@ export type ApiMeResponse = {
   } | null;
   workspaceId: string | null;
   notionConnected: boolean;
+  notionBinding: {
+    selectedSourceIds: string[] | null;
+  } | null;
   appleCredentials: {
     hasAppleId: boolean;
     hasAppPassword: boolean;
@@ -116,6 +119,12 @@ export type ApiJsonResult = {
   notice?: string;
 };
 
+export type NotionBindingSource = {
+  id: string;
+  title: string;
+  selected: boolean;
+};
+
 const BASE = getAppBasePath();
 
 type JsonFetchOptions = Omit<RequestInit, "body"> & {
@@ -180,6 +189,30 @@ export async function saveAppleSettings(body: Record<string, unknown>): Promise<
       Accept: "application/json",
     },
     body: JSON.stringify(body),
+  });
+  return data ?? { ok: false, error: `HTTP ${response.status}` };
+}
+
+export async function fetchNotionBindingSources(): Promise<NotionBindingSource[]> {
+  const { response, data } = await fetchJson<{ ok?: boolean; sources?: NotionBindingSource[] }>(
+    "/api/notion/sources",
+    { redirectOn401To: "/dashboard" },
+  );
+  if (!response.ok || !data?.sources) {
+    throw new Error(`Notion sources API error: ${response.status}`);
+  }
+  return data.sources;
+}
+
+export async function saveNotionBindingSources(selectedSourceIds: string[]): Promise<ApiJsonResult> {
+  const { response, data } = await fetchJson<ApiJsonResult>("/api/notion/sources", {
+    method: "POST",
+    redirectOn401To: "/dashboard",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ selectedSourceIds }),
   });
   return data ?? { ok: false, error: `HTTP ${response.status}` };
 }

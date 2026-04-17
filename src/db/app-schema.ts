@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS tenant_config (
   notion_workspace_id TEXT,
   notion_workspace_name TEXT,
   notion_bot_id TEXT,
+  selected_notion_source_ids_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   last_full_sync_at TEXT
@@ -81,4 +82,5 @@ CREATE INDEX IF NOT EXISTS webhook_log_created_at_idx ON webhook_log (created_at
  */
 export const schemaMigrations: string[] = [
   `ALTER TABLE sync_ledger ADD COLUMN last_synced_payload TEXT`,
+  `ALTER TABLE tenant_config ADD COLUMN selected_notion_source_ids_json TEXT`,
 ];
