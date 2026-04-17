@@ -158,6 +158,9 @@ export function extractRoutingIds(payload: unknown): {
     const record = value as Record<string, unknown>;
     append(botIds, record.bot_id);
     append(workspaceIds, record.workspace_id);
+    if (normalizeObjectType(record.type) === "bot") {
+      append(botIds, record.id);
+    }
     if (Array.isArray(record.accessible_by)) {
       for (const item of record.accessible_by) {
         walk(item, depth + 1);
@@ -217,4 +220,8 @@ export function buildWebhookVerificationTokenLookupKeys(input: {
 
 function normalizeTokenRoutingId(value: string): string {
   return value.trim();
+}
+
+function normalizeObjectType(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }

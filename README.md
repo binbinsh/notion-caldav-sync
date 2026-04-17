@@ -80,6 +80,38 @@ node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toS
 2. Enable **"Use custom credentials"** and enter your Notion integration's OAuth Client ID and Client Secret.
 3. Configure the required OAuth scopes in the Scopes field.
 
+#### Notion Webhook Configuration
+
+This app's fast Notion-to-calendar sync depends on a webhook subscription created in the
+[Notion integration settings](https://www.notion.so/profile/integrations).
+
+1. Create a webhook subscription that points to your public worker URL:
+   `https://superplanner.ai/caldav-sync/webhook/notion`
+   For self-hosting, replace the hostname and base path with your deployed worker URL.
+2. Copy the one-time `verification_token` that Notion POSTs to the endpoint and paste it
+   back into Notion's **Verify subscription** dialog.
+3. Subscribe to the event types that this sync actually depends on. For API version
+   `2025-09-03`, the minimum recommended set is:
+   - `page.created`
+   - `page.properties_updated`
+   - `page.deleted`
+   - `page.undeleted`
+   - `page.moved`
+   - `data_source.content_updated`
+   - `data_source.schema_updated`
+
+Why these matter: this worker syncs task titles, dates, reminders, status, and categories
+from database properties. Those changes are delivered via `page.properties_updated`, not
+`page.content_updated`. If you only subscribe to `page.content_updated`, edits to task
+properties can appear to "miss" the webhook path even though the endpoint is healthy.
+
+Troubleshooting:
+- If no real events arrive, confirm the subscription is **Active** and **Verified**.
+- Make sure the Notion integration has access to the databases/pages you are testing.
+- If you change the webhook URL after verification, delete and recreate the subscription.
+- For older Notion API versions, replace the `data_source.*` events above with the legacy
+  `database.content_updated` and `database.schema_updated` events.
+
 #### Deploy
 
 ```bash

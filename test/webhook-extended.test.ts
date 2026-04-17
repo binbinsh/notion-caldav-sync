@@ -86,6 +86,41 @@ describe("webhook recursion depth limits", () => {
     expect(result.workspaceIds).toEqual(["ws-456"]);
   });
 
+  it("extractRoutingIds reads bot ids from accessible_by entries in standard Notion events", () => {
+    const result = extractRoutingIds({
+      workspace_id: "ws-456",
+      accessible_by: [
+        { id: "person-123", type: "person" },
+        { id: "bot-789", type: "bot" },
+      ],
+      entity: {
+        id: "153104cd-477e-809d-8dc4-ff2d96ae3090",
+        type: "page",
+      },
+    });
+
+    expect(result.botIds).toEqual(["bot-789"]);
+    expect(result.workspaceIds).toEqual(["ws-456"]);
+  });
+
+  it("collectPageIds reads page ids from standard Notion entity payloads", () => {
+    const pageId = "153104cd-477e-809d-8dc4-ff2d96ae3090";
+
+    expect(collectPageIds({
+      type: "page.properties_updated",
+      entity: {
+        id: pageId,
+        type: "page",
+      },
+      data: {
+        parent: {
+          id: "13950b26-c203-4f3b-b97d-93ec06319565",
+          type: "space",
+        },
+      },
+    })).toEqual([pageId]);
+  });
+
   it("handles circular-like deeply nested arrays without crashing", () => {
     // Build a deeply nested array structure
     let current: unknown = [{ page_id: "9c01f93a6862420f941f7609fa1f8911" }];
