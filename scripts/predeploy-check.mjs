@@ -6,6 +6,10 @@ import { resolve } from "node:path";
 const PORT = Number.parseInt(process.env.PREDEPLOY_PORT || "8891", 10);
 const BASE_PATH = process.env.APP_BASE_PATH || "/caldav-sync";
 const BASE_URL = `http://127.0.0.1:${PORT}${BASE_PATH}`;
+const CLERK_SIGN_IN_PREFIXES = [
+  "https://accounts.superplanner.ai/sign-in",
+  `https://accounts.${new URL(BASE_URL).host}/sign-in`,
+];
 
 loadLocalEnv();
 
@@ -75,20 +79,21 @@ async function runChecks() {
   const assetResponse = await fetchWithRetry(assetUrl);
   assert(assetResponse.ok, "referenced frontend asset should be served");
 
-  // /sign-in should serve the local sign-in shell
+  // /sign-in should redirect unauthenticated users to the shared Clerk page.
   const signInResponse = await fetch(`${BASE_URL}/sign-in`, {
     redirect: "manual",
   });
-  assert(signInResponse.ok, "GET /sign-in should succeed");
-  const signInHtml = await signInResponse.text();
   assert(
-    signInHtml.includes('id="clerk-sign-in-root"'),
-    "GET /sign-in should render a Clerk mount point",
+    signInResponse.status === 302 || signInResponse.status === 303,
+    "GET /sign-in should redirect unauthenticated users",
   );
-  assert(signInHtml.includes("@clerk/clerk-js"), "GET /sign-in should load the Clerk JS SDK");
-  assert(signInHtml.includes("Continue to your dashboard."), "GET /sign-in should use product copy");
+  const signInLocation = signInResponse.headers.get("location") || "";
   assert(
-    signInHtml.includes(`${BASE_PATH}/dashboard`),
+    isHostedSignInLocation(signInLocation),
+    "GET /sign-in should redirect to the shared Clerk sign-in page",
+  );
+  assert(
+    getRedirectUrlParam(signInLocation) === `${BASE_URL}/dashboard`,
     "GET /sign-in should include the dashboard redirect target",
   );
 
@@ -96,10 +101,17 @@ async function runChecks() {
     `${BASE_URL}/sign-in?redirect_url=${encodeURIComponent("https://evil.example")}`,
     { redirect: "manual" },
   );
-  assert(unsafeSignInResponse.ok, "GET /sign-in with an invalid redirect should still succeed");
-  const unsafeSignInHtml = await unsafeSignInResponse.text();
   assert(
-    unsafeSignInHtml.includes(`${BASE_PATH}/dashboard`),
+    unsafeSignInResponse.status === 302 || unsafeSignInResponse.status === 303,
+    "GET /sign-in with an invalid redirect should still redirect",
+  );
+  const unsafeSignInLocation = unsafeSignInResponse.headers.get("location") || "";
+  assert(
+    isHostedSignInLocation(unsafeSignInLocation),
+    "GET /sign-in should keep using the shared Clerk sign-in page",
+  );
+  assert(
+    getRedirectUrlParam(unsafeSignInLocation) === `${BASE_URL}/dashboard`,
     "GET /sign-in should sanitize invalid redirect targets back to the dashboard",
   );
 
@@ -142,13 +154,12 @@ async function runChecks() {
     "Dashboard should redirect unauthenticated users",
   );
   const dashboardRedirect = dashboardResponse.headers.get("location") || "";
-  const dashboardRedirectMatch = dashboardRedirect.match(/^http:\/\/127\.0\.0\.1:\d+\/caldav-sync\/sign-in\?redirect_url=(.+)$/);
   assert(
-    dashboardRedirectMatch,
-    "Dashboard redirect should go to the product sign-in route",
+    isHostedSignInLocation(dashboardRedirect),
+    "Dashboard redirect should go to the hosted sign-in route",
   );
   assert(
-    decodeURIComponent(dashboardRedirectMatch[1]) === `${BASE_URL}/dashboard`,
+    getRedirectUrlParam(dashboardRedirect) === `${BASE_URL}/dashboard`,
     "Dashboard redirect should return to the dashboard after sign-in",
   );
 
@@ -247,6 +258,14 @@ function resolveLocation(locationHeader) {
   } catch {
     return locationHeader;
   }
+}
+
+function isHostedSignInLocation(locationHeader) {
+  return CLERK_SIGN_IN_PREFIXES.some((prefix) => locationHeader.startsWith(`${prefix}?`));
+}
+
+function getRedirectUrlParam(locationHeader) {
+  return new URLSearchParams(locationHeader.split("?")[1] || "").get("redirect_url");
 }
 
 function loadLocalEnv() {
