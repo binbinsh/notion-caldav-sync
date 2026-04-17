@@ -125,8 +125,12 @@ function ConfirmDialog({
 // ---------------------------------------------------------------------------
 // Shared UI primitives
 // ---------------------------------------------------------------------------
-const INPUT_CLASS =
-  "w-full py-2.5 px-3 border border-line rounded-lg bg-bg text-ink text-sm font-[inherit] transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 placeholder:text-subtle";
+const INPUT_SHELL_CLASS =
+  "flex h-10 w-full items-center overflow-hidden rounded-lg border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10";
+const INPUT_CONTROL_CLASS =
+  "h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 text-sm font-[inherit] text-ink placeholder:text-subtle focus:outline-none disabled:cursor-default disabled:text-muted disabled:opacity-100";
+const INPUT_SUFFIX_CLASS =
+  "flex h-full shrink-0 items-center gap-2 border-l border-line px-3 text-[11px] text-subtle whitespace-nowrap";
 
 function Btn({
   variant = "primary",
@@ -982,19 +986,22 @@ function AppleSettingsCard({
           <Field id="calendar_name" label={t("calNameLabel")} help={t("calNameHelp")} value={calName} onInput={setCalName} disabled={!editing} />
           <div class="grid gap-1.5">
             <label for="calendar_color" class="text-xs font-medium text-muted">{t("calColorLabel")}</label>
-            <div class="flex gap-2 items-center">
+            <div class={INPUT_SHELL_CLASS}>
               <input
                 id="calendar_color" value={color}
                 onInput={(e) => setColor((e.target as HTMLInputElement).value)}
                 placeholder="#FF7F00" disabled={!editing}
-                class={`${INPUT_CLASS} flex-1 disabled:cursor-default disabled:text-muted`}
+                class={INPUT_CONTROL_CLASS}
               />
-              <input
-                type="color" value={color}
-                onInput={(e) => setColor((e.target as HTMLInputElement).value)}
-                disabled={!editing}
-                class="w-10 h-10 p-1 border border-line rounded-lg bg-bg cursor-pointer flex-none disabled:cursor-default disabled:opacity-50"
-              />
+              <label class={`${INPUT_SUFFIX_CLASS} ${editing ? "cursor-pointer" : "cursor-default"}`}>
+                <span class="font-mono text-[11px] text-muted">{color}</span>
+                <input
+                  type="color" value={color}
+                  onInput={(e) => setColor((e.target as HTMLInputElement).value)}
+                  disabled={!editing}
+                  class="h-6 w-6 rounded border-0 bg-transparent p-0 cursor-pointer disabled:cursor-default disabled:opacity-50"
+                />
+              </label>
             </div>
             <span class="text-[11px] text-subtle">{t("calColorHelp")}</span>
           </div>
@@ -1010,26 +1017,26 @@ function AppleSettingsCard({
         <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
           <div class="grid gap-1.5">
             <label for="poll_interval_minutes" class="text-xs font-medium text-muted">{t("checkEveryLabel")}</label>
-            <div class="flex items-center gap-2">
+            <div class={INPUT_SHELL_CLASS}>
               <input
                 id="poll_interval_minutes" type="number" min="1" value={pollInterval}
                 onInput={(e) => setPollInterval((e.target as HTMLInputElement).value)}
                 disabled={!editing}
-                class={`${INPUT_CLASS} w-16 min-w-0 disabled:cursor-default disabled:text-muted`}
+                class={INPUT_CONTROL_CLASS}
               />
-              <span class="text-[11px] text-subtle whitespace-nowrap">{t("checkEveryUnit")}</span>
+              <span class={INPUT_SUFFIX_CLASS}>{t("checkEveryUnit")}</span>
             </div>
           </div>
           <div class="grid gap-1.5">
             <label for="full_sync_interval_minutes" class="text-xs font-medium text-muted">{t("fullSyncEveryLabel")}</label>
-            <div class="flex items-center gap-2">
+            <div class={INPUT_SHELL_CLASS}>
               <input
                 id="full_sync_interval_minutes" type="number" min="15" value={fullSyncInterval}
                 onInput={(e) => setFullSyncInterval((e.target as HTMLInputElement).value)}
                 disabled={!editing}
-                class={`${INPUT_CLASS} w-16 min-w-0 disabled:cursor-default disabled:text-muted`}
+                class={INPUT_CONTROL_CLASS}
               />
-              <span class="text-[11px] text-subtle whitespace-nowrap">{t("fullSyncEveryUnit")}</span>
+              <span class={INPUT_SUFFIX_CLASS}>{t("fullSyncEveryUnit")}</span>
             </div>
           </div>
         </div>
@@ -1328,14 +1335,19 @@ function TimezoneField({
   return (
     <div class="grid gap-1.5">
       <label for={id} class="text-xs font-medium text-muted">{label}</label>
-      <select
-        id={id} name={id} value={resolvedValue}
-        onInput={(e) => onInput((e.target as HTMLSelectElement).value)}
-        disabled={disabled}
-        class={`${INPUT_CLASS} disabled:cursor-default disabled:text-muted`}
-      >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      <div class={`${INPUT_SHELL_CLASS} relative`}>
+        <select
+          id={id} name={id} value={resolvedValue}
+          onInput={(e) => onInput((e.target as HTMLSelectElement).value)}
+          disabled={disabled}
+          class={`${INPUT_CONTROL_CLASS} appearance-none pr-9`}
+        >
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.512a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+        </svg>
+      </div>
       <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
@@ -1349,12 +1361,14 @@ function Field({
   return (
     <div class="grid gap-1.5">
       <label for={id} class="text-xs font-medium text-muted">{label}</label>
-      <input
-        id={id} name={id} type={type} required={required} placeholder={placeholder}
-        value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-        disabled={disabled}
-        class={`${INPUT_CLASS} disabled:cursor-default disabled:text-muted`}
-      />
+      <div class={INPUT_SHELL_CLASS}>
+        <input
+          id={id} name={id} type={type} required={required} placeholder={placeholder}
+          value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+          disabled={disabled}
+          class={INPUT_CONTROL_CLASS}
+        />
+      </div>
       <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
@@ -1368,15 +1382,17 @@ function SecretField({
   return (
     <div class="grid gap-1.5">
       <label for={id} class="text-xs font-medium text-muted">{label}</label>
-      <input
-        id={id} name={id} type={editable ? type : "text"}
-        required={editable && required}
-        placeholder={editable ? placeholder : undefined}
-        value={editable ? value : maskedValue}
-        onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-        disabled={!editable}
-        class={`${INPUT_CLASS} disabled:opacity-100 disabled:cursor-default disabled:text-muted`}
-      />
+      <div class={INPUT_SHELL_CLASS}>
+        <input
+          id={id} name={id} type={editable ? type : "text"}
+          required={editable && required}
+          placeholder={editable ? placeholder : undefined}
+          value={editable ? value : maskedValue}
+          onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+          disabled={!editable}
+          class={INPUT_CONTROL_CLASS}
+        />
+      </div>
       <span class="text-[11px] text-subtle">{help}</span>
     </div>
   );
