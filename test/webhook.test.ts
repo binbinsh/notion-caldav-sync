@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY,
+  buildWebhookVerificationTokenLookupKeys,
+  buildWebhookVerificationTokenStorageKeys,
   collectPageIds,
   extractEventTypes,
   needsFullSync,
@@ -57,5 +60,27 @@ describe("notion webhook helpers", () => {
     };
 
     expect(collectPageIds(payload)).toEqual([]);
+  });
+
+  it("stores webhook verification tokens under global and scoped keys", () => {
+    expect(buildWebhookVerificationTokenStorageKeys({
+      botIds: ["bot-123", "bot-123"],
+      workspaceIds: ["ws-456"],
+    })).toEqual([
+      GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY,
+      `${GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY}:bot:bot-123`,
+      `${GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY}:workspace:ws-456`,
+    ]);
+  });
+
+  it("looks up scoped webhook verification tokens before the global fallback", () => {
+    expect(buildWebhookVerificationTokenLookupKeys({
+      botIds: ["bot-123"],
+      workspaceIds: ["ws-456", "ws-456"],
+    })).toEqual([
+      `${GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY}:bot:bot-123`,
+      `${GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY}:workspace:ws-456`,
+      GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY,
+    ]);
   });
 });

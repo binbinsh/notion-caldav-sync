@@ -325,8 +325,15 @@ export async function getProviderConnectionsForWebhookRouting(
   db: D1Database,
   input: { botIds: string[]; workspaceIds: string[] },
 ): Promise<ProviderConnectionRow[]> {
-  const connections: ProviderConnectionRow[] = [];
+  const latestByRoutingKey = new Map<string, ProviderConnectionRow>();
   const seen = new Set<string>();
+
+  const remember = (routingKey: string, row: ProviderConnectionRow) => {
+    const current = latestByRoutingKey.get(routingKey);
+    if (!current || row.updated_at > current.updated_at) {
+      latestByRoutingKey.set(routingKey, row);
+    }
+  };
 
   for (const botId of input.botIds) {
     const result = await db
@@ -334,10 +341,7 @@ export async function getProviderConnectionsForWebhookRouting(
       .bind(botId)
       .all<ProviderConnectionRow>();
     for (const row of result.results || []) {
-      if (!seen.has(row.id)) {
-        seen.add(row.id);
-        connections.push(row);
-      }
+      remember(`bot:${botId}`, row);
     }
   }
 
@@ -347,10 +351,15 @@ export async function getProviderConnectionsForWebhookRouting(
       .bind(workspaceId)
       .all<ProviderConnectionRow>();
     for (const row of result.results || []) {
-      if (!seen.has(row.id)) {
-        seen.add(row.id);
-        connections.push(row);
-      }
+      remember(`workspace:${workspaceId}`, row);
+    }
+  }
+
+  const connections: ProviderConnectionRow[] = [];
+  for (const row of latestByRoutingKey.values()) {
+    if (!seen.has(row.id)) {
+      seen.add(row.id);
+      connections.push(row);
     }
   }
 

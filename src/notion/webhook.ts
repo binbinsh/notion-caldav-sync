@@ -1,6 +1,9 @@
 const PAGE_ID_KEYS = new Set(["page_id", "pageId"]);
 const FULL_SYNC_PREFIXES = ["database.", "data_source."] as const;
 const MAX_RECURSION_DEPTH = 20;
+export const GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY = "notion_webhook_verification_token";
+const BOT_TOKEN_KEY_PREFIX = `${GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY}:bot:`;
+const WORKSPACE_TOKEN_KEY_PREFIX = `${GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY}:workspace:`;
 
 export function normalizePageId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -169,4 +172,49 @@ export function extractRoutingIds(payload: unknown): {
 
   walk(payload);
   return { botIds, workspaceIds };
+}
+
+export function buildWebhookVerificationTokenStorageKeys(input: {
+  botIds: Iterable<string>;
+  workspaceIds: Iterable<string>;
+}): string[] {
+  const keys = [GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY];
+  for (const botId of input.botIds) {
+    const normalized = normalizeTokenRoutingId(botId);
+    if (normalized) {
+      keys.push(`${BOT_TOKEN_KEY_PREFIX}${normalized}`);
+    }
+  }
+  for (const workspaceId of input.workspaceIds) {
+    const normalized = normalizeTokenRoutingId(workspaceId);
+    if (normalized) {
+      keys.push(`${WORKSPACE_TOKEN_KEY_PREFIX}${normalized}`);
+    }
+  }
+  return [...new Set(keys)];
+}
+
+export function buildWebhookVerificationTokenLookupKeys(input: {
+  botIds: Iterable<string>;
+  workspaceIds: Iterable<string>;
+}): string[] {
+  const keys: string[] = [];
+  for (const botId of input.botIds) {
+    const normalized = normalizeTokenRoutingId(botId);
+    if (normalized) {
+      keys.push(`${BOT_TOKEN_KEY_PREFIX}${normalized}`);
+    }
+  }
+  for (const workspaceId of input.workspaceIds) {
+    const normalized = normalizeTokenRoutingId(workspaceId);
+    if (normalized) {
+      keys.push(`${WORKSPACE_TOKEN_KEY_PREFIX}${normalized}`);
+    }
+  }
+  keys.push(GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY);
+  return [...new Set(keys)];
+}
+
+function normalizeTokenRoutingId(value: string): string {
+  return value.trim();
 }

@@ -30,6 +30,9 @@ import {
 export { TenantSyncObject } from "./durable/tenant-sync";
 import { decryptSecret, encryptSecret, requireMasterKey } from "./lib/secrets";
 import {
+  GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY,
+  buildWebhookVerificationTokenLookupKeys,
+  buildWebhookVerificationTokenStorageKeys,
   collectPageIds,
   extractEventTypes,
   extractRoutingIds,
@@ -483,16 +486,19 @@ app.post("/webhook/notion", async (c) => {
     return c.text("Invalid JSON", 400);
   }
 
+  const routingIds = extractRoutingIds(payload);
+
   const verificationToken = normalizeText(
     (payload as Record<string, unknown>).verification_token,
   );
   if (verificationToken) {
-    await setAppState(c.env.AUTH_DB, "notion_webhook_verification_token", verificationToken);
+    const storageKeys = buildWebhookVerificationTokenStorageKeys(routingIds);
+    await Promise.all(storageKeys.map((key) => setAppState(c.env.AUTH_DB, key, verificationToken)));
     return c.json({ verification_token: verificationToken });
   }
 
-  const storedToken = await getAppState(c.env.AUTH_DB, "notion_webhook_verification_token");
-  if (!storedToken) {
+  const storedTokens = await loadWebhookVerificationTokens(c.env.AUTH_DB, routingIds);
+  if (storedTokens.length === 0) {
     return c.text("Unauthorized - Missing stored verification token", 401);
   }
 
@@ -502,16 +508,19 @@ app.post("/webhook/notion", async (c) => {
     return c.text("Unauthorized - No signature", 401);
   }
 
-  const digest = await hmacSha256Hex(storedToken, raw);
-  const expectedSignature = `sha256=${digest}`;
-  if (expectedSignature !== signature) {
+  const trustedToken = await findTrustedNotionVerificationToken(storedTokens, raw, signature);
+  if (!trustedToken) {
     return c.text("Unauthorized - Invalid signature", 401);
   }
+  const scopedTokenKeys = buildWebhookVerificationTokenStorageKeys(routingIds)
+    .filter((key) => key !== GLOBAL_NOTION_WEBHOOK_VERIFICATION_TOKEN_KEY);
+  if (scopedTokenKeys.length > 0) {
+    await Promise.all(scopedTokenKeys.map((key) => setAppState(c.env.AUTH_DB, key, trustedToken)));
+  }
 
-  const { botIds, workspaceIds } = extractRoutingIds(payload);
   const connections = await getProviderConnectionsForWebhookRouting(c.env.AUTH_DB, {
-    botIds,
-    workspaceIds,
+    botIds: routingIds.botIds,
+    workspaceIds: routingIds.workspaceIds,
   });
   const tenantIds = [
     ...new Set(connections.map((connection) => connection.tenant_id).filter(Boolean)),
@@ -957,6 +966,42 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
   return [...new Uint8Array(signature)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+async function loadWebhookVerificationTokens(
+  db: D1Database,
+  routingIds: { botIds: string[]; workspaceIds: string[] },
+): Promise<string[]> {
+  const lookupKeys = buildWebhookVerificationTokenLookupKeys(routingIds);
+  const values = await Promise.all(lookupKeys.map((key) => getAppState(db, key)));
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+async function findTrustedNotionVerificationToken(
+  verificationTokens: string[],
+  body: string,
+  actualSignature: string,
+): Promise<string | null> {
+  for (const token of verificationTokens) {
+    const digest = await hmacSha256Hex(token, body);
+    if (timingSafeEqual(`sha256=${digest}`, actualSignature)) {
+      return token;
+    }
+  }
+  return null;
+}
+
+function timingSafeEqual(left: string, right: string): boolean {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  if (leftBytes.length !== rightBytes.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    diff |= leftBytes[index]! ^ rightBytes[index]!;
+  }
+  return diff === 0;
 }
 
 function safeJsonParse(text: string): unknown {
