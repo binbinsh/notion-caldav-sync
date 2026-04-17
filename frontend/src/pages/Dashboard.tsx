@@ -397,7 +397,7 @@ export function DashboardPage() {
   const appleConfigured = Boolean(data.appleCredentials?.hasAppleId && data.appleCredentials?.hasAppPassword);
   const hasCompletedFirstSync = Boolean(cfg?.last_full_sync_at);
   const hasNotionBindingSelection = Boolean(data.notionBinding?.selectedSourceIds?.length);
-  const notionSelectionRequired = Boolean(data.notionConnected && !hasNotionBindingSelection && !hasCompletedFirstSync);
+  const notionSelectionRequired = Boolean(data.notionConnected && !hasNotionBindingSelection);
   const needsSetup = !data.notionConnected || notionSelectionRequired || !appleConfigured || !hasCompletedFirstSync;
 
   return (
