@@ -31,6 +31,7 @@ function notionTask(input: Partial<{
   category: string | null;
   description: string | null;
   pageUrl: string | null;
+  archived: boolean;
   lastEditedTime: string | null;
 }> = {}): NotionTask {
   return new NotionTask(
@@ -45,7 +46,7 @@ function notionTask(input: Partial<{
     input.reminder === undefined ? "2026-04-10T08:45:00+00:00" : input.reminder,
     input.category === undefined ? "Work" : input.category,
     input.description === undefined ? "Original body" : input.description,
-    false,
+    input.archived ?? false,
     input.lastEditedTime === undefined ? iso() : input.lastEditedTime,
     schema(),
   );
@@ -236,6 +237,25 @@ describe("SyncService", () => {
     const record = await ledger.getRecord("page-1");
     expect(record?.eventHref).toBeNull();
     expect(record?.lastPushOrigin).toBe("caldav");
+  });
+
+  it("does not patch archived notion pages when calendar event is deleted", async () => {
+    const facade = new FakeFacade();
+    facade.notionTasks.set("page-1", notionTask({ archived: true }));
+    const ledger = new InMemoryLedger();
+    await ledger.putRecord(
+      new LedgerRecord("page-1", "https://calendar/page-1.ics", '"etag-1"'),
+    );
+    const service = new SyncService(facade, ledger);
+
+    await service.syncCaldavIncremental();
+
+    expect(facade.clearScheduleCalls).toEqual([]);
+    const record = await ledger.getRecord("page-1");
+    expect(record?.eventHref).toBeNull();
+    expect(record?.lastNotionEditedTime).toBe(iso());
+    expect(record?.lastPushOrigin).toBe("caldav");
+    expect(record?.deletedOnCaldavAt).not.toBeNull();
   });
 
   it("honors recent caldav delete and does not recreate immediately", async () => {

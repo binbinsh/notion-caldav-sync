@@ -42,6 +42,39 @@ export type ProviderConnectionRow = {
   updated_at: string;
 };
 
+export function selectLatestProviderConnectionsByRoutingKey<T extends Pick<ProviderConnectionRow, "id" | "bot_id" | "workspace_id" | "updated_at">>(
+  rows: T[],
+): T[] {
+  const latestByRoutingKey = new Map<string, T>();
+  const seen = new Set<string>();
+
+  const remember = (routingKey: string, row: T) => {
+    const current = latestByRoutingKey.get(routingKey);
+    if (!current || row.updated_at > current.updated_at) {
+      latestByRoutingKey.set(routingKey, row);
+    }
+  };
+
+  for (const row of rows) {
+    if (row.bot_id) {
+      remember(`bot:${row.bot_id}`, row);
+    }
+    if (row.workspace_id) {
+      remember(`workspace:${row.workspace_id}`, row);
+    }
+  }
+
+  const selected: T[] = [];
+  for (const row of latestByRoutingKey.values()) {
+    if (!seen.has(row.id)) {
+      seen.add(row.id);
+      selected.push(row);
+    }
+  }
+
+  return selected;
+}
+
 export async function getTenantConfigByTenantId(
   db: D1Database,
   tenantId: string,
@@ -325,24 +358,14 @@ export async function getProviderConnectionsForWebhookRouting(
   db: D1Database,
   input: { botIds: string[]; workspaceIds: string[] },
 ): Promise<ProviderConnectionRow[]> {
-  const latestByRoutingKey = new Map<string, ProviderConnectionRow>();
-  const seen = new Set<string>();
-
-  const remember = (routingKey: string, row: ProviderConnectionRow) => {
-    const current = latestByRoutingKey.get(routingKey);
-    if (!current || row.updated_at > current.updated_at) {
-      latestByRoutingKey.set(routingKey, row);
-    }
-  };
+  const matches: ProviderConnectionRow[] = [];
 
   for (const botId of input.botIds) {
     const result = await db
       .prepare(`SELECT * FROM provider_connection WHERE bot_id = ?`)
       .bind(botId)
       .all<ProviderConnectionRow>();
-    for (const row of result.results || []) {
-      remember(`bot:${botId}`, row);
-    }
+    matches.push(...(result.results || []));
   }
 
   for (const workspaceId of input.workspaceIds) {
@@ -350,27 +373,17 @@ export async function getProviderConnectionsForWebhookRouting(
       .prepare(`SELECT * FROM provider_connection WHERE workspace_id = ?`)
       .bind(workspaceId)
       .all<ProviderConnectionRow>();
-    for (const row of result.results || []) {
-      remember(`workspace:${workspaceId}`, row);
-    }
+    matches.push(...(result.results || []));
   }
 
-  const connections: ProviderConnectionRow[] = [];
-  for (const row of latestByRoutingKey.values()) {
-    if (!seen.has(row.id)) {
-      seen.add(row.id);
-      connections.push(row);
-    }
-  }
-
-  return connections;
+  return selectLatestProviderConnectionsByRoutingKey(matches);
 }
 
 export async function listSchedulableTenantIds(db: D1Database): Promise<string[]> {
   const result = await db
     .prepare(
       `
-        SELECT DISTINCT tc.tenant_id AS tenant_id
+        SELECT DISTINCT pc.id, pc.tenant_id, pc.bot_id, pc.workspace_id, pc.updated_at
         FROM tenant_config tc
         JOIN provider_connection pc
           ON pc.tenant_id = tc.tenant_id
@@ -383,8 +396,10 @@ export async function listSchedulableTenantIds(db: D1Database): Promise<string[]
          AND tsp.kind = 'apple_app_password'
       `,
     )
-    .all<{ tenant_id: string }>();
-  return (result.results || []).map((row) => row.tenant_id).filter(Boolean);
+    .all<Pick<ProviderConnectionRow, "id" | "tenant_id" | "bot_id" | "workspace_id" | "updated_at">>();
+  return selectLatestProviderConnectionsByRoutingKey(result.results || [])
+    .map((row) => row.tenant_id)
+    .filter(Boolean);
 }
 
 export async function getAppState(

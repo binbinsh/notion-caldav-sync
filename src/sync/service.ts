@@ -918,10 +918,11 @@ export class SyncService {
       await this.ledger.deleteRecord(record.pageId);
       return;
     }
-    const updated =
-      notionTask.startDate || notionTask.endDate || notionTask.reminder
-        ? await this.facade.clearNotionSchedule(notionTask)
-        : notionTask;
+    const shouldClearNotionSchedule = !notionTask.archived
+      && Boolean(notionTask.startDate || notionTask.endDate || notionTask.reminder);
+    const updated = shouldClearNotionSchedule
+      ? await this.facade.clearNotionSchedule(notionTask)
+      : notionTask;
 
     const clearedHash = await this.notionHashForTask(updated);
     const now = this.nowIso();
@@ -934,7 +935,7 @@ export class SyncService {
         lastPushOrigin: "caldav",
         lastPushToken: clearedHash,
         deletedOnCaldavAt: now,
-        clearedDueInNotionAt: now,
+        clearedDueInNotionAt: shouldClearNotionSchedule ? now : record.clearedDueInNotionAt,
       }),
     );
   }
