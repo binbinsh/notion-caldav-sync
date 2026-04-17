@@ -19,6 +19,8 @@ describe("ics helpers", () => {
       url: "https://www.notion.so/task123",
     });
 
+    expect(ics).toContain("X-NOTION-STATUS:Todo");
+
     const parsed = parseIcsMinimal(ics);
 
     expect(parsed.title).toBe("Plan trip");
@@ -59,16 +61,39 @@ describe("ics helpers", () => {
     expect(parsed.url).toBe("https://www.notion.so/task456");
   });
 
-  it("prefers header status when summary status is overdue", () => {
+  it("preserves the raw notion status when the display status is overdue", () => {
+    const ics = buildEvent({
+      notionId: "task-789",
+      title: "Past due task",
+      statusEmoji: statusToEmoji("Overdue", "emoji"),
+      statusName: "Overdue",
+      rawStatusName: "Todo",
+      startIso: "2024-06-01",
+      endIso: null,
+      reminderIso: null,
+      description: "Source: Tasks",
+      category: null,
+      color: null,
+      url: null,
+    });
+
+    const parsed = parseIcsMinimal(ics);
+
+    expect(parsed.status).toBe("Todo");
+    expect(parsed.displayStatus).toBe("Overdue");
+  });
+
+  it("prefers custom status when summary status is overdue", () => {
     const ics = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Test//EN
 BEGIN:VEVENT
 UID:notion-task-123@sync
+X-NOTION-STATUS:Todo
 SUMMARY:⚠️ Late task
 DTSTART;VALUE=DATE:20251108
 DTEND;VALUE=DATE:20251109
-DESCRIPTION:Source: Tasks\\nStatus: Todo\\nNotion URL: https://www.notion.so/task123\\n\\nBody
+DESCRIPTION:Source: Tasks\\n\\nBody
 END:VEVENT
 END:VCALENDAR
 `;

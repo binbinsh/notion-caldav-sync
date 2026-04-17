@@ -14,12 +14,10 @@ export function dateOnlyTimezone(
 
 export function descriptionForTask(task: {
   databaseName?: string | null;
-  status?: string | null;
   category?: string | null;
   description?: string | null;
 }): string {
   const lines = [`Source: ${task.databaseName || "-"}`];
-  lines.push(`Status: ${normalizeStatusName(task.status) || "Todo"}`);
   if (task.category) {
     lines.push(`Category: ${task.category}`);
   }

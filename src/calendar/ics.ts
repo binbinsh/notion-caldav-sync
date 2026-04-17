@@ -1,6 +1,6 @@
 import ICAL from "ical.js";
 import ical from "ical-generator";
-import { STATUS_CANONICAL_VARIANTS, STATUS_EMOJI_SETS } from "../sync/constants";
+import { normalizeStatusName, STATUS_CANONICAL_VARIANTS, STATUS_EMOJI_SETS } from "../sync/constants";
 
 const DEFAULT_TIMED_EVENT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 
@@ -56,6 +56,7 @@ export function buildEvent(input: {
   title: string;
   statusEmoji: string;
   statusName: string;
+  rawStatusName?: string | null;
   startIso: string | null;
   endIso: string | null;
   reminderIso: string | null;
@@ -126,8 +127,13 @@ export function buildEvent(input: {
   }
   let output = calendar.toString();
   // Inject X-NOTION-PAGE-ID custom property for reliable round-trip identification.
-  // This survives server-side UID normalization and filename changes.
-  output = output.replace(/(UID:[^\r\n]+\r\n)/, `$1X-NOTION-PAGE-ID:${input.notionId}\r\n`);
+  // X-NOTION-STATUS preserves the raw Notion status even when the summary uses
+  // a derived display state like Overdue.
+  const rawStatus = normalizeStatusName(input.rawStatusName || input.statusName);
+  output = output.replace(
+    /(UID:[^\r\n]+\r\n)/,
+    `$1X-NOTION-PAGE-ID:${input.notionId}\r\n${rawStatus ? `X-NOTION-STATUS:${rawStatus}\r\n` : ""}`,
+  );
   if (input.color) {
     output = output.replace(/(SUMMARY:[^\r\n]+\r\n)/, `$1COLOR:${input.color}\r\n`);
   }
@@ -146,6 +152,7 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   const { status: summaryStatus, title } = extractSummaryStatus(event.summary || "");
   let status = summaryStatus;
   let displayStatus = summaryStatus;
+  const customStatus = normalizeStatusName(normalizeText(vevent.getFirstPropertyValue("x-notion-status")));
   let category = firstText(arrayify(event.component.getFirstPropertyValue("categories")));
   const color = normalizeText(event.component.getFirstPropertyValue("color"));
   const rawDescription = normalizeText(event.description);
@@ -158,17 +165,18 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
     const parsed = parseDescriptionFields(descriptionValue);
     category = parsed.headers.Category || category;
     // Only use the user's actual description body, not the structured metadata
-    // headers (Source, Status, Notion URL, etc.) that we embed in the ICS.
+    // headers (Source, Category, etc.) that we embed in the ICS.
     // If there's no body and no explicit Description header, the description
     // was purely metadata — return null to match Notion's empty description.
     description = parsed.body || parsed.headers.Description || null;
-    if (!summaryStatus || summaryStatus === "Overdue") {
-      status = parsed.headers.Status || status;
-    }
+  }
+
+  if ((!summaryStatus || summaryStatus === "Overdue") && customStatus) {
+    status = customStatus;
   }
 
   // Fall back to iCalendar STATUS property if no status was extracted from
-  // the summary emoji or the description headers.
+  // the summary emoji or the X-NOTION-STATUS custom property.
   if (!status) {
     const veventStatus = normalizeText(vevent.getFirstPropertyValue("status"));
     if (veventStatus) {
@@ -288,7 +296,7 @@ function extractSummaryStatus(summary: string): { status: string | null; title: 
 // Known metadata header keys that we embed in the ICS description.
 // Only these are extracted as structured headers; everything else is
 // treated as user-authored body text to preserve round-trip fidelity.
-const KNOWN_HEADER_KEYS = new Set(["Source", "Status", "Notion URL", "Category", "Description"]);
+const KNOWN_HEADER_KEYS = new Set(["Source", "Category", "Description"]);
 
 function parseDescriptionFields(text: string): {
   headers: Record<string, string>;

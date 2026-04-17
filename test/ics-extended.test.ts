@@ -150,10 +150,11 @@ VERSION:2.0
 PRODID:-//Test//EN
 BEGIN:VEVENT
 UID:notion-test-id@sync
+X-NOTION-STATUS:Done
 SUMMARY:Test task
 DTSTART:20260410T090000Z
 DTEND:20260410T100000Z
-DESCRIPTION:Category: Work\\nStatus: Done\\n\\nMeeting notes here
+DESCRIPTION:Category: Work\\n\\nMeeting notes here
 END:VEVENT
 END:VCALENDAR
 `;
@@ -161,7 +162,7 @@ END:VCALENDAR
     const parsed = parseIcsMinimal(ics);
 
     expect(parsed.category).toBe("Work");
-    expect(parsed.status).toBe("Done");
+    expect(parsed.status).toBe("Completed");
     expect(parsed.description).toBe("Meeting notes here");
   });
 

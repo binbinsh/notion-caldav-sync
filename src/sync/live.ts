@@ -324,6 +324,7 @@ export class LiveSyncFacade {
       title: notionTask.title,
       statusEmoji,
       statusName: normalizedStatus,
+      rawStatusName: notionTask.status,
       startIso: notionTask.startDate,
       endIso: notionTask.endDate,
       reminderIso: notionTask.reminder,
