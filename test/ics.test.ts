@@ -109,4 +109,26 @@ END:VCALENDAR
     expect(parsed.displayStatus).toBe("Overdue");
     expect(parsed.description).toBe("Body");
   });
+
+  it("prefers the editable status header over the hidden notion status", () => {
+    const ics = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+UID:notion-task-999@sync
+X-NOTION-STATUS:Todo
+SUMMARY:⬜ Task
+DTSTART;VALUE=DATE:20251108
+DTEND;VALUE=DATE:20251109
+DESCRIPTION:Source: Tasks\\nStatus: Completed\\n\\nBody
+END:VEVENT
+END:VCALENDAR
+`;
+
+    const parsed = parseIcsMinimal(ics);
+
+    expect(parsed.status).toBe("Completed");
+    expect(parsed.displayStatus).toBe("Todo");
+    expect(parsed.description).toBe("Body");
+  });
 });

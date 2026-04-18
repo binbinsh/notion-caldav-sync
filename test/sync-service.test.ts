@@ -70,6 +70,7 @@ function calendarTask(input: Partial<{
   const pageId = input.pageId || "page-1";
   const renderedNotes = descriptionForTask({
     databaseName: "Tasks",
+    status: input.status === undefined ? "Todo" : input.status,
     category: input.category === undefined ? "Work" : input.category,
     description: input.description === undefined ? "Original body" : input.description,
   });
@@ -353,6 +354,7 @@ describe("SyncService", () => {
           displayStatus: statusForTask(notion),
           notesFingerprint: notesFingerprint(descriptionForTask({
             databaseName: notion.databaseName,
+            status: notion.status,
             category: notion.category,
             description: notion.description,
           })),
@@ -459,6 +461,7 @@ describe("SyncService", () => {
       displayStatus: statusForTask(notion),
       notesFingerprint: notesFingerprint(descriptionForTask({
         databaseName: notion.databaseName,
+        status: notion.status,
         category: notion.category,
         description: notion.description,
       })),
@@ -771,6 +774,7 @@ describe("SyncService", () => {
     expect(updated?.notesFingerprint).toBe(
       notesFingerprint(descriptionForTask({
         databaseName: notion.databaseName,
+        status: notion.status,
         category: notion.category,
         description: notion.description,
       })),
@@ -967,6 +971,7 @@ describe("SyncService", () => {
       displayStatus: "Todo",
       notesFingerprint: notesFingerprint(descriptionForTask({
         databaseName: "Tasks",
+        status: "Todo",
         category: "Work",
         description: "Original body",
       })),
@@ -1069,7 +1074,7 @@ describe("SyncService", () => {
       "Work", "Original body",
       iso(), "https://www.notion.so/page1",
       "Todo",
-      notesFingerprint(descriptionForTask({ databaseName: "Tasks", category: "Work", description: "Original body" })),
+      notesFingerprint(descriptionForTask({ databaseName: "Tasks", status: "Todo", category: "Work", description: "Original body" })),
     );
     facade.calendarTasks.set(calendar1.eventHref, calendar1);
     facade.calendarTasks.set(calendar2.eventHref, calendar2);

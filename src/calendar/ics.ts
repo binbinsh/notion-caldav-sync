@@ -152,7 +152,7 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   const event = new ICAL.Event(vevent);
 
   const { status: summaryStatus, title } = extractSummaryStatus(event.summary || "");
-  let status = summaryStatus;
+  let status: string | null = null;
   let displayStatus = summaryStatus;
   const customStatus = normalizeStatusName(normalizeText(vevent.getFirstPropertyValue("x-notion-status")));
   const notesFingerprint = normalizeText(vevent.getFirstPropertyValue("x-notion-notes-hash"));
@@ -167,19 +167,19 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   if (descriptionValue) {
     const parsed = parseDescriptionFields(descriptionValue);
     category = parsed.headers.Category || category;
+    const headerStatus = normalizeStatusName(parsed.headers.Status);
     // Only use the user's actual description body, not the structured metadata
-    // headers (Source, Category, etc.) that we embed in the ICS.
+    // headers (Source, Status, Category, etc.) that we embed in the ICS.
     // If there's no body and no explicit Description header, the description
     // was purely metadata — return null to match Notion's empty description.
     description = parsed.body || parsed.headers.Description || null;
+    status = headerStatus || status;
   }
 
-  if ((!summaryStatus || summaryStatus === "Overdue") && customStatus) {
-    status = customStatus;
-  }
+  status = status || customStatus || summaryStatus;
 
   // Fall back to iCalendar STATUS property if no status was extracted from
-  // the summary emoji or the X-NOTION-STATUS custom property.
+  // the summary emoji, the Status header, or the X-NOTION-STATUS custom property.
   if (!status) {
     const veventStatus = normalizeText(vevent.getFirstPropertyValue("status"));
     if (veventStatus) {
@@ -300,7 +300,7 @@ function extractSummaryStatus(summary: string): { status: string | null; title: 
 // Known metadata header keys that we embed in the ICS description.
 // Only these are extracted as structured headers; everything else is
 // treated as user-authored body text to preserve round-trip fidelity.
-const KNOWN_HEADER_KEYS = new Set(["Source", "Category", "Description"]);
+const KNOWN_HEADER_KEYS = new Set(["Source", "Status", "Category", "Description"]);
 
 function parseDescriptionFields(text: string): {
   headers: Record<string, string>;
