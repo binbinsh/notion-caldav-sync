@@ -742,6 +742,87 @@ describe("SyncService", () => {
     }
   });
 
+  it("refreshes calendar status indicator after a calendar date edit clears overdue", async () => {
+    const fakeNow = new Date(Date.UTC(2026, 3, 11, 12, 0, 0));
+    vi.useFakeTimers({ now: fakeNow });
+    try {
+      const facade = new FakeFacade();
+      const notion = notionTask({
+        status: "Todo",
+        startDate: "2026-04-10T09:00:00+00:00",
+        endDate: "2026-04-10T10:00:00+00:00",
+        lastEditedTime: iso(0),
+      });
+      const calendar = calendarTask({
+        status: "Todo",
+        startDate: "2026-04-12T09:00:00+00:00",
+        endDate: "2026-04-12T10:00:00+00:00",
+        lastModified: iso(20),
+        etag: '"etag-2"',
+        displayStatus: "Overdue",
+      });
+      facade.notionTasks.set("page-1", notion);
+      facade.calendarTasks.set(calendar.eventHref, calendar);
+
+      const ledger = new InMemoryLedger();
+      await ledger.putRecord(new LedgerRecord(
+        "page-1",
+        calendar.eventHref,
+        '"etag-1"',
+        notion.lastEditedTime,
+        await canonicalHash({
+          ...canonicalPayload({
+            title: notion.title,
+            status: notion.status,
+            startDate: notion.startDate,
+            endDate: notion.endDate,
+            reminder: notion.reminder,
+            category: notion.category,
+            description: notion.description,
+            pageUrl: notion.pageUrl,
+          }),
+          displayStatus: "Overdue",
+        }),
+        null,
+        iso(0),
+        null,
+        null,
+        null,
+        null,
+        null,
+        JSON.stringify({
+          ...canonicalPayload({
+            title: notion.title,
+            status: notion.status,
+            startDate: notion.startDate,
+            endDate: notion.endDate,
+            reminder: notion.reminder,
+            category: notion.category,
+            description: notion.description,
+            pageUrl: notion.pageUrl,
+          }),
+          displayStatus: "Overdue",
+          notesFingerprint: notesFingerprint(descriptionForTask(notion)),
+        }),
+      ));
+
+      const service = new SyncService(facade, ledger);
+      await service.syncCaldavIncremental();
+
+      expect(facade.updateNotionCalls).toEqual(["page-1"]);
+      expect(facade.putCalendarCalls).toEqual(["page-1"]);
+
+      const updatedNotion = facade.notionTasks.get("page-1");
+      expect(updatedNotion?.startDate).toBe("2026-04-12T09:00:00+00:00");
+      expect(updatedNotion?.endDate).toBe("2026-04-12T10:00:00+00:00");
+
+      const updatedCalendar = facade.calendarTasks.get(calendar.eventHref);
+      expect(updatedCalendar?.displayStatus).toBe("Todo");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refreshes calendar events when only the rendered notes fingerprint changed", async () => {
     const facade = new FakeFacade();
     const notion = notionTask({

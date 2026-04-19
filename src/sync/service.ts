@@ -760,7 +760,13 @@ export class SyncService {
     }
 
     const winner = this.chooseWinner(notionTask, calendarTask);
-    const merged = mergePayloads(notionPayload, calendarPayload, record.lastSyncedPayload, winner);
+    const merged = mergePayloadWithDerivedDisplayStatus(
+      notionPayload,
+      calendarPayload,
+      record.lastSyncedPayload,
+      winner,
+      settings,
+    );
     const mergedNotesFingerprint = this.notionNotesFingerprint(
       new NotionTask(
         notionTask.pageId,
@@ -1304,7 +1310,13 @@ export class SyncService {
     const winner = this.chooseWinner(notionTask, calendarTask);
     const notionPayload = this.notionSyncPayload(notionTask, settings);
     const calendarPayload = this.calendarSyncPayload(calendarTask);
-    const merged = mergePayloads(notionPayload, calendarPayload, record.lastSyncedPayload, winner);
+    const merged = mergePayloadWithDerivedDisplayStatus(
+      notionPayload,
+      calendarPayload,
+      record.lastSyncedPayload,
+      winner,
+      settings,
+    );
     const notionNeedsUpdate = !payloadsEqual(notionPayload, merged);
     const calendarNeedsUpdate = !payloadsEqual(calendarPayload, merged);
 
@@ -1618,6 +1630,21 @@ function mergePayloads(
     merged[field] = notionVal;
   }
   return merged;
+}
+
+function mergePayloadWithDerivedDisplayStatus(
+  notionPayload: CanonicalPayload,
+  calendarPayload: CanonicalPayload,
+  lastSyncedPayloadJson: string | null,
+  winner: "notion" | "caldav",
+  settings?: Record<string, unknown>,
+): CanonicalPayload {
+  const merged = mergePayloads(notionPayload, calendarPayload, lastSyncedPayloadJson, winner);
+  return {
+    ...merged,
+    // displayStatus is rendered from the merged task state, not edited independently.
+    displayStatus: statusForTask(merged, { dateOnlyTimezoneName: dateOnlyTimezone(settings) }),
+  };
 }
 
 function payloadMatchesLastSync(
