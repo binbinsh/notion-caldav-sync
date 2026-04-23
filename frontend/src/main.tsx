@@ -1,4 +1,4 @@
-import { render } from "preact";
+import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./index.css";
 
@@ -6,4 +6,4 @@ import "./index.css";
 (window as Window & { __CALDAV_SYNC_SPA_BUILD__?: string }).__CALDAV_SYNC_SPA_BUILD__ =
   "2026-04-12-dashboard-assets-v2";
 
-render(<App />, document.getElementById("app")!);
+createRoot(document.getElementById("app")!).render(<App />);

@@ -1,4 +1,4 @@
-import { buildSignOutUrl, getAppBasePath, redirectToSignIn } from "./auth";
+import { getAppBasePath, redirectToSignIn } from "./auth";
 
 export { CLERK_ACCOUNTS_URL, isAuthRedirectError, redirectToSignIn } from "./auth";
 
@@ -230,11 +230,4 @@ export async function triggerSync(
     },
   );
   return data ?? { ok: false, error: `HTTP ${response.status}` };
-}
-
-/**
- * Sign out via the product-scoped sign-out route.
- */
-export function signOut(): void {
-  window.location.href = buildSignOutUrl("/");
 }

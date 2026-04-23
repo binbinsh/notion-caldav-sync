@@ -8,11 +8,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "preact": "^10.25.4"
+    "@clerk/localizations": "^4.5.3",
+    "@clerk/react": "^6.2.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
   },
   "devDependencies": {
-    "@preact/preset-vite": "^2.9.4",
     "@tailwindcss/vite": "^4.1.4",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.1.4",
     "typescript": "^5.9.3",
     "vite": "^6.3.2"

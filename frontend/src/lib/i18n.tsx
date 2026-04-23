@@ -1,5 +1,5 @@
-import { createContext } from "preact";
-import { useContext, useState, useEffect, useCallback } from "preact/hooks";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
 export type Lang = "en" | "zh-hans" | "zh-hant";
 
@@ -28,7 +28,7 @@ export function useI18n() {
   return useContext(I18nContext);
 }
 
-export function I18nProvider({ children }: { children: preact.ComponentChildren }) {
+export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [lang, setLangState] = useState<Lang>(detectLang);
 
   const setLang = useCallback((next: Lang) => {
@@ -64,6 +64,9 @@ export const translations = {
   en: {
     // Common
     brandName: "Notion CalDAV Sync",
+    accountTitle: "Account",
+    closeAccount: "Close account",
+    signOut: "Sign Out",
 
     // Sign-in page
     signInTitle: "Sign In | Notion CalDAV Sync",
@@ -186,8 +189,6 @@ export const translations = {
     syncConfirmOk: "Yes, sync everything",
     syncConfirmCancel: "Cancel",
     saveFailed: "Could not save settings. Please try again.",
-    loggingOut: "Signing out…",
-    logoutBtn: "Sign Out",
 
     // Setup wizard
     setupTitle: "Let's get you set up",
@@ -260,6 +261,9 @@ export const translations = {
 
   "zh-hans": {
     brandName: "Notion CalDAV Sync",
+    accountTitle: "账户",
+    closeAccount: "关闭账户",
+    signOut: "退出登录",
 
     signInTitle: "登录 | Notion CalDAV Sync",
     signInHeadline: "连接 Notion 与 iCloud 日历",
@@ -375,8 +379,6 @@ export const translations = {
     syncConfirmOk: "是的，全量同步",
     syncConfirmCancel: "取消",
     saveFailed: "保存失败，请重试。",
-    loggingOut: "正在登出…",
-    logoutBtn: "登出",
 
     setupTitle: "开始设置",
     setupStep1: "登录 Notion",
@@ -442,6 +444,9 @@ export const translations = {
 
   "zh-hant": {
     brandName: "Notion CalDAV Sync",
+    accountTitle: "帳戶",
+    closeAccount: "關閉帳戶",
+    signOut: "登出",
 
     signInTitle: "登入 | Notion CalDAV Sync",
     signInHeadline: "連接 Notion 與 iCloud 行事曆",
@@ -557,8 +562,6 @@ export const translations = {
     syncConfirmOk: "是的，全量同步",
     syncConfirmCancel: "取消",
     saveFailed: "儲存失敗，請重試。",
-    loggingOut: "正在登出…",
-    logoutBtn: "登出",
 
     setupTitle: "開始設定",
     setupStep1: "登入 Notion",

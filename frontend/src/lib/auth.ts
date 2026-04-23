@@ -19,7 +19,7 @@ export function buildAppUrl(path: string): string {
   return `${window.location.origin}${BASE}${normalizedPath}`;
 }
 
-function buildAuthUrl(path: "/sign-in" | "/sign-out", returnPath: string): string {
+function buildAuthUrl(path: "/sign-in", returnPath: string): string {
   return `${buildAppUrl(path)}?${AUTH_REDIRECT_QUERY_PARAM}=${encodeURIComponent(
     buildAppUrl(returnPath),
   )}`;
@@ -27,10 +27,6 @@ function buildAuthUrl(path: "/sign-in" | "/sign-out", returnPath: string): strin
 
 export function buildSignInUrl(returnPath = "/dashboard"): string {
   return buildAuthUrl("/sign-in", returnPath);
-}
-
-export function buildSignOutUrl(returnPath = "/"): string {
-  return buildAuthUrl("/sign-out", returnPath);
 }
 
 export function redirectToSignIn(returnPath = "/dashboard"): never {

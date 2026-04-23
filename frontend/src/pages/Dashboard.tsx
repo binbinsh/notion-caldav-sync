@@ -1,5 +1,5 @@
-import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import type { FormEvent, ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, type Translations } from "../lib/i18n";
 import { Topbar } from "../components/Topbar";
 import {
@@ -51,11 +51,11 @@ function useToast() {
 function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: number) => void }) {
   if (toasts.length === 0) return null;
   return (
-    <div class="fixed bottom-4 right-4 z-50 grid gap-2 max-w-sm" role="status" aria-live="polite">
+    <div className="fixed bottom-4 right-4 z-50 grid gap-2 max-w-sm" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div
           key={t.id}
-          class={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm shadow-lg border animate-slide-in ${
+          className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm shadow-lg border animate-slide-in ${
             t.type === "error"
               ? "bg-red-soft text-red border-red/10"
               : t.type === "success"
@@ -63,11 +63,11 @@ function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss:
                 : "bg-accent-soft text-accent border-accent/10"
           }`}
         >
-          <span class="flex-1 font-medium">{t.message}</span>
+          <span className="flex-1 font-medium">{t.message}</span>
           <button
             type="button"
             onClick={() => onDismiss(t.id)}
-            class="text-current opacity-50 hover:opacity-100 bg-transparent border-0 cursor-pointer text-base leading-none p-0"
+            className="text-current opacity-50 hover:opacity-100 bg-transparent border-0 cursor-pointer text-base leading-none p-0"
           >
             &times;
           </button>
@@ -105,15 +105,15 @@ function ConfirmDialog({
 
   return (
     <div
-      class="fixed inset-0 z-50 grid place-items-center bg-ink/15 backdrop-blur-sm"
+      className="fixed inset-0 z-50 grid place-items-center bg-ink/15 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
       role="dialog"
       aria-modal="true"
     >
-      <div class="bg-surface rounded-2xl shadow-2xl max-w-sm w-[calc(100%-2rem)] p-6 grid gap-4 animate-fade-in">
-        <h2 class="text-base font-semibold m-0">{title}</h2>
-        <p class="text-sm text-muted m-0 leading-relaxed">{body}</p>
-        <div class="flex items-center justify-end gap-2 pt-1">
+      <div className="bg-surface rounded-2xl shadow-2xl max-w-sm w-[calc(100%-2rem)] p-6 grid gap-4 animate-fade-in">
+        <h2 className="text-base font-semibold m-0">{title}</h2>
+        <p className="text-sm text-muted m-0 leading-relaxed">{body}</p>
+        <div className="flex items-center justify-end gap-2 pt-1">
           <Btn variant="ghost" onClick={onCancel}>{cancelLabel}</Btn>
           <Btn variant="primary" onClick={onConfirm}>{confirmLabel}</Btn>
         </div>
@@ -141,7 +141,7 @@ function Btn({
   loading,
   onClick,
   type = "button",
-  class: className = "",
+  className = "",
   children,
 }: {
   variant?: "primary" | "secondary" | "ghost";
@@ -150,8 +150,8 @@ function Btn({
   loading?: boolean;
   onClick?: () => void;
   type?: "button" | "submit";
-  class?: string;
-  children: ComponentChildren;
+  className?: string;
+  children: ReactNode;
 }) {
   const base = "inline-flex items-center justify-center gap-2 font-semibold transition-all duration-150 border-0 cursor-pointer disabled:opacity-50 disabled:cursor-default";
   const sizeClass =
@@ -170,7 +170,7 @@ function Btn({
       type={type}
       disabled={disabled || loading}
       onClick={onClick}
-      class={`${base} ${sizeClass} ${variantClass} ${className}`}
+      className={`${base} ${sizeClass} ${variantClass} ${className}`}
     >
       {loading && <Spinner small />}
       {children}
@@ -180,13 +180,13 @@ function Btn({
 
 function Card({
   children,
-  class: className = "",
+  className = "",
 }: {
-  children: ComponentChildren;
-  class?: string;
+  children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section class={`bg-surface border border-line rounded-2xl p-6 animate-fade-in ${className}`}>
+    <section className={`bg-surface border border-line rounded-2xl p-6 animate-fade-in ${className}`}>
       {children}
     </section>
   );
@@ -197,7 +197,7 @@ function Badge({
   children,
 }: {
   tone?: "blue" | "green" | "amber" | "red" | "slate";
-  children: ComponentChildren;
+  children: ReactNode;
 }) {
   const cls =
     tone === "green" ? "bg-green/10 text-green" :
@@ -206,7 +206,7 @@ function Badge({
     tone === "blue" ? "bg-accent/10 text-accent" :
     "bg-ink/6 text-muted";
   return (
-    <span class={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${cls}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${cls}`}>
       {children}
     </span>
   );
@@ -215,10 +215,10 @@ function Badge({
 function Spinner({ small }: { small?: boolean }) {
   const size = small ? "w-3.5 h-3.5" : "w-5 h-5";
   return (
-    <svg class={`${size} animate-spin text-current`} viewBox="0 0 24 24" fill="none">
-      <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+    <svg className={`${size} animate-spin text-current`} viewBox="0 0 24 24" fill="none">
+      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path
-        class="opacity-80"
+        className="opacity-80"
         fill="currentColor"
         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
       />
@@ -229,7 +229,7 @@ function Spinner({ small }: { small?: boolean }) {
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
-      class={`inline-block w-2 h-2 rounded-full ${ok ? "bg-green" : "bg-amber"}`}
+      className={`inline-block w-2 h-2 rounded-full ${ok ? "bg-green" : "bg-amber"}`}
       role="img"
       aria-label={ok ? "Connected" : "Not connected"}
     />
@@ -377,10 +377,10 @@ export function DashboardPage() {
   // Loading screen
   if (loading) {
     return (
-      <div class="min-h-screen grid place-items-center">
-        <div class="grid gap-3 text-center">
+      <div className="min-h-screen grid place-items-center">
+        <div className="grid gap-3 text-center">
           <Spinner />
-          <p class="text-muted text-sm">{t("loading")}</p>
+          <p className="text-muted text-sm">{t("loading")}</p>
         </div>
       </div>
     );
@@ -389,9 +389,9 @@ export function DashboardPage() {
   // Error screen
   if (error || !data) {
     return (
-      <div class="min-h-screen grid place-items-center">
-        <div class="grid gap-4 text-center max-w-xs px-4">
-          <p class="text-red text-sm">{error || t("loadError")}</p>
+      <div className="min-h-screen grid place-items-center">
+        <div className="grid gap-4 text-center max-w-xs px-4">
+          <p className="text-red text-sm">{error || t("loadError")}</p>
           <Btn variant="primary" onClick={() => window.location.reload()}>Refresh</Btn>
         </div>
       </div>
@@ -421,25 +421,25 @@ export function DashboardPage() {
         />
       )}
 
-      <main class="max-w-[960px] mx-auto px-6 py-8 pb-16 grid gap-6">
+      <main className="max-w-[960px] mx-auto px-6 py-8 pb-16 grid gap-6">
         {/* Header */}
-        <div class="flex items-end justify-between flex-wrap gap-4">
+        <div className="flex items-end justify-between flex-wrap gap-4">
           <div>
             <h1
-              class={`text-2xl font-bold m-0 tracking-[-0.02em] ${
+              className={`text-2xl font-bold m-0 tracking-[-0.02em] ${
                 lang === "zh-hans" ? "font-serif-sc" : lang === "zh-hant" ? "font-serif-tc" : "font-serif"
               }`}
             >
               {t("greeting")}{userName ? `, ${userName}` : ""}
             </h1>
             {!needsSetup && cfg?.last_full_sync_at && (
-              <p class="text-xs text-subtle mt-1 m-0">
+              <p className="text-xs text-subtle mt-1 m-0">
                 {t("lastSyncLabel")}: {humanizeTimestamp(cfg.last_full_sync_at, t)}
               </p>
             )}
           </div>
           {!needsSetup && data.workspaceId && (
-            <div class="flex gap-2">
+            <div className="flex gap-2">
               <Btn
                 variant="secondary"
                 size="sm"
@@ -491,10 +491,10 @@ export function DashboardPage() {
 
             {/* Notion connection */}
             <Card>
-              <div class="flex items-center justify-between">
+              <div className="flex items-center justify-between">
                 <div>
-                  <h3 class="text-sm font-semibold m-0">Notion</h3>
-                  <p class="text-xs text-muted m-0 mt-0.5">
+                  <h3 className="text-sm font-semibold m-0">Notion</h3>
+                  <p className="text-xs text-muted m-0 mt-0.5">
                     {data.notionConnected ? t("notionOk") : t("notionMissing")}
                   </p>
                 </div>
@@ -507,7 +507,7 @@ export function DashboardPage() {
                 </Btn>
               </div>
               {data.notionConnected && (
-                <div class="mt-5 pt-5 border-t border-line">
+                <div className="mt-5 pt-5 border-t border-line">
                   <NotionBindingCard
                     selectedSourceIds={data.notionBinding?.selectedSourceIds || null}
                     onSave={handleSaveNotionBinding}
@@ -521,10 +521,10 @@ export function DashboardPage() {
             <button
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
-              class="flex items-center gap-2 text-xs font-medium text-muted bg-transparent border-0 cursor-pointer px-0 hover:text-ink transition-colors"
+              className="flex items-center gap-2 text-xs font-medium text-muted bg-transparent border-0 cursor-pointer px-0 hover:text-ink transition-colors"
             >
               <svg
-                class={`w-3 h-3 transition-transform duration-200 ${showAdvanced ? "rotate-90" : ""}`}
+                className={`w-3 h-3 transition-transform duration-200 ${showAdvanced ? "rotate-90" : ""}`}
                 viewBox="0 0 24 24"
                 fill="currentColor"
               >
@@ -534,7 +534,7 @@ export function DashboardPage() {
             </button>
 
             {showAdvanced && (
-              <div class="grid gap-6 animate-expand">
+              <div className="grid gap-6 animate-expand">
                 <SyncDebugCard
                   workspaceId={data.workspaceId}
                   ready={debugReady}
@@ -578,10 +578,10 @@ function SetupWizard({
 
   return (
     <Card>
-      <h2 class="text-lg font-bold m-0 mb-6">{t("setupTitle")}</h2>
+      <h2 className="text-lg font-bold m-0 mb-6">{t("setupTitle")}</h2>
 
       {/* Step indicator */}
-      <div class="flex items-center gap-0 mb-8">
+      <div className="flex items-center gap-0 mb-8">
         {[1, 2, 3, 4].map((step) => {
           const done = currentStep > step;
           const active = currentStep === step;
@@ -593,21 +593,21 @@ function SetupWizard({
                 ? (done ? t("setupStep3Done") : t("setupStep3"))
                 : t("setupStep4");
           return (
-            <div key={step} class="flex-1 flex items-center">
-              <div class="flex flex-col items-center gap-1.5 flex-none">
+            <div key={step} className="flex-1 flex items-center">
+              <div className="flex flex-col items-center gap-1.5 flex-none">
                 <div
-                  class={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center ${
+                  className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center ${
                     done ? "bg-green text-white" : active ? "bg-accent text-white" : "bg-line text-muted"
                   }`}
                 >
                   {done ? "\u2713" : step}
                 </div>
-                <span class={`text-[11px] font-medium text-center max-w-[100px] ${active ? "text-ink" : done ? "text-green" : "text-muted"}`}>
+                <span className={`text-[11px] font-medium text-center max-w-[100px] ${active ? "text-ink" : done ? "text-green" : "text-muted"}`}>
                   {label}
                 </span>
               </div>
               {step < 3 && (
-                <div class={`flex-1 h-px mx-3 ${done ? "bg-green" : "bg-line"}`} />
+                <div className={`flex-1 h-px mx-3 ${done ? "bg-green" : "bg-line"}`} />
               )}
             </div>
           );
@@ -616,12 +616,12 @@ function SetupWizard({
 
       {/* Step content */}
       {currentStep === 1 && (
-        <div class="grid gap-4 text-center py-2">
-          <p class="text-sm text-muted m-0">{t("setupStep1Desc")}</p>
+        <div className="grid gap-4 text-center py-2">
+          <p className="text-sm text-muted m-0">{t("setupStep1Desc")}</p>
           <Btn
             variant="primary"
             size="lg"
-            class="mx-auto"
+            className="mx-auto"
             onClick={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
           >
             {t("connectNotion")}
@@ -630,8 +630,8 @@ function SetupWizard({
       )}
 
       {currentStep === 2 && (
-        <div class="grid gap-4">
-          <p class="text-sm text-muted m-0">{t("setupStep2Desc")}</p>
+        <div className="grid gap-4">
+          <p className="text-sm text-muted m-0">{t("setupStep2Desc")}</p>
           <NotionBindingCard
             selectedSourceIds={data.notionBinding?.selectedSourceIds || null}
             onSave={onSaveNotionBinding}
@@ -642,8 +642,8 @@ function SetupWizard({
       )}
 
       {currentStep === 3 && (
-        <div class="grid gap-4">
-          <p class="text-sm text-muted m-0">{t("setupStep3Desc")}</p>
+        <div className="grid gap-4">
+          <p className="text-sm text-muted m-0">{t("setupStep3Desc")}</p>
           <AppleSettingsCard
             config={data.config}
             credentials={data.appleCredentials}
@@ -655,13 +655,13 @@ function SetupWizard({
       )}
 
       {currentStep === 4 && (
-        <div class="grid gap-4 text-center py-6">
-          <div class="text-4xl">&#127881;</div>
-          <p class="text-sm text-muted m-0">{t("setupStep4Desc")}</p>
+        <div className="grid gap-4 text-center py-6">
+          <div className="text-4xl">&#127881;</div>
+          <p className="text-sm text-muted m-0">{t("setupStep4Desc")}</p>
           <Btn
             variant="primary"
             size="lg"
-            class="mx-auto"
+            className="mx-auto"
             disabled={syncingFull}
             loading={syncingFull}
             onClick={onSync}
@@ -724,7 +724,7 @@ function NotionBindingCard({
       : [...current, sourceId]);
   };
 
-  const handleSubmit = async (e: Event) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (selected.length === 0) {
       setError(t("bindingSelectPrompt"));
@@ -744,12 +744,12 @@ function NotionBindingCard({
   const selectedCount = selectedSourceIds?.length || 0;
 
   return (
-    <Wrapper class="">
+    <Wrapper className="">
       {!forceEditing && (
-        <div class="flex items-center justify-between mb-4 gap-3">
+        <div className="flex items-center justify-between mb-4 gap-3">
           <div>
-            <h3 class="text-sm font-semibold m-0">{t("bindingSection")}</h3>
-            <p class="text-xs text-muted m-0 mt-0.5">
+            <h3 className="text-sm font-semibold m-0">{t("bindingSection")}</h3>
+            <p className="text-xs text-muted m-0 mt-0.5">
               {selectedCount > 0
                 ? t("bindingSelectedCount").replace("{n}", String(selectedCount))
                 : t("bindingLegacyAll")}
@@ -764,39 +764,39 @@ function NotionBindingCard({
       )}
 
       {(forceEditing || editing) ? (
-        <form onSubmit={handleSubmit} class="grid gap-4">
-          <p class="text-sm text-muted m-0">{t("bindingSectionHelp")}</p>
-          {error && <p class="text-xs text-red m-0">{error}</p>}
+        <form onSubmit={handleSubmit} className="grid gap-4">
+          <p className="text-sm text-muted m-0">{t("bindingSectionHelp")}</p>
+          {error && <p className="text-xs text-red m-0">{error}</p>}
           {loading ? (
-            <div class="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <Spinner small />
               {t("loading")}
             </div>
           ) : sources.length === 0 ? (
-            <p class="text-xs text-muted m-0">{t("bindingEmpty")}</p>
+            <p className="text-xs text-muted m-0">{t("bindingEmpty")}</p>
           ) : (
-            <div class="grid gap-2 max-h-72 overflow-auto rounded-xl border border-line bg-bg p-3">
+            <div className="grid gap-2 max-h-72 overflow-auto rounded-xl border border-line bg-bg p-3">
               {sources.map((source) => (
-                <label key={source.id} class="flex items-start gap-3 text-sm text-ink cursor-pointer">
+                <label key={source.id} className="flex items-start gap-3 text-sm text-ink cursor-pointer">
                   <input
                     type="checkbox"
                     checked={selected.includes(source.id)}
                     onChange={() => toggleSource(source.id)}
-                    class="mt-0.5"
+                    className="mt-0.5"
                   />
-                  <span class="leading-relaxed">{source.title}</span>
+                  <span className="leading-relaxed">{source.title}</span>
                 </label>
               ))}
             </div>
           )}
-          <Btn variant="primary" size="lg" type="submit" disabled={saving || loading} loading={saving} class="w-full">
+          <Btn variant="primary" size="lg" type="submit" disabled={saving || loading} loading={saving} className="w-full">
             {saving ? t("saving") : t("bindingSaveBtn")}
           </Btn>
         </form>
       ) : (
-        <div class="grid gap-2">
-          <p class="text-xs text-muted m-0">{t("bindingSectionHelp")}</p>
-          <p class="text-sm text-ink m-0">
+        <div className="grid gap-2">
+          <p className="text-xs text-muted m-0">{t("bindingSectionHelp")}</p>
+          <p className="text-sm text-ink m-0">
             {selectedCount > 0
               ? t("bindingSelectedCount").replace("{n}", String(selectedCount))
               : t("bindingLegacyAll")}
@@ -821,24 +821,24 @@ function SyncStatusBar({
 }) {
   const { t } = useI18n();
   return (
-    <div class="flex flex-wrap items-center gap-4 px-5 py-3 bg-surface border border-line rounded-xl text-sm">
-      <div class="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-4 px-5 py-3 bg-surface border border-line rounded-xl text-sm">
+      <div className="flex items-center gap-2">
         <StatusDot ok={notionConnected} />
-        <span class="text-muted text-xs">Notion</span>
-        <span class="text-ink text-xs font-medium">{notionConnected ? t("notionOk") : t("notionMissing")}</span>
+        <span className="text-muted text-xs">Notion</span>
+        <span className="text-ink text-xs font-medium">{notionConnected ? t("notionOk") : t("notionMissing")}</span>
       </div>
-      <div class="w-px h-4 bg-line" />
-      <div class="flex items-center gap-2">
+      <div className="w-px h-4 bg-line" />
+      <div className="flex items-center gap-2">
         <StatusDot ok={appleConfigured} />
-        <span class="text-muted text-xs">{t("appleLabel")}</span>
-        <span class="text-ink text-xs font-medium">{appleConfigured ? t("appleOk") : t("appleMissing")}</span>
+        <span className="text-muted text-xs">{t("appleLabel")}</span>
+        <span className="text-ink text-xs font-medium">{appleConfigured ? t("appleOk") : t("appleMissing")}</span>
       </div>
       {workspaceName && (
         <>
-          <div class="w-px h-4 bg-line" />
-          <div class="flex items-center gap-2">
-            <span class="text-muted text-xs">{t("workspaceLabel")}</span>
-            <span class="text-ink text-xs font-medium truncate max-w-[140px]">{workspaceName}</span>
+          <div className="w-px h-4 bg-line" />
+          <div className="flex items-center gap-2">
+            <span className="text-muted text-xs">{t("workspaceLabel")}</span>
+            <span className="text-ink text-xs font-medium truncate max-w-[140px]">{workspaceName}</span>
           </div>
         </>
       )}
@@ -883,7 +883,7 @@ function AppleSettingsCard({
     setDayTz((cur) => cur || tz);
   }, []);
 
-  const handleSubmit = async (e: Event) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!editing) return;
     if (!credentials?.hasAppleId && !appleId.trim()) return;
@@ -911,10 +911,10 @@ function AppleSettingsCard({
   const Wrapper = compact ? "div" : Card;
 
   return (
-    <Wrapper class="">
+    <Wrapper className="">
       {!forceEditing && (
-        <div class="flex items-center justify-between mb-5">
-          <h3 class="text-sm font-semibold m-0">{t("appleSection")}</h3>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-sm font-semibold m-0">{t("appleSection")}</h3>
           {!editing && (
             <Btn variant="ghost" size="sm" onClick={() => setEditing(true)}>
               {t("editBtn")}
@@ -922,9 +922,9 @@ function AppleSettingsCard({
           )}
         </div>
       )}
-      <form onSubmit={handleSubmit} class="grid gap-4">
+      <form onSubmit={handleSubmit} className="grid gap-4">
         {/* Credentials row */}
-        <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
           <SecretField
             id="apple_id"
             label={t("appleIdLabel")}
@@ -933,7 +933,7 @@ function AppleSettingsCard({
             inputMode="email"
             autoComplete="email"
             autoCapitalize="none"
-            spellcheck={false}
+            spellCheck={false}
             required={!credentials?.hasAppleId}
             placeholder="you@example.com"
             maskedValue={credentials?.appleIdMasked || ""}
@@ -941,14 +941,14 @@ function AppleSettingsCard({
             value={appleId}
             onInput={setAppleId}
           />
-          <div class="grid gap-1.5">
+          <div className="grid gap-1.5">
             <SecretField
               id="apple_app_password"
               label={t("appPwLabel")}
               help={
                 <>
                   {t("appPwHelpPrefix")}
-                  <a href={APPLE_ACCOUNT_URL} target="_blank" rel="noreferrer" class="underline underline-offset-2 hover:text-ink">
+                  <a href={APPLE_ACCOUNT_URL} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-ink">
                     {t("appPwHelpLinkLabel")}
                   </a>
                   {t("appPwHelpSuffix")}
@@ -966,7 +966,7 @@ function AppleSettingsCard({
               <button
                 type="button"
                 onClick={() => setShowPwHelp(!showPwHelp)}
-                class="text-left text-[11px] text-accent bg-transparent border-0 cursor-pointer p-0 hover:underline"
+                className="text-left text-[11px] text-accent bg-transparent border-0 cursor-pointer p-0 hover:underline"
               >
                 {t("appPwExplainerTitle")}
               </button>
@@ -975,10 +975,10 @@ function AppleSettingsCard({
         </div>
 
         {showPwHelp && (
-          <div class="rounded-xl bg-accent/[0.04] border border-accent/10 p-4 grid gap-2">
-            <p class="text-sm font-semibold text-ink m-0">{t("appPwExplainerTitle")}</p>
-            <p class="text-xs text-muted m-0">{t("appPwExplainerBody")}</p>
-            <ol class="text-xs text-muted m-0 pl-5 grid gap-1">
+          <div className="rounded-xl bg-accent/[0.04] border border-accent/10 p-4 grid gap-2">
+            <p className="text-sm font-semibold text-ink m-0">{t("appPwExplainerTitle")}</p>
+            <p className="text-xs text-muted m-0">{t("appPwExplainerBody")}</p>
+            <ol className="text-xs text-muted m-0 pl-5 grid gap-1">
               <li>{t("appPwExplainerStep1")}</li>
               <li>{t("appPwExplainerStep2")}</li>
               <li>{t("appPwExplainerStep3")}</li>
@@ -988,68 +988,68 @@ function AppleSettingsCard({
         )}
 
         {/* Calendar name + color */}
-        <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
           <Field id="calendar_name" label={t("calNameLabel")} help={t("calNameHelp")} value={calName} onInput={setCalName} disabled={!editing} />
-          <div class="grid gap-1.5">
-            <label for="calendar_color" class="text-xs font-medium text-muted">{t("calColorLabel")}</label>
-            <div class={INPUT_SHELL_CLASS}>
+          <div className="grid gap-1.5">
+            <label htmlFor="calendar_color" className="text-xs font-medium text-muted">{t("calColorLabel")}</label>
+            <div className={INPUT_SHELL_CLASS}>
               <input
                 id="calendar_color" value={color}
                 onInput={(e) => setColor((e.target as HTMLInputElement).value)}
                 placeholder="#FF7F00" disabled={!editing}
-                class={INPUT_CONTROL_CLASS}
+                className={INPUT_CONTROL_CLASS}
               />
-              <label class={`${INPUT_SUFFIX_CLASS} ${editing ? "cursor-pointer" : "cursor-default"}`}>
-                <span class="font-mono text-[11px] text-muted">{color}</span>
+              <label className={`${INPUT_SUFFIX_CLASS} ${editing ? "cursor-pointer" : "cursor-default"}`}>
+                <span className="font-mono text-[11px] text-muted">{color}</span>
                 <input
                   type="color" value={color}
                   onInput={(e) => setColor((e.target as HTMLInputElement).value)}
                   disabled={!editing}
-                  class="h-6 w-6 rounded border-0 bg-transparent p-0 cursor-pointer disabled:cursor-default disabled:opacity-50"
+                  className="h-6 w-6 rounded border-0 bg-transparent p-0 cursor-pointer disabled:cursor-default disabled:opacity-50"
                 />
               </label>
             </div>
-            <span class="text-[11px] text-subtle">{t("calColorHelp")}</span>
+            <span className="text-[11px] text-subtle">{t("calColorHelp")}</span>
           </div>
         </div>
 
         {/* Timezones */}
-        <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
           <TimezoneField id="calendar_timezone" label={t("tzLabel")} help={t("tzHelp")} value={calTz} onInput={setCalTz} disabled={!editing} />
           <TimezoneField id="date_only_timezone" label={t("allDayTzLabel")} help={t("allDayTzHelp")} value={dayTz} onInput={setDayTz} disabled={!editing} />
         </div>
 
         {/* Intervals */}
-        <div class="grid grid-cols-2 max-md:grid-cols-1 gap-4">
-          <div class="grid gap-1.5">
-            <label for="poll_interval_minutes" class="text-xs font-medium text-muted">{t("checkEveryLabel")}</label>
-            <div class={INPUT_SHELL_CLASS}>
+        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+          <div className="grid gap-1.5">
+            <label htmlFor="poll_interval_minutes" className="text-xs font-medium text-muted">{t("checkEveryLabel")}</label>
+            <div className={INPUT_SHELL_CLASS}>
               <input
                 id="poll_interval_minutes" type="number" min="1" value={pollInterval}
                 onInput={(e) => setPollInterval((e.target as HTMLInputElement).value)}
                 disabled={!editing}
-                class={INPUT_CONTROL_CLASS}
+                className={INPUT_CONTROL_CLASS}
               />
-              <span class={INPUT_SUFFIX_CLASS}>{t("checkEveryUnit")}</span>
+              <span className={INPUT_SUFFIX_CLASS}>{t("checkEveryUnit")}</span>
             </div>
           </div>
-          <div class="grid gap-1.5">
-            <label for="full_sync_interval_minutes" class="text-xs font-medium text-muted">{t("fullSyncEveryLabel")}</label>
-            <div class={INPUT_SHELL_CLASS}>
+          <div className="grid gap-1.5">
+            <label htmlFor="full_sync_interval_minutes" className="text-xs font-medium text-muted">{t("fullSyncEveryLabel")}</label>
+            <div className={INPUT_SHELL_CLASS}>
               <input
                 id="full_sync_interval_minutes" type="number" min="15" value={fullSyncInterval}
                 onInput={(e) => setFullSyncInterval((e.target as HTMLInputElement).value)}
                 disabled={!editing}
-                class={INPUT_CONTROL_CLASS}
+                className={INPUT_CONTROL_CLASS}
               />
-              <span class={INPUT_SUFFIX_CLASS}>{t("fullSyncEveryUnit")}</span>
+              <span className={INPUT_SUFFIX_CLASS}>{t("fullSyncEveryUnit")}</span>
             </div>
           </div>
         </div>
 
         {/* Save button */}
         {editing && (
-          <Btn variant="primary" size="lg" type="submit" disabled={saving} loading={saving} class="w-full mt-1">
+          <Btn variant="primary" size="lg" type="submit" disabled={saving} loading={saving} className="w-full mt-1">
             {saving ? t("saving") : t("saveBtn")}
           </Btn>
         )}
@@ -1088,10 +1088,10 @@ function SyncDebugCard({
 
   return (
     <Card>
-      <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
         <div>
-          <h3 class="text-sm font-semibold m-0">{t("debugLabel")}</h3>
-          <p class="text-xs text-muted m-0 mt-0.5">{t("debugHelp")}</p>
+          <h3 className="text-sm font-semibold m-0">{t("debugLabel")}</h3>
+          <p className="text-xs text-muted m-0 mt-0.5">{t("debugHelp")}</p>
         </div>
         <Btn
           variant="secondary"
@@ -1105,22 +1105,22 @@ function SyncDebugCard({
       </div>
 
       {!workspaceId ? (
-        <p class="text-xs text-muted">{t("debugNoWorkspace")}</p>
+        <p className="text-xs text-muted">{t("debugNoWorkspace")}</p>
       ) : !ready ? (
-        <p class="text-xs text-muted">{t("debugUnavailable")}</p>
+        <p className="text-xs text-muted">{t("debugUnavailable")}</p>
       ) : loading && !snapshot ? (
-        <div class="flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <Spinner small />
-          <p class="text-xs text-muted m-0">{t("debugLoading")}</p>
+          <p className="text-xs text-muted m-0">{t("debugLoading")}</p>
         </div>
       ) : error ? (
-        <p class="text-xs text-red">{error}</p>
+        <p className="text-xs text-red">{error}</p>
       ) : !snapshot ? (
-        <p class="text-xs text-muted">{t("debugEmpty")}</p>
+        <p className="text-xs text-muted">{t("debugEmpty")}</p>
       ) : (
-        <div class="grid gap-4">
+        <div className="grid gap-4">
           {/* Metric chips */}
-          <div class="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <MetricChip label={t("debugNotionCount")} value={snapshot.summary.notionTaskCount} />
             <MetricChip label={t("debugCalendarCount")} value={snapshot.summary.managedCalendarEventCount} />
             <MetricChip label={t("debugLedgerCount")} value={snapshot.summary.ledgerRecordCount} />
@@ -1128,10 +1128,10 @@ function SyncDebugCard({
             <MetricChip label={t("debugWarningCount")} value={snapshot.summary.warningCount} tone={snapshot.summary.warningCount > 0 ? "red" : undefined} />
           </div>
 
-          <p class="text-[11px] text-subtle m-0">
+          <p className="text-[11px] text-subtle m-0">
             {t("debugGeneratedAt")}: {formatTimestamp(snapshot.generatedAt)}
             {" \u00b7 "}
-            <span class="font-mono">{snapshot.calendarHref}</span>
+            <span className="font-mono">{snapshot.calendarHref}</span>
           </p>
 
           {/* Debug sections */}
@@ -1141,28 +1141,28 @@ function SyncDebugCard({
 
           {/* Unmanaged events */}
           {snapshot.unmanagedCalendarEvents.length > 0 && (
-            <div class="grid gap-2">
-              <h4 class="text-xs font-semibold m-0">{t("debugUnmanagedSection")}</h4>
-              <p class="text-[11px] text-muted m-0">{t("debugUnmanagedHelp")}</p>
-              <div class="overflow-x-auto">
-                <table class="w-full text-xs border-collapse">
+            <div className="grid gap-2">
+              <h4 className="text-xs font-semibold m-0">{t("debugUnmanagedSection")}</h4>
+              <p className="text-[11px] text-muted m-0">{t("debugUnmanagedHelp")}</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
                   <thead>
-                    <tr class="text-left text-[11px] text-muted border-b border-line">
-                      <th class="py-2 pr-3 font-semibold">{tableLabels.item}</th>
-                      <th class="py-2 pr-3 font-semibold">{tableLabels.schedule}</th>
-                      <th class="py-2 font-semibold">{tableLabels.notes}</th>
+                    <tr className="text-left text-[11px] text-muted border-b border-line">
+                      <th className="py-2 pr-3 font-semibold">{tableLabels.item}</th>
+                      <th className="py-2 pr-3 font-semibold">{tableLabels.schedule}</th>
+                      <th className="py-2 font-semibold">{tableLabels.notes}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {snapshot.unmanagedCalendarEvents.map((ev) => (
-                      <tr key={ev.href} class="align-top border-b border-line/50 last:border-0">
-                        <td class="py-2 pr-3">
-                          <span class="font-medium text-ink truncate block max-w-[280px]" title={ev.title || ev.href}>
+                      <tr key={ev.href} className="align-top border-b border-line/50 last:border-0">
+                        <td className="py-2 pr-3">
+                          <span className="font-medium text-ink truncate block max-w-[280px]" title={ev.title || ev.href}>
                             {ev.title || ev.href.split("/").pop() || ev.href}
                           </span>
                         </td>
-                        <td class="py-2 pr-3 whitespace-nowrap text-muted">{formatDateRange(ev.startDate, ev.endDate)}</td>
-                        <td class="py-2 text-muted truncate max-w-[300px]" title={ev.href}>{ev.href}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap text-muted">{formatDateRange(ev.startDate, ev.endDate)}</td>
+                        <td className="py-2 text-muted truncate max-w-[300px]" title={ev.href}>{ev.href}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1179,9 +1179,9 @@ function SyncDebugCard({
 function MetricChip({ label, value, tone }: { label: string; value: number; tone?: "amber" | "red" }) {
   const cls = tone === "red" ? "border-red/15 text-red" : tone === "amber" ? "border-amber/15 text-amber" : "border-line text-ink";
   return (
-    <div class={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-bg text-xs ${cls}`}>
-      <span class="text-muted font-medium">{label}</span>
-      <span class="font-bold">{value}</span>
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-bg text-xs ${cls}`}>
+      <span className="text-muted font-medium">{label}</span>
+      <span className="font-bold">{value}</span>
     </div>
   );
 }
@@ -1196,18 +1196,18 @@ function DebugSection({
   const [expanded, setExpanded] = useState(section.tone === "red" || section.tone === "amber");
 
   return (
-    <div class="rounded-xl border border-line bg-bg">
+    <div className="rounded-xl border border-line bg-bg">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        class="w-full flex items-center justify-between gap-3 px-4 py-3 bg-transparent border-0 cursor-pointer text-left"
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-transparent border-0 cursor-pointer text-left"
       >
-        <div class="flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <Badge tone={section.tone}>{section.title}</Badge>
-          <span class="text-xs text-muted">{section.entries.length}</span>
+          <span className="text-xs text-muted">{section.entries.length}</span>
         </div>
         <svg
-          class={`w-3.5 h-3.5 text-muted transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+          className={`w-3.5 h-3.5 text-muted transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
           viewBox="0 0 24 24"
           fill="currentColor"
         >
@@ -1215,16 +1215,16 @@ function DebugSection({
         </svg>
       </button>
       {expanded && (
-        <div class="px-4 pb-3 overflow-x-auto">
-          <p class="text-[11px] text-muted m-0 mb-2">{section.description}</p>
-          <table class="w-full text-xs border-collapse">
+        <div className="px-4 pb-3 overflow-x-auto">
+          <p className="text-[11px] text-muted m-0 mb-2">{section.description}</p>
+          <table className="w-full text-xs border-collapse">
             <thead>
-              <tr class="text-left text-[11px] text-muted border-b border-line">
-                <th class="py-1.5 pr-3 font-semibold">{tableLabels.item}</th>
-                <th class="py-1.5 pr-3 font-semibold">{tableLabels.schedule}</th>
-                <th class="py-1.5 pr-3 font-semibold">{tableLabels.action}</th>
-                <th class="py-1.5 pr-3 font-semibold">{tableLabels.sync}</th>
-                <th class="py-1.5 font-semibold">{tableLabels.notes}</th>
+              <tr className="text-left text-[11px] text-muted border-b border-line">
+                <th className="py-1.5 pr-3 font-semibold">{tableLabels.item}</th>
+                <th className="py-1.5 pr-3 font-semibold">{tableLabels.schedule}</th>
+                <th className="py-1.5 pr-3 font-semibold">{tableLabels.action}</th>
+                <th className="py-1.5 pr-3 font-semibold">{tableLabels.sync}</th>
+                <th className="py-1.5 font-semibold">{tableLabels.notes}</th>
               </tr>
             </thead>
             <tbody>
@@ -1249,26 +1249,26 @@ function DebugEntryRow({ entry }: { entry: SyncDebugEntry }) {
   );
 
   return (
-    <tr class="align-top border-b border-line/50 last:border-0" title={tooltip}>
-      <td class="py-2 pr-3 max-w-[240px]">
-        <div class="flex items-center gap-1.5">
-          <span class="font-medium text-ink truncate">{entry.title}</span>
+    <tr className="align-top border-b border-line/50 last:border-0" title={tooltip}>
+      <td className="py-2 pr-3 max-w-[240px]">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-ink truncate">{entry.title}</span>
           <Badge tone="slate">{formatRelation(entry.relation, t)}</Badge>
         </div>
       </td>
-      <td class="py-2 pr-3 whitespace-nowrap text-muted">{schedule}</td>
-      <td class="py-2 pr-3">
-        <div class="flex items-center gap-1.5 flex-nowrap whitespace-nowrap">
+      <td className="py-2 pr-3 whitespace-nowrap text-muted">{schedule}</td>
+      <td className="py-2 pr-3">
+        <div className="flex items-center gap-1.5 flex-nowrap whitespace-nowrap">
           <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
           {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
           {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
         </div>
       </td>
-      <td class="py-2 pr-3 whitespace-nowrap text-[11px] text-muted">
+      <td className="py-2 pr-3 whitespace-nowrap text-[11px] text-muted">
         N:{formatOperation(entry.operations.notion, t)} C:{formatOperation(entry.operations.calendar, t)} L:{formatOperation(entry.operations.ledger, t)}
       </td>
-      <td class="py-2 max-w-[300px]">
-        <span class="text-muted truncate block" title={tooltip}>{notes}</span>
+      <td className="py-2 max-w-[300px]">
+        <span className="text-muted truncate block" title={tooltip}>{notes}</span>
       </td>
     </tr>
   );
@@ -1281,37 +1281,37 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
   const { t } = useI18n();
   return (
     <Card>
-      <h3 class="text-sm font-semibold m-0 mb-4">{t("webhookLogLabel")}</h3>
+      <h3 className="text-sm font-semibold m-0 mb-4">{t("webhookLogLabel")}</h3>
       {logs.length === 0 ? (
-        <p class="text-xs text-muted">{t("webhookLogEmpty")}</p>
+        <p className="text-xs text-muted">{t("webhookLogEmpty")}</p>
       ) : (
-        <div class="overflow-x-auto">
-          <table class="w-full text-xs border-collapse">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
             <thead>
-              <tr class="text-left text-[11px] text-muted border-b border-line">
-                <th class="py-2 pr-3 font-semibold">{t("webhookLogTime")}</th>
-                <th class="py-2 pr-3 font-semibold">{t("webhookLogEvents")}</th>
-                <th class="py-2 pr-3 font-semibold">{t("webhookLogPages")}</th>
-                <th class="py-2 font-semibold">{t("webhookLogResult")}</th>
+              <tr className="text-left text-[11px] text-muted border-b border-line">
+                <th className="py-2 pr-3 font-semibold">{t("webhookLogTime")}</th>
+                <th className="py-2 pr-3 font-semibold">{t("webhookLogEvents")}</th>
+                <th className="py-2 pr-3 font-semibold">{t("webhookLogPages")}</th>
+                <th className="py-2 font-semibold">{t("webhookLogResult")}</th>
               </tr>
             </thead>
             <tbody>
               {logs.map((log) => (
-                <tr key={log.id} class="border-b border-line/50 last:border-0">
-                  <td class="py-2 pr-3 text-ink whitespace-nowrap" title={formatTimestamp(log.createdAt)}>
+                <tr key={log.id} className="border-b border-line/50 last:border-0">
+                  <td className="py-2 pr-3 text-ink whitespace-nowrap" title={formatTimestamp(log.createdAt)}>
                     {humanizeTimestamp(log.createdAt, t)}
                   </td>
-                  <td class="py-2 pr-3 text-muted">
+                  <td className="py-2 pr-3 text-muted">
                     {Array.isArray(log.eventTypes) && log.eventTypes.length > 0
                       ? log.eventTypes.map((et) => et.replace("page.", "")).join(", ")
                       : "\u2014"}
                   </td>
-                  <td class="py-2 pr-3 text-muted font-mono">
+                  <td className="py-2 pr-3 text-muted font-mono">
                     {Array.isArray(log.pageIds) && log.pageIds.length > 0
                       ? `${log.pageIds.length} page${log.pageIds.length > 1 ? "s" : ""}`
                       : "\u2014"}
                   </td>
-                  <td class="py-2">
+                  <td className="py-2">
                     <Badge tone={log.result && (log.result as Record<string, unknown>).ok ? "green" : "red"}>
                       {log.result && (log.result as Record<string, unknown>).ok ? "OK" : "Error"}
                     </Badge>
@@ -1332,29 +1332,29 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
 function TimezoneField({
   id, label, help, value, onInput, disabled,
 }: {
-  id: string; label: string; help: ComponentChildren; value: string; onInput: (v: string) => void; disabled?: boolean;
+  id: string; label: string; help: ReactNode; value: string; onInput: (v: string) => void; disabled?: boolean;
 }) {
   const resolvedValue = normalizeTimezoneValue(value) || detectIanaTimezone() || "UTC";
   const hasOption = TIMEZONE_OPTIONS.some((o) => o.value === resolvedValue);
   const options = hasOption ? TIMEZONE_OPTIONS : [{ value: resolvedValue, label: formatTimezoneOptionLabel(resolvedValue) }, ...TIMEZONE_OPTIONS];
 
   return (
-    <div class="grid gap-1.5">
-      <label for={id} class="text-xs font-medium text-muted">{label}</label>
-      <div class={`${INPUT_SHELL_CLASS} relative`}>
+    <div className="grid gap-1.5">
+      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
+      <div className={`${INPUT_SHELL_CLASS} relative`}>
         <select
           id={id} name={id} value={resolvedValue}
           onInput={(e) => onInput((e.target as HTMLSelectElement).value)}
           disabled={disabled}
-          class={`${INPUT_CONTROL_CLASS} appearance-none pr-9`}
+          className={`${INPUT_CONTROL_CLASS} appearance-none pr-9`}
         >
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.512a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+        <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.512a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>
       </div>
-      <span class="text-[11px] text-subtle">{help}</span>
+      <span className="text-[11px] text-subtle">{help}</span>
     </div>
   );
 }
@@ -1362,33 +1362,33 @@ function TimezoneField({
 function Field({
   id, label, help, type = "text", required, placeholder, value, onInput, disabled,
 }: {
-  id: string; label: string; help: ComponentChildren; type?: string; required?: boolean; placeholder?: string; value: string; onInput: (v: string) => void; disabled?: boolean;
+  id: string; label: string; help: ReactNode; type?: string; required?: boolean; placeholder?: string; value: string; onInput: (v: string) => void; disabled?: boolean;
 }) {
   return (
-    <div class="grid gap-1.5">
-      <label for={id} class="text-xs font-medium text-muted">{label}</label>
+    <div className="grid gap-1.5">
+      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
       <input
         id={id} name={id} type={type} required={required} placeholder={placeholder}
         value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
         disabled={disabled}
-        class={INPUT_CLASS}
+        className={INPUT_CLASS}
       />
-      <span class="text-[11px] text-subtle">{help}</span>
+      <span className="text-[11px] text-subtle">{help}</span>
     </div>
   );
 }
 
 function SecretField({
-  id, label, help, type = "text", inputMode, autoComplete, autoCapitalize, spellcheck, required, placeholder, maskedValue, editable, value, onInput,
+  id, label, help, type = "text", inputMode, autoComplete, autoCapitalize, spellCheck, required, placeholder, maskedValue, editable, value, onInput,
 }: {
   id: string;
   label: string;
-  help: ComponentChildren;
+  help: ReactNode;
   type?: string;
   inputMode?: "text" | "email" | "numeric" | "decimal" | "search" | "tel" | "url" | "none";
   autoComplete?: string;
   autoCapitalize?: "none" | "off" | "on" | "sentences" | "words" | "characters";
-  spellcheck?: boolean;
+  spellCheck?: boolean;
   required?: boolean;
   placeholder?: string;
   maskedValue?: string;
@@ -1397,22 +1397,22 @@ function SecretField({
   onInput: (v: string) => void;
 }) {
   return (
-    <div class="grid gap-1.5">
-      <label for={id} class="text-xs font-medium text-muted">{label}</label>
+    <div className="grid gap-1.5">
+      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
       <input
         id={id} name={id} type={editable ? type : "text"}
         inputMode={editable ? inputMode : undefined}
         autoComplete={autoComplete}
         autoCapitalize={autoCapitalize}
-        spellcheck={spellcheck}
+        spellCheck={spellCheck}
         required={editable && required}
         placeholder={editable ? placeholder : undefined}
         value={editable ? value : maskedValue}
         onInput={(e) => onInput((e.target as HTMLInputElement).value)}
         disabled={!editable}
-        class={INPUT_CLASS}
+        className={INPUT_CLASS}
       />
-      <span class="text-[11px] text-subtle">{help}</span>
+      <span className="text-[11px] text-subtle">{help}</span>
     </div>
   );
 }
