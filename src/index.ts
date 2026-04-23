@@ -26,6 +26,10 @@ import {
   upsertTenantSecret,
   insertWebhookLog,
   getRecentWebhookLogs,
+  listNotionDataSources,
+  replaceNotionDataSources,
+  updateTenantStatusSettings,
+  type NotionDataSourceInput,
 } from "./db/tenant-repo";
 export { TenantSyncObject } from "./durable/tenant-sync";
 import { decryptSecret, encryptSecret, requireMasterKey } from "./lib/secrets";
@@ -411,6 +415,236 @@ app.post("/api/notion/sources", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// Data sources: per-DS config (property mapping, status vocab, emoji)
+// Single-PUT semantics: GET returns the full list; PUT replaces it entirely.
+// ---------------------------------------------------------------------------
+
+// Property types we surface to the UI for each mapping dropdown. Anything else
+// is still listed but callers can filter client-side if they want.
+type NotionPropertySchema = {
+  name: string;
+  type: string;
+};
+
+async function loadCompatibleNotionSourcesWithSchema(
+  notionClient: ReturnType<typeof createNotionClient>,
+): Promise<Array<{ id: string; title: string; properties: NotionPropertySchema[] }>> {
+  const databases = await listDatabases(notionClient);
+  const results = await Promise.all(
+    databases.map(async (database) => {
+      const properties = await getDatabaseProperties(notionClient, database.id);
+      if (!isTaskProperties(properties)) {
+        return null;
+      }
+      const title = await getDatabaseTitle(notionClient, database.id);
+      const propertyList: NotionPropertySchema[] = Object.entries(properties).map(
+        ([name, spec]) => ({
+          name,
+          type: typeof spec === "object" && spec && "type" in spec ? String((spec as { type?: unknown }).type || "") : "",
+        }),
+      );
+      return { id: database.id, title, properties: propertyList };
+    }),
+  );
+  return results
+    .filter((value): value is { id: string; title: string; properties: NotionPropertySchema[] } => Boolean(value))
+    .sort((left, right) => left.title.localeCompare(right.title));
+}
+
+app.get("/api/data-sources", async (c) => {
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson: true,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+  const tenantId = authResult;
+
+  const clerk = c.get("clerk");
+  const notionToken = await getNotionOAuthToken(clerk, tenantId);
+  if (!notionToken) {
+    return c.json({ ok: false, error: "Please connect your Notion account first." }, 400);
+  }
+
+  const notionClient = createNotionClient(notionToken, c.env.NOTION_API_VERSION || NOTION_VERSION);
+  const [sources, storedRows, config] = await Promise.all([
+    loadCompatibleNotionSourcesWithSchema(notionClient),
+    listNotionDataSources(c.env.AUTH_DB, tenantId),
+    getTenantConfigByTenantId(c.env.AUTH_DB, tenantId),
+  ]);
+
+  const storedBySourceId = new Map(storedRows.map((row) => [row.source_id, row]));
+  // Fallback enabled set: if the new DS table has no rows yet, respect the
+  // legacy selected_notion_source_ids_json so the UI renders existing
+  // selections for users who haven't saved in the new UI yet.
+  const legacySelected = storedRows.length > 0
+    ? null
+    : new Set(parseSelectedNotionSourceIds(config?.selected_notion_source_ids_json ?? null) || []);
+
+  const merged = sources.map((source) => {
+    const stored = storedBySourceId.get(source.id);
+    const enabled = stored
+      ? Boolean(stored.enabled)
+      : legacySelected
+        ? legacySelected.has(source.id)
+        : false;
+    return {
+      id: source.id,
+      title: source.title,
+      enabled,
+      properties: source.properties,
+      propertyMapping: stored?.property_mapping_json ? safeJsonParse(stored.property_mapping_json) : null,
+      statusVocabOverrides: stored?.status_vocab_overrides_json
+        ? safeJsonParse(stored.status_vocab_overrides_json)
+        : null,
+    };
+  });
+
+  return c.json({
+    ok: true,
+    sources: merged,
+    tenantDefaults: {
+      statusEmojiStyle: config?.status_emoji_style || null,
+      statusEmojiOverrides: config?.status_emoji_overrides_json
+        ? safeJsonParse(config.status_emoji_overrides_json)
+        : null,
+      statusVocabOverrides: config?.status_vocab_overrides_json
+        ? safeJsonParse(config.status_vocab_overrides_json)
+        : null,
+    },
+  });
+});
+
+app.put("/api/data-sources", async (c) => {
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson: true,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+  const tenantId = authResult;
+
+  const body = (await c.req.raw.json().catch(() => ({}))) as Record<string, unknown>;
+  const rawSources = Array.isArray(body.sources) ? body.sources : null;
+  if (!rawSources) {
+    return c.json({ ok: false, error: "Expected `sources` array." }, 400);
+  }
+
+  // Validate each source against Notion to ensure the caller isn't writing
+  // arbitrary rows. This also gives us up-to-date titles.
+  const clerk = c.get("clerk");
+  const notionToken = await getNotionOAuthToken(clerk, tenantId);
+  if (!notionToken) {
+    return c.json({ ok: false, error: "Please connect your Notion account first." }, 400);
+  }
+  const notionClient = createNotionClient(notionToken, c.env.NOTION_API_VERSION || NOTION_VERSION);
+  const available = await loadCompatibleNotionSourcesWithSchema(notionClient);
+  const availableById = new Map(available.map((s) => [s.id, s]));
+
+  const inputs: NotionDataSourceInput[] = [];
+  const enabledIds: string[] = [];
+  for (const raw of rawSources) {
+    if (!raw || typeof raw !== "object") continue;
+    const rec = raw as Record<string, unknown>;
+    const sourceId = normalizeText(rec.id);
+    if (!sourceId) continue;
+    const source = availableById.get(sourceId);
+    if (!source) continue; // Silently drop rows that no longer exist in Notion.
+
+    const enabled = Boolean(rec.enabled);
+    if (enabled) enabledIds.push(sourceId);
+
+    const propertyMapping = sanitizePropertyMappingInput(rec.propertyMapping);
+    const statusVocabOverrides = sanitizeStatusVocabInput(rec.statusVocabOverrides);
+
+    inputs.push({
+      sourceId,
+      title: source.title,
+      enabled,
+      propertyMappingJson: propertyMapping ? JSON.stringify(propertyMapping) : null,
+      statusVocabOverridesJson: statusVocabOverrides ? JSON.stringify(statusVocabOverrides) : null,
+    });
+  }
+
+  await replaceNotionDataSources(c.env.AUTH_DB, tenantId, inputs);
+
+  // Dual-write: keep the legacy column in sync for one release so rollback is
+  // safe and the old UI path keeps working.
+  await upsertTenantConfig(c.env.AUTH_DB, {
+    tenantId,
+    organizationId: null,
+    userId: tenantId,
+    calendarName: null,
+    calendarColor: null,
+    calendarTimezone: null,
+    dateOnlyTimezone: null,
+    pollIntervalMinutes: null,
+    fullSyncIntervalMinutes: null,
+    notionWorkspaceId: null,
+    notionWorkspaceName: null,
+    notionBotId: null,
+    selectedNotionSourceIdsJson: JSON.stringify(enabledIds),
+  });
+
+  return c.json({ ok: true, count: inputs.length, enabled: enabledIds.length });
+});
+
+app.put("/api/tenant/status-settings", async (c) => {
+  const authResult = requireAuthenticatedUser(c, {
+    wantsJson: true,
+    returnPath: servicePath(c, "/dashboard"),
+    jsonError: "Please sign in to continue.",
+  });
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+  const tenantId = authResult;
+
+  const body = (await c.req.raw.json().catch(() => ({}))) as Record<string, unknown>;
+  const statusEmojiStyle = sanitizeEmojiStyle(body.statusEmojiStyle);
+  const statusEmojiOverrides = sanitizeStringRecord(body.statusEmojiOverrides);
+  const statusVocabOverrides = sanitizeStatusVocabInput(body.statusVocabOverrides);
+
+  // Ensure a config row exists (updateTenantStatusSettings is a plain UPDATE).
+  const existing = await getTenantConfigByTenantId(c.env.AUTH_DB, tenantId);
+  if (!existing) {
+    await upsertTenantConfig(c.env.AUTH_DB, {
+      tenantId,
+      organizationId: null,
+      userId: tenantId,
+      calendarName: null,
+      calendarColor: null,
+      calendarTimezone: null,
+      dateOnlyTimezone: null,
+      pollIntervalMinutes: null,
+      fullSyncIntervalMinutes: null,
+      notionWorkspaceId: null,
+      notionWorkspaceName: null,
+      notionBotId: null,
+      selectedNotionSourceIdsJson: null,
+    });
+  }
+
+  await updateTenantStatusSettings(c.env.AUTH_DB, {
+    tenantId,
+    statusEmojiStyle,
+    statusEmojiOverridesJson: statusEmojiOverrides ? JSON.stringify(statusEmojiOverrides) : null,
+    statusVocabOverridesJson: statusVocabOverrides ? JSON.stringify(statusVocabOverrides) : null,
+  });
+
+  return c.json({
+    ok: true,
+    statusEmojiStyle,
+    statusEmojiOverrides,
+    statusVocabOverrides,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/webhooks/recent
 // ---------------------------------------------------------------------------
 
@@ -419,7 +653,7 @@ app.get("/api/webhooks/recent", async (c) => {
   if (!userId) {
     return c.json({ logs: [] }, 401);
   }
-  const logs = await getRecentWebhookLogs(c.env.AUTH_DB, 10);
+  const logs = await getRecentWebhookLogs(c.env.AUTH_DB, 10, userId);
   return c.json({
     logs: logs.map((log) => ({
       id: log.id,
@@ -1203,6 +1437,75 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+function sanitizeEmojiStyle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim().toLowerCase();
+  if (v === "emoji" || v === "symbol" || v === "custom") return v;
+  return null;
+}
+
+function sanitizeStringRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const key = typeof k === "string" ? k.trim() : "";
+    if (!key) continue;
+    if (typeof v !== "string") continue;
+    const trimmed = v.trim();
+    if (!trimmed) continue;
+    out[key] = trimmed;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function sanitizeStatusVocabInput(value: unknown): Record<string, string[]> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const key = typeof k === "string" ? k.trim() : "";
+    if (!key || !Array.isArray(v)) continue;
+    const arr = v
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter((item): item is string => item.length > 0);
+    if (arr.length) out[key] = arr;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Accepts a property-mapping object from the dashboard and keeps only the
+ * keys we recognize, with each value coerced to a non-empty string[].
+ * Single-string values are accepted and promoted to a one-element array.
+ */
+function sanitizePropertyMappingInput(
+  value: unknown,
+): Record<string, string[] | string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  const out: Record<string, string[] | string> = {};
+  const singleStringKeys = ["titleProperty", "descriptionProperty"] as const;
+  const arrayKeys = ["statusProperty", "dateProperty", "reminderProperty", "categoryProperty"] as const;
+
+  for (const key of singleStringKeys) {
+    const v = rec[key];
+    if (typeof v === "string" && v.trim().length > 0) {
+      out[key] = v.trim();
+    }
+  }
+  for (const key of arrayKeys) {
+    const v = rec[key];
+    if (Array.isArray(v)) {
+      const arr = v
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter((item): item is string => item.length > 0);
+      if (arr.length) out[key] = arr;
+    } else if (typeof v === "string" && v.trim().length > 0) {
+      out[key] = [v.trim()];
+    }
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 function normalizeBasePath(value: string | null | undefined): string {

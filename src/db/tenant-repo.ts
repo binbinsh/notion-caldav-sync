@@ -12,9 +12,25 @@ export type TenantConfigRow = {
   notion_workspace_name: string | null;
   notion_bot_id: string | null;
   selected_notion_source_ids_json: string | null;
+  status_emoji_style: string | null;
+  status_emoji_overrides_json: string | null;
+  status_vocab_overrides_json: string | null;
   created_at: string;
   updated_at: string;
   last_full_sync_at: string | null;
+};
+
+export type NotionDataSourceRow = {
+  tenant_id: string;
+  source_id: string;
+  title: string | null;
+  enabled: number;
+  property_mapping_json: string | null;
+  status_vocab_overrides_json: string | null;
+  status_emoji_style: string | null;
+  status_emoji_overrides_json: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type TenantSecretRow = {
@@ -484,10 +500,179 @@ export async function insertWebhookLog(
 export async function getRecentWebhookLogs(
   db: D1Database,
   limit = 10,
+  tenantId?: string,
 ): Promise<WebhookLogRow[]> {
+  if (tenantId) {
+    // tenant_id is stored as a comma-joined list (a webhook can fan out to
+    // multiple tenants sharing a Notion workspace). Use LIKE with delimiters
+    // to avoid prefix/suffix false positives.
+    const result = await db
+      .prepare(
+        `SELECT * FROM webhook_log
+         WHERE tenant_id = ?
+            OR tenant_id LIKE ?
+            OR tenant_id LIKE ?
+            OR tenant_id LIKE ?
+         ORDER BY created_at DESC LIMIT ?`,
+      )
+      .bind(
+        tenantId,
+        `${tenantId},%`,
+        `%,${tenantId}`,
+        `%,${tenantId},%`,
+        limit,
+      )
+      .all<WebhookLogRow>();
+    return result.results || [];
+  }
   const result = await db
     .prepare(`SELECT * FROM webhook_log ORDER BY created_at DESC LIMIT ?`)
     .bind(limit)
     .all<WebhookLogRow>();
   return result.results || [];
+}
+
+// ---------------------------------------------------------------------------
+// Tenant-level status settings (stored on tenant_config)
+// ---------------------------------------------------------------------------
+
+export async function updateTenantStatusSettings(
+  db: D1Database,
+  input: {
+    tenantId: string;
+    statusEmojiStyle: string | null; // "emoji" | "symbol" | "custom" | null to clear
+    statusEmojiOverridesJson: string | null;
+    statusVocabOverridesJson: string | null;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  // Plain assignment (not COALESCE): passing null explicitly clears the override.
+  await db
+    .prepare(
+      `UPDATE tenant_config
+       SET status_emoji_style = ?,
+           status_emoji_overrides_json = ?,
+           status_vocab_overrides_json = ?,
+           updated_at = ?
+       WHERE tenant_id = ?`,
+    )
+    .bind(
+      input.statusEmojiStyle,
+      input.statusEmojiOverridesJson,
+      input.statusVocabOverridesJson,
+      now,
+      input.tenantId,
+    )
+    .run();
+}
+
+// ---------------------------------------------------------------------------
+// Per-data-source config (notion_data_source)
+// ---------------------------------------------------------------------------
+
+export async function listNotionDataSources(
+  db: D1Database,
+  tenantId: string,
+): Promise<NotionDataSourceRow[]> {
+  const result = await db
+    .prepare(`SELECT * FROM notion_data_source WHERE tenant_id = ? ORDER BY source_id ASC`)
+    .bind(tenantId)
+    .all<NotionDataSourceRow>();
+  return result.results || [];
+}
+
+export async function getNotionDataSource(
+  db: D1Database,
+  tenantId: string,
+  sourceId: string,
+): Promise<NotionDataSourceRow | null> {
+  return (
+    (await db
+      .prepare(`SELECT * FROM notion_data_source WHERE tenant_id = ? AND source_id = ?`)
+      .bind(tenantId, sourceId)
+      .first<NotionDataSourceRow>()) || null
+  );
+}
+
+export interface NotionDataSourceInput {
+  sourceId: string;
+  title: string | null;
+  enabled: boolean;
+  propertyMappingJson: string | null;
+  statusVocabOverridesJson: string | null;
+}
+
+/**
+ * Replace the full set of data-source rows for a tenant.
+ *
+ * This is a single-PUT semantics: rows present in `sources` are upserted,
+ * rows absent from `sources` are deleted. Mirrors the UI where the dashboard
+ * always submits the complete list.
+ *
+ * D1 does not expose multi-statement transactions from Workers, but batch()
+ * runs the statements atomically from the worker's perspective.
+ */
+export async function replaceNotionDataSources(
+  db: D1Database,
+  tenantId: string,
+  sources: NotionDataSourceInput[],
+): Promise<void> {
+  const now = new Date().toISOString();
+  const keep = sources.map((s) => s.sourceId);
+
+  const statements: D1PreparedStatement[] = [];
+
+  // Delete rows no longer in the set.
+  if (keep.length === 0) {
+    statements.push(
+      db.prepare(`DELETE FROM notion_data_source WHERE tenant_id = ?`).bind(tenantId),
+    );
+  } else {
+    const placeholders = keep.map(() => "?").join(",");
+    statements.push(
+      db
+        .prepare(
+          `DELETE FROM notion_data_source
+           WHERE tenant_id = ?
+             AND source_id NOT IN (${placeholders})`,
+        )
+        .bind(tenantId, ...keep),
+    );
+  }
+
+  // Upsert each row. Using ON CONFLICT to preserve created_at and avoid a
+  // read-before-write round trip per row.
+  for (const src of sources) {
+    statements.push(
+      db
+        .prepare(
+           `INSERT INTO notion_data_source (
+              tenant_id, source_id, title, enabled,
+              property_mapping_json, status_vocab_overrides_json,
+              status_emoji_style, status_emoji_overrides_json,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+            ON CONFLICT(tenant_id, source_id) DO UPDATE SET
+              title = excluded.title,
+              enabled = excluded.enabled,
+              property_mapping_json = excluded.property_mapping_json,
+              status_vocab_overrides_json = excluded.status_vocab_overrides_json,
+              status_emoji_style = NULL,
+              status_emoji_overrides_json = NULL,
+              updated_at = excluded.updated_at`,
+         )
+         .bind(
+           tenantId,
+           src.sourceId,
+           src.title,
+           src.enabled ? 1 : 0,
+           src.propertyMappingJson,
+           src.statusVocabOverridesJson,
+           now,
+           now,
+         ),
+    );
+  }
+
+  await db.batch(statements);
 }

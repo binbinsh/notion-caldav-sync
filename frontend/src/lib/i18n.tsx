@@ -258,6 +258,36 @@ export const translations = {
     // Debug panel — misc
     pendingRemoteSync: "Pending remote sync",
     warningCount: "{n} warning(s)",
+
+    // Data sources & per-DS config
+    configureOpen: "Configure",
+    configureClose: "Close",
+    dataSourcesSaved: "Data source settings saved",
+    dataSourceStatusOverrideHelp:
+      "Override the default Notion property names and status vocabulary for this data source. Leave fields empty to inherit tenant defaults.",
+    inheritDefault: "Inherit default",
+    propTitle: "Title property",
+    propStatus: "Status property",
+    propDate: "Date property",
+    propReminder: "Reminder property",
+    propCategory: "Category property",
+    propDescription: "Description property",
+
+    // Status indicator settings
+    statusSettingsSection: "Status indicators",
+    statusSettingsHelp:
+      "Choose how task statuses are rendered as emojis/symbols in calendar event titles, and customize the status names Notion uses.",
+    statusSettingsLoadError: "Failed to load status settings",
+    statusSettingsSaved: "Status settings saved",
+    statusEmojiStyle: "Indicator style",
+    statusStyleEmoji: "Emoji (⬜ ⚙️ ✅ ⚠️ ❌)",
+    statusStyleSymbol: "Symbol (○ ⊖ ✓⃝ ⊜ ⊗)",
+    statusStyleCustom: "Custom",
+    statusCustomEmojiHelp:
+      "Enter the exact character(s) to use for each status. Leave blank to inherit the default for the selected style.",
+    statusVocabSection: "Status vocabulary",
+    statusVocabHelp:
+      "Map additional Notion status names to the three canonical states (done / in progress / to do). One alias per line.",
   },
 
   "zh-hans": {
@@ -442,6 +472,36 @@ export const translations = {
 
     pendingRemoteSync: "待远端同步",
     warningCount: "{n} 个警告",
+
+    // 数据源与单数据源配置
+    configureOpen: "配置",
+    configureClose: "收起",
+    dataSourcesSaved: "数据源设置已保存",
+    dataSourceStatusOverrideHelp:
+      "为该数据源覆盖默认的 Notion 属性名称和状态词汇。留空则继承租户默认值。",
+    inheritDefault: "继承默认",
+    propTitle: "标题属性",
+    propStatus: "状态属性",
+    propDate: "日期属性",
+    propReminder: "提醒属性",
+    propCategory: "分类属性",
+    propDescription: "描述属性",
+
+    // 状态指示符设置
+    statusSettingsSection: "状态指示符",
+    statusSettingsHelp:
+      "选择任务状态在日历事件标题中显示为表情/符号的方式，并自定义 Notion 使用的状态名称。",
+    statusSettingsLoadError: "加载状态设置失败",
+    statusSettingsSaved: "状态设置已保存",
+    statusEmojiStyle: "指示符样式",
+    statusStyleEmoji: "表情（⬜ ⚙️ ✅ ⚠️ ❌）",
+    statusStyleSymbol: "符号（○ ⊖ ✓⃝ ⊜ ⊗）",
+    statusStyleCustom: "自定义",
+    statusCustomEmojiHelp:
+      "为每个状态输入要使用的字符。留空则使用所选样式的默认值。",
+    statusVocabSection: "状态词汇",
+    statusVocabHelp:
+      "将其他 Notion 状态名称映射到三个标准状态（完成 / 进行中 / 待办）。每行一个别名。",
   },
 
   "zh-hant": {
@@ -626,5 +686,35 @@ export const translations = {
 
     pendingRemoteSync: "待遠端同步",
     warningCount: "{n} 個警告",
+
+    // 資料來源與個別資料來源設定
+    configureOpen: "設定",
+    configureClose: "收合",
+    dataSourcesSaved: "資料來源設定已儲存",
+    dataSourceStatusOverrideHelp:
+      "為此資料來源覆寫預設的 Notion 屬性名稱與狀態詞彙。留空則沿用租戶預設值。",
+    inheritDefault: "沿用預設",
+    propTitle: "標題屬性",
+    propStatus: "狀態屬性",
+    propDate: "日期屬性",
+    propReminder: "提醒屬性",
+    propCategory: "分類屬性",
+    propDescription: "描述屬性",
+
+    // 狀態指示符設定
+    statusSettingsSection: "狀態指示符",
+    statusSettingsHelp:
+      "選擇任務狀態在行事曆事件標題中顯示為表情符號／符號的方式，並自訂 Notion 使用的狀態名稱。",
+    statusSettingsLoadError: "載入狀態設定失敗",
+    statusSettingsSaved: "狀態設定已儲存",
+    statusEmojiStyle: "指示符樣式",
+    statusStyleEmoji: "表情符號（⬜ ⚙️ ✅ ⚠️ ❌）",
+    statusStyleSymbol: "符號（○ ⊖ ✓⃝ ⊜ ⊗）",
+    statusStyleCustom: "自訂",
+    statusCustomEmojiHelp:
+      "為每個狀態輸入要使用的字元。留空則使用所選樣式的預設值。",
+    statusVocabSection: "狀態詞彙",
+    statusVocabHelp:
+      "將其他 Notion 狀態名稱對應至三個標準狀態（完成／進行中／待辦）。每行一個別名。",
   },
 } as const;

@@ -4,7 +4,16 @@ import {
   ensureCalendar as calendarEnsure,
 } from "../calendar/caldav";
 import { buildEvent, parseIcsMinimal } from "../calendar/ics";
-import { STATUS_EMOJI_SETS, isTaskProperties, normalizeStatusName } from "./constants";
+import {
+  DEFAULT_SYNC_PROFILE,
+  SyncProfile,
+  SyncProfileOverrides,
+  buildSyncProfile,
+  isTaskProperties,
+  normalizeStatusName,
+  normalizeStatusNameWithProfile,
+  statusToEmojiWithProfile,
+} from "./constants";
 import {
   createNotionClient,
   extractDatabaseTitle,
@@ -30,6 +39,17 @@ export type LiveBindings = {
   tenantId: string;
   selectedNotionSourceIds?: string[] | null;
   calendarSettings?: Record<string, unknown>;
+  /**
+   * Tenant-level SyncProfile overrides (property names, status vocab, custom
+   * emojis). When present, these are threaded through parsing and rendering so
+   * one sync run uses a consistent resolved profile.
+   */
+  tenantProfileOverrides?: SyncProfileOverrides | null;
+  /**
+   * Per-data-source overrides keyed by Notion data-source id. These cover
+   * property mappings and status vocabulary only; icon mapping is tenant-wide.
+   */
+  dataSourceProfileOverrides?: Record<string, SyncProfileOverrides> | null;
 };
 
 export class LiveSyncFacade {
@@ -41,6 +61,14 @@ export class LiveSyncFacade {
   private readonly caldavRateLimiter = new RateLimiter(10, 10); // 10 req/s for CalDAV
   private ensureCalendarCache: Record<string, unknown> | null = null;
   private readonly selectedNotionSourceIds: Set<string> | null;
+  /**
+   * Tenant-level profile used when a per-DS profile is not available. We pre-
+   * build once in the constructor so emoji resolution during putCalendarTask
+   * (which doesn't know the source id) stays O(1).
+   */
+  private readonly tenantProfile: SyncProfile;
+  /** Cache of per-DS resolved profiles (tenant + DS overrides merged). */
+  private readonly dsProfileCache = new Map<string, SyncProfile>();
 
   constructor(private readonly bindings: LiveBindings) {
     this.notionClient = createNotionClient(bindings.notionToken, bindings.notionVersion);
@@ -48,6 +76,43 @@ export class LiveSyncFacade {
     this.selectedNotionSourceIds = Array.isArray(bindings.selectedNotionSourceIds) && bindings.selectedNotionSourceIds.length > 0
       ? new Set(bindings.selectedNotionSourceIds)
       : null;
+
+    // The legacy `statusEmojiStyle` binding is the fallback; tenant-level
+    // overrides (if present) win. Icon mapping is tenant-wide, so we pre-build
+    // one tenant profile here and let per-DS profiles override only mappings
+    // and vocabulary.
+    const legacyStyleOverride: SyncProfileOverrides = {
+      statusEmojiStyle: bindings.statusEmojiStyle,
+    };
+    this.tenantProfile = buildSyncProfile(
+      { ...legacyStyleOverride, ...(bindings.tenantProfileOverrides || {}) },
+      null,
+    );
+  }
+
+  /**
+   * Resolve a SyncProfile for a specific Notion data source, merging per-DS
+   * property/vocabulary overrides (if any) on top of the tenant profile.
+   * Results are cached for the lifetime of this facade instance (one sync run).
+   */
+  profileForDataSource(dataSourceId: string | null | undefined): SyncProfile {
+    if (!dataSourceId) return this.tenantProfile;
+    const cached = this.dsProfileCache.get(dataSourceId);
+    if (cached) return cached;
+    const dsOverrides = this.bindings.dataSourceProfileOverrides?.[dataSourceId] || null;
+    if (!dsOverrides) {
+      this.dsProfileCache.set(dataSourceId, this.tenantProfile);
+      return this.tenantProfile;
+    }
+    const legacyStyleOverride: SyncProfileOverrides = {
+      statusEmojiStyle: this.bindings.statusEmojiStyle,
+    };
+    const profile = buildSyncProfile(
+      { ...legacyStyleOverride, ...(this.bindings.tenantProfileOverrides || {}) },
+      dsOverrides,
+    );
+    this.dsProfileCache.set(dataSourceId, profile);
+    return profile;
   }
 
   private async notionCall<T>(fn: () => Promise<T>): Promise<T> {
@@ -102,11 +167,12 @@ export class LiveSyncFacade {
         if (!isTaskProperties(props)) {
           return [];
         }
+        const profile = this.profileForDataSource(db.id);
         const dbTitle = await this.getCachedDatabaseTitle(db.id, db.title);
         const pages = await this.notionCall(() => queryDatabasePages(this.notionClient, db.id));
         const tasks: NotionTask[] = [];
         for (const page of pages) {
-          const task = this.hydrateTask(page, db.id, dbTitle, props);
+          const task = this.hydrateTask(page, db.id, dbTitle, props, profile);
           if (task) {
             tasks.push(task);
           }
@@ -134,14 +200,15 @@ export class LiveSyncFacade {
       return null;
     }
     const databaseName = await this.getCachedDatabaseTitle(databaseId);
-    return this.hydrateTask(page, databaseId, databaseName, props);
+    return this.hydrateTask(page, databaseId, databaseName, props, this.profileForDataSource(databaseId));
   }
 
   async updateNotionFromCalendar(
     notionTask: NotionTask,
     calendarTask: CalendarTask,
   ): Promise<NotionTask> {
-    const properties = buildPropertiesForCalendarTask(notionTask.schema, calendarTask, notionTask);
+    const profile = this.profileForDataSource(notionTask.databaseId);
+    const properties = buildPropertiesForCalendarTask(notionTask.schema, calendarTask, notionTask, profile);
     if (!Object.keys(properties).length) {
       return notionTask;
     }
@@ -154,7 +221,13 @@ export class LiveSyncFacade {
       notionTask.databaseId;
     if (databaseId) {
       const props = await this.getCachedDatabaseProperties(databaseId);
-      const hydrated = this.hydrateTask(updated, databaseId, notionTask.databaseName, props);
+      const hydrated = this.hydrateTask(
+        updated,
+        databaseId,
+        notionTask.databaseName,
+        props,
+        this.profileForDataSource(databaseId),
+      );
       if (hydrated) {
         return hydrated;
       }
@@ -167,7 +240,7 @@ export class LiveSyncFacade {
       notionTask.databaseId,
       notionTask.databaseName,
       calendarTask.title || notionTask.title,
-      normalizeStatusName(calendarTask.status) || notionTask.status,
+      normalizeStatusNameWithProfile(calendarTask.status, profile) || notionTask.status,
       calendarTask.startDate !== undefined ? calendarTask.startDate : notionTask.startDate,
       calendarTask.endDate !== undefined ? calendarTask.endDate : notionTask.endDate,
       calendarTask.reminder !== undefined ? calendarTask.reminder : notionTask.reminder,
@@ -195,7 +268,13 @@ export class LiveSyncFacade {
     );
     if (notionTask.databaseId) {
       const props = await this.getCachedDatabaseProperties(notionTask.databaseId);
-      const hydrated = this.hydrateTask(updated, notionTask.databaseId, notionTask.databaseName, props);
+      const hydrated = this.hydrateTask(
+        updated,
+        notionTask.databaseId,
+        notionTask.databaseName,
+        props,
+        this.profileForDataSource(notionTask.databaseId),
+      );
       if (hydrated) {
         return hydrated;
       }
@@ -319,7 +398,7 @@ export class LiveSyncFacade {
     const normalizedStatus = statusForTask(notionTask, {
       dateOnlyTimezoneName: String(options.settings.date_only_timezone || options.settings.calendar_timezone || "UTC"),
     });
-    const statusEmoji = this.resolveStatusEmoji(normalizedStatus);
+    const statusEmoji = this.resolveStatusEmoji(normalizedStatus, notionTask.databaseId);
     const renderedNotes = descriptionForTask(notionTask);
     const ics = buildEvent({
       notionId: notionTask.pageId,
@@ -382,8 +461,9 @@ export class LiveSyncFacade {
     databaseId: string | null,
     databaseName: string,
     properties: Record<string, Record<string, unknown>>,
+    profile: SyncProfile,
   ): NotionTask | null {
-    const parsed = parsePageToTask(page);
+    const parsed = parsePageToTask(page, profile);
     if (!parsed.notionId) {
       return null;
     }
@@ -401,14 +481,13 @@ export class LiveSyncFacade {
       parsed.description,
       Boolean(page.archived || page.in_trash),
       normalizeText(page.last_edited_time),
-      TaskSchema.fromProperties(properties),
+      TaskSchema.fromProperties(properties, profile),
     );
   }
 
-  private resolveStatusEmoji(status: string | null): string {
-    const set = this.bindings.statusEmojiStyle === "symbol" ? "symbol" : "emoji";
-    const normalized = normalizeStatusName(status || "") || "Todo";
-    return STATUS_EMOJI_SETS[set][normalized] || "";
+  private resolveStatusEmoji(status: string | null, dataSourceId?: string | null): string {
+    const profile = this.profileForDataSource(dataSourceId);
+    return statusToEmojiWithProfile(status || "Todo", profile) || "";
   }
 }
 
@@ -416,8 +495,10 @@ export function buildPropertiesForCalendarTask(
   schema: TaskSchema,
   calendarTask: CalendarTask,
   currentNotionTask?: NotionTask | null,
+  profile?: SyncProfile | null,
 ): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
+  const resolvedProfile = profile || DEFAULT_SYNC_PROFILE;
 
   // Only set title if it changed (avoids triggering last_edited_time needlessly)
   if (schema.titleProperty) {
@@ -434,9 +515,10 @@ export function buildPropertiesForCalendarTask(
     }
   }
 
-  const normalizedStatus = normalizeStatusName(calendarTask.status) || calendarTask.status;
+  const normalizedStatus = normalizeStatusNameWithProfile(calendarTask.status, resolvedProfile) || calendarTask.status;
   if (schema.statusProperty && normalizedStatus) {
-    const currentCanonicalStatus = normalizeStatusName(currentNotionTask?.status) || currentNotionTask?.status;
+    const currentCanonicalStatus = normalizeStatusNameWithProfile(currentNotionTask?.status, resolvedProfile)
+      || currentNotionTask?.status;
     if (!currentNotionTask || currentCanonicalStatus !== normalizedStatus) {
       if (schema.statusType === "status") {
         properties[schema.statusProperty] = { status: { name: normalizedStatus } };
@@ -471,9 +553,15 @@ export function buildPropertiesForCalendarTask(
 
   if (schema.categoryProperty) {
     if (!currentNotionTask || currentNotionTask.category !== calendarTask.category) {
-      properties[schema.categoryProperty] = calendarTask.category
-        ? { select: { name: calendarTask.category } }
-        : { select: null };
+      if (schema.categoryType === "multi_select") {
+        properties[schema.categoryProperty] = calendarTask.category
+          ? { multi_select: [{ name: calendarTask.category }] }
+          : { multi_select: [] };
+      } else {
+        properties[schema.categoryProperty] = calendarTask.category
+          ? { select: { name: calendarTask.category } }
+          : { select: null };
+      }
     }
   }
 

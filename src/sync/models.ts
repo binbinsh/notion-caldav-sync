@@ -1,10 +1,6 @@
 import {
-  CATEGORY_PROPERTY,
-  DATE_PROPERTY,
-  DESCRIPTION_PROPERTY,
-  REMINDER_PROPERTY,
-  STATUS_PROPERTY,
-  TITLE_PROPERTY,
+  DEFAULT_SYNC_PROFILE,
+  type SyncProfile,
 } from "./constants";
 
 function cleanText(value: unknown): string | null {
@@ -27,14 +23,20 @@ export class TaskSchema {
     readonly descriptionProperty: string | null = null,
   ) {}
 
-  static fromProperties(props?: Record<string, unknown> | null): TaskSchema {
+  static fromProperties(props?: Record<string, unknown> | null, profile?: SyncProfile | null): TaskSchema {
     const properties = props || {};
-    const firstName = (expectedType: string, exclude?: Set<string>): string | null => {
+    const resolvedProfile = profile || DEFAULT_SYNC_PROFILE;
+    const matchesType = (value: unknown, expectedTypes: readonly string[]): value is { type?: string } => {
+      return typeof value === "object"
+        && value !== null
+        && expectedTypes.includes((value as { type?: string }).type || "");
+    };
+    const firstName = (expectedTypes: readonly string[], exclude?: Set<string>): string | null => {
       for (const [name, value] of Object.entries(properties)) {
         if (exclude?.has(name)) {
           continue;
         }
-        if (typeof value === "object" && value !== null && (value as { type?: string }).type === expectedType) {
+        if (matchesType(value, expectedTypes)) {
           return name;
         }
       }
@@ -42,15 +44,15 @@ export class TaskSchema {
     };
 
     let titleName: string | null = null;
-    const explicitTitle = properties[TITLE_PROPERTY];
-    if (typeof explicitTitle === "object" && explicitTitle !== null && (explicitTitle as { type?: string }).type === "title") {
-      titleName = TITLE_PROPERTY;
+    const explicitTitle = properties[resolvedProfile.titleProperty];
+    if (matchesType(explicitTitle, ["title"])) {
+      titleName = resolvedProfile.titleProperty;
     }
-    titleName ||= firstName("title");
+    titleName ||= firstName(["title"]);
 
     let statusName: string | null = null;
     let statusType: string | null = null;
-    for (const candidate of STATUS_PROPERTY) {
+    for (const candidate of resolvedProfile.statusProperty) {
       const value = properties[candidate];
       const type = typeof value === "object" && value !== null ? (value as { type?: string }).type : null;
       if (type === "status" || type === "select") {
@@ -60,16 +62,16 @@ export class TaskSchema {
       }
     }
     if (!statusName) {
-      statusName = firstName("status");
+      statusName = firstName(["status"]);
       statusType = statusName ? "status" : null;
     }
     if (!statusName) {
-      statusName = firstName("select");
+      statusName = firstName(["select"]);
       statusType = statusName ? "select" : null;
     }
 
     let dateName: string | null = null;
-    for (const candidate of DATE_PROPERTY) {
+    for (const candidate of resolvedProfile.dateProperty) {
       const value = properties[candidate];
       const type = typeof value === "object" && value !== null ? (value as { type?: string }).type : null;
       if (type === "date") {
@@ -77,10 +79,10 @@ export class TaskSchema {
         break;
       }
     }
-    dateName ||= firstName("date");
+    dateName ||= firstName(["date"]);
 
     let reminderName: string | null = null;
-    for (const candidate of REMINDER_PROPERTY) {
+    for (const candidate of resolvedProfile.reminderProperty) {
       if (candidate === dateName) {
         continue;
       }
@@ -91,37 +93,35 @@ export class TaskSchema {
         break;
       }
     }
-    reminderName ||= firstName("date", new Set(dateName ? [dateName] : []));
+    reminderName ||= firstName(["date"], new Set(dateName ? [dateName] : []));
 
     let categoryName: string | null = null;
     let categoryType: string | null = null;
-    for (const candidate of CATEGORY_PROPERTY) {
+    for (const candidate of resolvedProfile.categoryProperty) {
       if (candidate === statusName) {
         continue;
       }
       const value = properties[candidate];
       const type = typeof value === "object" && value !== null ? (value as { type?: string }).type : null;
-      if (type === "select") {
+      if (type === "select" || type === "multi_select") {
         categoryName = candidate;
         categoryType = type;
         break;
       }
     }
     if (!categoryName) {
-      categoryName = firstName("select", new Set(statusName ? [statusName] : []));
-      categoryType = categoryName ? "select" : null;
+      categoryName = firstName(["select", "multi_select"], new Set(statusName ? [statusName] : []));
+      if (categoryName) {
+        categoryType = matchesType(properties[categoryName], ["multi_select"]) ? "multi_select" : "select";
+      }
     }
 
     let descriptionName: string | null = null;
-    const explicitDescription = properties[DESCRIPTION_PROPERTY];
-    if (
-      typeof explicitDescription === "object" &&
-      explicitDescription !== null &&
-      (explicitDescription as { type?: string }).type === "rich_text"
-    ) {
-      descriptionName = DESCRIPTION_PROPERTY;
+    const explicitDescription = properties[resolvedProfile.descriptionProperty];
+    if (matchesType(explicitDescription, ["rich_text"])) {
+      descriptionName = resolvedProfile.descriptionProperty;
     }
-    descriptionName ||= firstName("rich_text");
+    descriptionName ||= firstName(["rich_text"]);
 
     return new TaskSchema(
       cleanText(titleName),

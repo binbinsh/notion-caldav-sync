@@ -8,13 +8,20 @@ import {
   fetchDebugSnapshot,
   fetchMe,
   fetchRecentWebhooks,
+  fetchDataSources,
   isAuthRedirectError,
   saveNotionBindingSources,
+  saveDataSources,
+  saveTenantStatusSettings,
   redirectToSignIn,
   saveAppleSettings,
   triggerSync,
   type ApiMeResponse,
+  type DataSourceEntry,
   type NotionBindingSource,
+  type PropertyMapping,
+  type StatusEmojiStyle,
+  type StatusSettings,
   type SyncDebugAction,
   type SyncDebugEntry,
   type SyncDebugRelation,
@@ -313,10 +320,9 @@ export function DashboardPage() {
   };
 
   useEffect(() => {
-    if (showAdvanced && debugReady && data?.workspaceId && !debugSnapshot && !debugLoading && !debugError) {
-      void loadDebug();
-    }
-  }, [showAdvanced, data?.workspaceId, debugReady, debugSnapshot, debugLoading, debugError]);
+    // Intentionally do NOT auto-load debug snapshot when Advanced is opened.
+    // Debug fetch is expensive (hits Notion + CalDAV + ledger) — require explicit click.
+  }, [showAdvanced]);
 
   // Sync handlers
   const executeSync = async (mode: "full" | "incremental") => {
@@ -475,23 +481,16 @@ export function DashboardPage() {
           />
         ) : (
           <>
-            {/* Status bar */}
+            {/* Status bar + Notion binding (merged) */}
             <SyncStatusBar
               notionConnected={data.notionConnected}
               appleConfigured={appleConfigured}
               workspaceName={cfg?.notion_workspace_name || ""}
             />
 
-            {/* Settings */}
-            <AppleSettingsCard
-              config={cfg}
-              credentials={data.appleCredentials}
-              onSave={handleSaveSettings}
-            />
-
-            {/* Notion connection */}
+            {/* Notion connection + pages to sync */}
             <Card>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-sm font-semibold m-0">Notion</h3>
                   <p className="text-xs text-muted m-0 mt-0.5">
@@ -508,14 +507,23 @@ export function DashboardPage() {
               </div>
               {data.notionConnected && (
                 <div className="mt-5 pt-5 border-t border-line">
-                  <NotionBindingCard
-                    selectedSourceIds={data.notionBinding?.selectedSourceIds || null}
-                    onSave={handleSaveNotionBinding}
-                    compact
-                  />
+                  <DataSourcesCard />
                 </div>
               )}
             </Card>
+
+            {/* Status indicator settings (tenant-level) */}
+            {data.notionConnected && <StatusIndicatorCard />}
+
+            {/* Settings */}
+            <AppleSettingsCard
+              config={cfg}
+              credentials={data.appleCredentials}
+              onSave={handleSaveSettings}
+            />
+
+            {/* Recent webhook calls — visible outside Advanced */}
+            <WebhookLogCard logs={webhookLogs} />
 
             {/* Advanced toggle */}
             <button
@@ -543,7 +551,6 @@ export function DashboardPage() {
                   error={debugError}
                   onLoad={loadDebug}
                 />
-                <WebhookLogCard logs={webhookLogs} />
               </div>
             )}
           </>
@@ -1258,14 +1265,18 @@ function DebugEntryRow({ entry }: { entry: SyncDebugEntry }) {
       </td>
       <td className="py-2 pr-3 whitespace-nowrap text-muted">{schedule}</td>
       <td className="py-2 pr-3">
-        <div className="flex items-center gap-1.5 flex-nowrap whitespace-nowrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
           {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
           {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
         </div>
       </td>
-      <td className="py-2 pr-3 whitespace-nowrap text-[11px] text-muted">
-        N:{formatOperation(entry.operations.notion, t)} C:{formatOperation(entry.operations.calendar, t)} L:{formatOperation(entry.operations.ledger, t)}
+      <td className="py-2 pr-3 text-[11px] text-muted">
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+          <span>N:{formatOperation(entry.operations.notion, t)}</span>
+          <span>C:{formatOperation(entry.operations.calendar, t)}</span>
+          <span>L:{formatOperation(entry.operations.ledger, t)}</span>
+        </div>
       </td>
       <td className="py-2 max-w-[300px]">
         <span className="text-muted truncate block" title={tooltip}>{notes}</span>
@@ -1323,6 +1334,589 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
         </div>
       )}
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Data Sources Card — per-DS config (enable/disable + property mapping +
+// optional per-DS status overrides). Single-PUT save.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_STATUS_CANONICALS = ["Todo", "In progress", "Completed", "Overdue", "Cancelled"];
+const DEFAULT_STATUS_EMOJIS: Record<StatusEmojiStyle, Record<string, string>> = {
+  emoji: { Todo: "⬜", "In progress": "⚙️", Completed: "✅", Overdue: "⚠️", Cancelled: "❌" },
+  symbol: { Todo: "○", "In progress": "⊖", Completed: "✓⃝", Overdue: "⊜", Cancelled: "⊗" },
+  custom: { Todo: "⬜", "In progress": "⚙️", Completed: "✅", Overdue: "⚠️", Cancelled: "❌" },
+};
+
+// Notion property types that are valid for each mapping slot. Used to filter
+// the dropdowns so users can't pick an incompatible property.
+const PROPERTY_TYPE_FILTERS: Record<string, Set<string> | null> = {
+  titleProperty: new Set(["title"]),
+  descriptionProperty: new Set(["rich_text"]),
+  statusProperty: new Set(["status", "select"]),
+  dateProperty: new Set(["date"]),
+  reminderProperty: new Set(["date"]),
+  categoryProperty: new Set(["select", "multi_select"]),
+};
+
+function DataSourcesCard() {
+  const { t } = useI18n();
+  const [entries, setEntries] = useState<DataSourceEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetchDataSources();
+      setEntries(resp.sources);
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
+      setError(t("bindingLoadError"));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const update = (id: string, patch: Partial<DataSourceEntry>) => {
+    setEntries((prev) => prev?.map((e) => (e.id === id ? { ...e, ...patch } : e)) || null);
+  };
+
+  const save = async () => {
+    if (!entries) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await saveDataSources(
+        entries.map((e) => ({
+          id: e.id,
+          enabled: e.enabled,
+          propertyMapping: e.propertyMapping,
+          statusVocabOverrides: e.statusVocabOverrides,
+        })),
+      );
+      if (!result.ok) {
+        setError(result.error || "Save failed.");
+      } else {
+        setNotice(t("dataSourcesSaved") || "Saved.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4 gap-3">
+        <div>
+          <h3 className="text-sm font-semibold m-0">{t("bindingSection")}</h3>
+          <p className="text-xs text-muted m-0 mt-0.5">{t("bindingSectionHelp")}</p>
+        </div>
+      </div>
+
+      {loading && !entries ? (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <Spinner small />
+          {t("loading")}
+        </div>
+      ) : error ? (
+        <p className="text-xs text-red m-0">{error}</p>
+      ) : !entries || entries.length === 0 ? (
+        <p className="text-xs text-muted m-0">{t("bindingEmpty")}</p>
+      ) : (
+        <div className="grid gap-2">
+          {entries.map((entry) => (
+            <DataSourceRow
+              key={entry.id}
+              entry={entry}
+              expanded={expandedId === entry.id}
+              onToggleExpand={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+              onChange={(patch) => update(entry.id, patch)}
+            />
+          ))}
+          <div className="flex items-center gap-3 mt-2">
+            <Btn variant="primary" size="sm" onClick={save} disabled={saving} loading={saving}>
+              {saving ? t("saving") : t("bindingSaveBtn")}
+            </Btn>
+            {notice && <span className="text-xs text-muted">{notice}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DataSourceRow({
+  entry,
+  expanded,
+  onToggleExpand,
+  onChange,
+}: {
+  entry: DataSourceEntry;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onChange: (patch: Partial<DataSourceEntry>) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="rounded-xl border border-line bg-bg">
+      <div className="flex items-center gap-3 p-3">
+        <input
+          type="checkbox"
+          checked={entry.enabled}
+          onChange={() => onChange({ enabled: !entry.enabled })}
+        />
+        <span className="flex-1 text-sm text-ink">{entry.title}</span>
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="text-xs text-muted hover:text-ink bg-transparent border-0 cursor-pointer"
+        >
+          {expanded ? t("configureClose") || "Hide" : t("configureOpen") || "Configure"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="border-t border-line p-3 grid gap-4">
+          <PropertyMappingEditor
+            properties={entry.properties}
+            mapping={entry.propertyMapping}
+            onChange={(propertyMapping) => onChange({ propertyMapping })}
+          />
+          <div className="border-t border-line pt-4 grid gap-3">
+            <p className="text-xs text-muted m-0">
+              {t("dataSourceStatusOverrideHelp") ||
+                "Leave fields empty to inherit the tenant defaults."}
+            </p>
+            <StatusSettingsEditor
+              settings={{
+                statusEmojiStyle: null,
+                statusEmojiOverrides: null,
+                statusVocabOverrides: entry.statusVocabOverrides,
+              }}
+              allowInherit
+              showEmojiControls={false}
+              onChange={(next) => onChange({ statusVocabOverrides: next.statusVocabOverrides ?? null })}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PropertyMappingEditor({
+  properties,
+  mapping,
+  onChange,
+}: {
+  properties: Array<{ name: string; type: string }>;
+  mapping: PropertyMapping | null;
+  onChange: (next: PropertyMapping | null) => void;
+}) {
+  const { t } = useI18n();
+  const m = mapping || {};
+
+  const set = <K extends keyof PropertyMapping>(key: K, value: PropertyMapping[K]) => {
+    const next: PropertyMapping = { ...m, [key]: value };
+    // Strip empty/null to keep payload minimal; if nothing is set, clear mapping.
+    const cleaned: PropertyMapping = {};
+    for (const [k, v] of Object.entries(next)) {
+      if (v == null) continue;
+      if (typeof v === "string" && v === "") continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      (cleaned as Record<string, unknown>)[k] = v;
+    }
+    onChange(Object.keys(cleaned).length ? cleaned : null);
+  };
+
+  const singleField = (key: "titleProperty" | "descriptionProperty", label: string) => {
+    const allowed = PROPERTY_TYPE_FILTERS[key];
+    const options = properties.filter((p) => !allowed || allowed.has(p.type));
+    const value = typeof m[key] === "string" ? (m[key] as string) : "";
+    return (
+      <label className="grid gap-1">
+        <span className="text-xs text-muted">{label}</span>
+        <select
+          className={INPUT_CLASS}
+          value={value}
+          onChange={(e) => set(key, (e.target as HTMLSelectElement).value || null)}
+        >
+          <option value="">{t("inheritDefault") || "Use default"}</option>
+          {options.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  };
+
+  const arrayField = (
+    key: "statusProperty" | "dateProperty" | "reminderProperty" | "categoryProperty",
+    label: string,
+  ) => {
+    const allowed = PROPERTY_TYPE_FILTERS[key];
+    const options = properties.filter((p) => !allowed || allowed.has(p.type));
+    const value = Array.isArray(m[key]) && (m[key] as string[])[0] ? (m[key] as string[])[0] : "";
+    return (
+      <label className="grid gap-1">
+        <span className="text-xs text-muted">{label}</span>
+        <select
+          className={INPUT_CLASS}
+          value={value}
+          onChange={(e) => {
+            const v = (e.target as HTMLSelectElement).value;
+            set(key, v ? [v] : null);
+          }}
+        >
+          <option value="">{t("inheritDefault") || "Use default"}</option>
+          {options.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  };
+
+  return (
+    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+      {singleField("titleProperty", t("propTitle") || "Title property")}
+      {arrayField("statusProperty", t("propStatus") || "Status property")}
+      {arrayField("dateProperty", t("propDate") || "Date property")}
+      {arrayField("reminderProperty", t("propReminder") || "Reminder property")}
+      {arrayField("categoryProperty", t("propCategory") || "Category property")}
+      {singleField("descriptionProperty", t("propDescription") || "Description property")}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Status Indicator Card (tenant-level defaults)
+// ---------------------------------------------------------------------------
+
+function StatusIndicatorCard() {
+  const { t } = useI18n();
+  const [settings, setSettings] = useState<StatusSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetchDataSources();
+      setSettings(resp.tenantDefaults);
+    } catch (err) {
+      if (isAuthRedirectError(err)) return;
+      setError(t("statusSettingsLoadError") || "Failed to load status settings.");
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const save = async () => {
+    if (!settings) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await saveTenantStatusSettings(settings);
+      if (!result.ok) {
+        setError(result.error || "Save failed.");
+      } else {
+        setNotice(t("statusSettingsSaved") || "Saved.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold m-0">
+            {t("statusSettingsSection") || "Status indicator"}
+          </h3>
+          <p className="text-xs text-muted m-0 mt-0.5">
+            {t("statusSettingsHelp") ||
+              "Controls the glyph prepended to event titles based on each task's status."}
+          </p>
+        </div>
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <Spinner small />
+          {t("loading")}
+        </div>
+      ) : error ? (
+        <p className="text-xs text-red m-0">{error}</p>
+      ) : settings ? (
+        <>
+          <StatusSettingsEditor
+            settings={settings}
+            allowInherit={false}
+            onChange={(next) => setSettings({ ...settings, ...(next as StatusSettings) })}
+          />
+          <div className="flex items-center gap-3 mt-4">
+            <Btn variant="primary" size="sm" onClick={save} disabled={saving} loading={saving}>
+              {saving ? t("saving") : t("saveBtn") || "Save"}
+            </Btn>
+            {notice && <span className="text-xs text-muted">{notice}</span>}
+          </div>
+        </>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * Shared editor for a StatusSettings object.
+ *
+ * - When `showEmojiControls` is false, only the status-vocabulary editor is shown.
+ * - When `allowInherit` is true, the style can be cleared to inherit the tenant default.
+ * - When false (tenant-level), the style falls back to "emoji" instead of null.
+ */
+function StatusSettingsEditor({
+  settings,
+  allowInherit,
+  showEmojiControls = true,
+  showVocabControls = true,
+  onChange,
+}: {
+  settings: StatusSettings;
+  allowInherit: boolean;
+  showEmojiControls?: boolean;
+  showVocabControls?: boolean;
+  onChange: (next: Partial<StatusSettings>) => void;
+}) {
+  const { t } = useI18n();
+  const effectiveStyle: StatusEmojiStyle = settings.statusEmojiStyle || "emoji";
+
+  const updateEmoji = (canonical: string, glyph: string) => {
+    const next = { ...(settings.statusEmojiOverrides || {}) };
+    const trimmed = glyph.trim();
+    if (trimmed) {
+      next[canonical] = trimmed;
+    } else {
+      delete next[canonical];
+    }
+    onChange({
+      statusEmojiOverrides: Object.keys(next).length ? next : null,
+    });
+  };
+
+  const updateVocab = (canonical: string, csv: string) => {
+    const next = { ...(settings.statusVocabOverrides || {}) };
+    const arr = csv
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (arr.length) {
+      next[canonical] = arr;
+    } else {
+      delete next[canonical];
+    }
+    onChange({
+      statusVocabOverrides: Object.keys(next).length ? next : null,
+    });
+  };
+
+  // Pick a new style. If switching to "custom" and no overrides exist yet,
+  // prefill them from whichever built-in set was previously active so the user
+  // has a starting point to tweak rather than blank inputs.
+  const pickStyle = (next: StatusEmojiStyle | "") => {
+    if (next === "custom") {
+      const hasOverrides =
+        settings.statusEmojiOverrides && Object.keys(settings.statusEmojiOverrides).length > 0;
+      if (!hasOverrides) {
+        const source =
+          effectiveStyle === "symbol"
+            ? DEFAULT_STATUS_EMOJIS.symbol
+            : DEFAULT_STATUS_EMOJIS.emoji;
+        onChange({
+          statusEmojiStyle: "custom",
+          statusEmojiOverrides: { ...source },
+        });
+        return;
+      }
+      onChange({ statusEmojiStyle: "custom" });
+      return;
+    }
+    // Switching away from custom: clear the custom overrides to avoid ghost data
+    // unless we are inheriting, in which case keep them for later reuse.
+    onChange({
+      statusEmojiStyle: next === "" ? null : next,
+      statusEmojiOverrides:
+        next === "" ? settings.statusEmojiOverrides ?? null : null,
+    });
+  };
+
+  const renderPreview = (style: StatusEmojiStyle) => {
+    const source =
+      style === "custom"
+        ? { ...DEFAULT_STATUS_EMOJIS.emoji, ...(settings.statusEmojiOverrides || {}) }
+        : DEFAULT_STATUS_EMOJIS[style];
+    return (
+      <div className="flex flex-wrap gap-3 text-sm">
+        {DEFAULT_STATUS_CANONICALS.map((canonical) => (
+          <span key={canonical} className="inline-flex items-center gap-1">
+            <span className="text-base leading-none">{source[canonical] || "?"}</span>
+            <span className="text-xs text-muted">{canonical}</span>
+          </span>
+        ))}
+      </div>
+    );
+  };
+
+  const selected: StatusEmojiStyle | "" = settings.statusEmojiStyle ?? (allowInherit ? "" : "emoji");
+
+  type StyleOption = {
+    value: StatusEmojiStyle | "";
+    label: string;
+    preview: StatusEmojiStyle | null;
+  };
+  const styleOptions: StyleOption[] = [
+    ...(allowInherit
+      ? [{ value: "" as const, label: t("inheritDefault") || "Use default", preview: null }]
+      : []),
+    { value: "emoji", label: t("statusStyleEmoji") || "Emoji", preview: "emoji" },
+    { value: "symbol", label: t("statusStyleSymbol") || "Symbol", preview: "symbol" },
+    { value: "custom", label: t("statusStyleCustom") || "Custom", preview: "custom" },
+  ];
+
+  return (
+    <div className="grid gap-4">
+      {showEmojiControls && (
+        <div className="grid gap-2">
+          <span className="text-xs text-muted">{t("statusEmojiStyle") || "Indicator style"}</span>
+          <div className="grid gap-2">
+            {styleOptions.map((opt) => {
+              const isSelected = selected === opt.value;
+              return (
+                <label
+                  key={opt.value || "__inherit"}
+                  className={`flex flex-col gap-2 p-3 rounded-md border cursor-pointer transition-colors ${
+                    isSelected
+                      ? "border-accent bg-accent/5"
+                      : "border-border hover:border-accent/60"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="statusEmojiStyle"
+                      checked={isSelected}
+                      onChange={() => pickStyle(opt.value)}
+                    />
+                    <span className="text-sm font-medium">{opt.label}</span>
+                  </div>
+                  {opt.preview && <div className="pl-6">{renderPreview(opt.preview)}</div>}
+                </label>
+              );
+            })}
+          </div>
+
+          {effectiveStyle === "custom" && (
+            <div className="grid gap-2">
+              <p className="text-xs text-muted m-0">
+                {t("statusCustomEmojiHelp") ||
+                  "Enter a glyph for each status. Leave blank to fall back to the emoji default."}
+              </p>
+              <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+                {DEFAULT_STATUS_CANONICALS.map((canonical) => {
+                  const current = settings.statusEmojiOverrides?.[canonical] || "";
+                  const placeholder = DEFAULT_STATUS_EMOJIS.emoji[canonical] || "";
+                  return (
+                    <label key={canonical} className="grid gap-1">
+                      <span className="text-xs text-muted">{canonical}</span>
+                      <input
+                        className={INPUT_CLASS}
+                        value={current}
+                        placeholder={placeholder}
+                        onChange={(e) => updateEmoji(canonical, (e.target as HTMLInputElement).value)}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showVocabControls && (showEmojiControls ? (
+        <details className="grid gap-2">
+          <summary className="text-xs text-muted cursor-pointer select-none">
+            {t("statusVocabSection") || "Custom status names (advanced)"}
+          </summary>
+          <p className="text-xs text-muted m-0 mt-2">
+            {t("statusVocabHelp") ||
+              "Comma-separated list of Notion status values that should map to each canonical status."}
+          </p>
+          <div className="grid gap-2 mt-2">
+            {DEFAULT_STATUS_CANONICALS.map((canonical) => {
+              const arr = settings.statusVocabOverrides?.[canonical];
+              const value = Array.isArray(arr) ? arr.join(", ") : "";
+              return (
+                <label key={canonical} className="grid gap-1">
+                  <span className="text-xs text-muted">{canonical}</span>
+                  <input
+                    className={INPUT_CLASS}
+                    value={value}
+                    placeholder={canonical}
+                    onChange={(e) => updateVocab(canonical, (e.target as HTMLInputElement).value)}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </details>
+      ) : (
+        <div className="grid gap-2">
+          <p className="text-xs text-muted m-0">
+            {t("statusVocabHelp") ||
+              "Comma-separated list of Notion status values that should map to each canonical status."}
+          </p>
+          <div className="grid gap-2">
+            {DEFAULT_STATUS_CANONICALS.map((canonical) => {
+              const arr = settings.statusVocabOverrides?.[canonical];
+              const value = Array.isArray(arr) ? arr.join(", ") : "";
+              return (
+                <label key={canonical} className="grid gap-1">
+                  <span className="text-xs text-muted">{canonical}</span>
+                  <input
+                    className={INPUT_CLASS}
+                    value={value}
+                    placeholder={canonical}
+                    onChange={(e) => updateVocab(canonical, (e.target as HTMLInputElement).value)}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

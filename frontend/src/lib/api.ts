@@ -231,3 +231,98 @@ export async function triggerSync(
   );
   return data ?? { ok: false, error: `HTTP ${response.status}` };
 }
+
+// ---------------------------------------------------------------------------
+// Data sources + status settings (per-DS config)
+// ---------------------------------------------------------------------------
+
+export type NotionPropertySpec = {
+  name: string;
+  type: string;
+};
+
+export type PropertyMapping = {
+  titleProperty?: string | null;
+  descriptionProperty?: string | null;
+  statusProperty?: string[] | null;
+  dateProperty?: string[] | null;
+  reminderProperty?: string[] | null;
+  categoryProperty?: string[] | null;
+};
+
+export type StatusEmojiStyle = "emoji" | "symbol" | "custom";
+
+export type StatusVocabSettings = {
+  statusVocabOverrides: Record<string, string[]> | null;
+};
+
+export type StatusSettings = StatusVocabSettings & {
+  statusEmojiStyle: StatusEmojiStyle | null;
+  statusEmojiOverrides: Record<string, string> | null;
+};
+
+export type DataSourceEntry = {
+  id: string;
+  title: string;
+  enabled: boolean;
+  properties: NotionPropertySpec[];
+  propertyMapping: PropertyMapping | null;
+} & StatusVocabSettings;
+
+export type DataSourcesResponse = {
+  ok: boolean;
+  sources: DataSourceEntry[];
+  tenantDefaults: StatusSettings;
+};
+
+export async function fetchDataSources(): Promise<DataSourcesResponse> {
+  const { response, data } = await fetchJson<DataSourcesResponse>(
+    "/api/data-sources",
+    { redirectOn401To: "/dashboard" },
+  );
+  if (!response.ok || !data) {
+    throw new Error(`Data sources API error: ${response.status}`);
+  }
+  return data;
+}
+
+export async function saveDataSources(
+  sources: Array<{
+    id: string;
+    enabled: boolean;
+    propertyMapping?: PropertyMapping | null;
+    statusVocabOverrides?: Record<string, string[]> | null;
+  }>,
+): Promise<ApiJsonResult & { count?: number; enabled?: number }> {
+  const { response, data } = await fetchJson<ApiJsonResult & { count?: number; enabled?: number }>(
+    "/api/data-sources",
+    {
+      method: "PUT",
+      redirectOn401To: "/dashboard",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ sources }),
+    },
+  );
+  return data ?? { ok: false, error: `HTTP ${response.status}` };
+}
+
+export async function saveTenantStatusSettings(
+  settings: StatusSettings,
+): Promise<ApiJsonResult> {
+  const { response, data } = await fetchJson<ApiJsonResult>(
+    "/api/tenant/status-settings",
+    {
+      method: "PUT",
+      redirectOn401To: "/dashboard",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(settings),
+    },
+  );
+  return data ?? { ok: false, error: `HTTP ${response.status}` };
+}

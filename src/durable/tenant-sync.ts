@@ -3,9 +3,13 @@ import {
   getProviderConnectionByTenant,
   getTenantConfigByTenantId,
   getTenantSecretByKind,
+  listNotionDataSources,
+  type NotionDataSourceRow,
+  type TenantConfigRow,
 } from "../db/tenant-repo";
 import { decryptSecret, requireMasterKey } from "../lib/secrets";
 import { buildService } from "../sync/runtime";
+import type { SyncProfileOverrides } from "../sync/constants";
 import { D1TenantLedgerStorage } from "./d1-storage";
 
 export type TenantSyncEnv = AppEnv;
@@ -248,6 +252,18 @@ export class TenantSyncObject {
       throw new Error(`Notion is not connected for tenant ${tenantId}. Please reconnect via the dashboard.`);
     }
 
+    // Build profile overrides from tenant_config and notion_data_source rows.
+    // Dual-write transition: prefer notion_data_source rows when present; fall
+    // back to legacy selected_notion_source_ids_json. When we're confident the
+    // new table is authoritative everywhere, drop the legacy path.
+    const tenantProfileOverrides = buildTenantProfileOverrides(config);
+    const dataSourceRows = await listNotionDataSources(this.env.AUTH_DB, tenantId);
+    const { map: dataSourceProfileOverrides, selectedIds: dsTableSelectedIds } =
+      buildDataSourceProfileOverrides(dataSourceRows);
+    const legacySelectedIds = parseSelectedNotionSourceIds(config.selected_notion_source_ids_json);
+    const selectedNotionSourceIds =
+      dsTableSelectedIds.length > 0 ? dsTableSelectedIds : legacySelectedIds;
+
     const service = buildService({
       bindings: {
         notionToken,
@@ -256,7 +272,10 @@ export class TenantSyncObject {
         appleAppPassword,
         statusEmojiStyle: "emoji",
         tenantId,
-        selectedNotionSourceIds: parseSelectedNotionSourceIds(config.selected_notion_source_ids_json),
+        selectedNotionSourceIds,
+        tenantProfileOverrides,
+        dataSourceProfileOverrides:
+          Object.keys(dataSourceProfileOverrides).length ? dataSourceProfileOverrides : null,
         calendarSettings: {
           calendar_name: config.calendar_name,
           calendar_color: config.calendar_color,
@@ -338,4 +357,94 @@ function parseSelectedNotionSourceIds(value: string | null | undefined): string[
   } catch {
     return null;
   }
+}
+
+function parseStringRecord(value: string | null | undefined): Record<string, string> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string") out[k] = v;
+    }
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStatusVocabOverrides(
+  value: string | null | undefined,
+): Record<string, string[]> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const out: Record<string, string[]> = {};
+    for (const [canonical, variants] of Object.entries(parsed)) {
+      if (Array.isArray(variants)) {
+        const cleaned = variants.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+        if (cleaned.length) out[canonical] = cleaned;
+      }
+    }
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePropertyMapping(
+  value: string | null | undefined,
+): SyncProfileOverrides | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const overrides: SyncProfileOverrides = {};
+    const rec = parsed as Record<string, unknown>;
+    if (typeof rec.titleProperty === "string") overrides.titleProperty = rec.titleProperty;
+    if (typeof rec.descriptionProperty === "string") overrides.descriptionProperty = rec.descriptionProperty;
+    for (const key of ["statusProperty", "dateProperty", "reminderProperty", "categoryProperty"] as const) {
+      const v = rec[key];
+      if (Array.isArray(v)) {
+        const arr = v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+        if (arr.length) overrides[key] = arr;
+      } else if (typeof v === "string" && v.trim().length > 0) {
+        overrides[key] = [v];
+      }
+    }
+    return Object.keys(overrides).length ? overrides : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildTenantProfileOverrides(config: TenantConfigRow): SyncProfileOverrides | null {
+  const overrides: SyncProfileOverrides = {};
+  if (config.status_emoji_style && config.status_emoji_style.trim()) {
+    overrides.statusEmojiStyle = config.status_emoji_style;
+  }
+  const emojiOverrides = parseStringRecord(config.status_emoji_overrides_json);
+  if (emojiOverrides) overrides.statusEmojis = emojiOverrides;
+  const vocabOverrides = parseStatusVocabOverrides(config.status_vocab_overrides_json);
+  if (vocabOverrides) overrides.statusVariants = vocabOverrides;
+  return Object.keys(overrides).length ? overrides : null;
+}
+
+function buildDataSourceProfileOverrides(
+  rows: NotionDataSourceRow[],
+): { map: Record<string, SyncProfileOverrides>; selectedIds: string[] } {
+  const map: Record<string, SyncProfileOverrides> = {};
+  const selectedIds: string[] = [];
+  for (const row of rows) {
+    if (row.enabled) selectedIds.push(row.source_id);
+    const overrides: SyncProfileOverrides = {};
+    const propMapping = parsePropertyMapping(row.property_mapping_json);
+    if (propMapping) Object.assign(overrides, propMapping);
+    const vocabOverrides = parseStatusVocabOverrides(row.status_vocab_overrides_json);
+    if (vocabOverrides) overrides.statusVariants = vocabOverrides;
+    if (Object.keys(overrides).length) map[row.source_id] = overrides;
+  }
+  return { map, selectedIds };
 }

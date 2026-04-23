@@ -1,12 +1,10 @@
 import { Client } from "@notionhq/client";
 import {
-  CATEGORY_PROPERTY,
-  DATE_PROPERTY,
-  DESCRIPTION_PROPERTY,
-  REMINDER_PROPERTY,
-  STATUS_PROPERTY,
-  TITLE_PROPERTY,
+  DEFAULT_SYNC_PROFILE,
+  normalizeStatusNameWithProfile,
+  type SyncProfile,
 } from "../sync/constants";
+import { TaskSchema } from "../sync/models";
 
 const NOTION_DB_PAGE_SIZE = 100;
 const NOTION_DS_PAGE_SIZE = 200;
@@ -209,9 +207,15 @@ export function extractDatabaseTitle(meta: unknown): string | null {
   return null;
 }
 
-export function parsePageToTask(page: Record<string, unknown>): TaskInfo {
+export function parsePageToTask(
+  page: Record<string, unknown>,
+  profile?: SyncProfile | null,
+): TaskInfo {
   const props = (asRecord(page.properties) || {}) as Record<string, Record<string, unknown>>;
-  let title = extractTitleFromProp(props[TITLE_PROPERTY]);
+  const schema = TaskSchema.fromProperties(props, profile);
+  const resolvedProfile = profile || DEFAULT_SYNC_PROFILE;
+
+  let title = schema.titleProperty ? extractTitleFromProp(props[schema.titleProperty]) : "";
   if (!title) {
     for (const value of Object.values(props)) {
       title = extractTitleFromProp(value);
@@ -224,63 +228,34 @@ export function parsePageToTask(page: Record<string, unknown>): TaskInfo {
     title = normalizeText(page.id) || "Untitled";
   }
 
-  let statusProp: Record<string, unknown> | null = null;
-  for (const name of STATUS_PROPERTY) {
-    const candidate = asRecord(props[name]);
-    const type = normalizeText(candidate?.type);
-    if (type === "status" || type === "select") {
-      statusProp = candidate;
-      break;
-    }
-  }
-  const statusData = asRecord(statusProp?.status) || asRecord(statusProp?.select) || {};
-  const status = normalizeText(statusData.name);
+  const statusProp = schema.statusProperty ? asRecord(props[schema.statusProperty]) : null;
+  const statusData = schema.statusType === "status"
+    ? asRecord(statusProp?.status) || {}
+    : asRecord(statusProp?.select) || {};
+  const status = normalizeStatusNameWithProfile(normalizeText(statusData.name), resolvedProfile);
 
-  let dateProp: Record<string, unknown> | null = null;
-  for (const name of DATE_PROPERTY) {
-    const candidate = asRecord(props[name]);
-    if (normalizeText(candidate?.type) === "date") {
-      dateProp = candidate;
-      break;
-    }
-  }
+  const dateProp = schema.dateProperty ? asRecord(props[schema.dateProperty]) : null;
   const dateValue = asRecord(dateProp?.date) || {};
   const startDate = normalizeText(dateValue.start);
   const endDate = normalizeText(dateValue.end);
 
-  let reminderProp: Record<string, unknown> | null = null;
-  for (const name of REMINDER_PROPERTY) {
-    const candidate = asRecord(props[name]);
-    if (normalizeText(candidate?.type) === "date") {
-      reminderProp = candidate;
-      break;
-    }
-  }
+  const reminderProp = schema.reminderProperty ? asRecord(props[schema.reminderProperty]) : null;
   const reminderValue = asRecord(reminderProp?.date) || {};
   const reminder = normalizeText(reminderValue.start);
 
-  let categoryProp: Record<string, unknown> | null = null;
-  let categoryName: string | null = "Category";
-  for (const name of CATEGORY_PROPERTY) {
-    const candidate = asRecord(props[name]);
-    if (normalizeText(candidate?.type) === "select") {
-      categoryProp = candidate;
-      categoryName = name;
-      break;
-    }
-  }
-  const category = normalizeText(asRecord(categoryProp?.select)?.name);
+  const categoryProp = schema.categoryProperty ? asRecord(props[schema.categoryProperty]) : null;
+  const categoryName = schema.categoryProperty;
+  const category = schema.categoryType === "multi_select"
+    ? firstNamedItem(categoryProp?.multi_select)
+    : normalizeText(asRecord(categoryProp?.select)?.name);
 
-  const descriptionProp = asRecord(props[DESCRIPTION_PROPERTY]);
+  const descriptionProp = schema.descriptionProperty ? asRecord(props[schema.descriptionProperty]) : null;
   let description: string | null = null;
   if (normalizeText(descriptionProp?.type) === "rich_text") {
     const richText = Array.isArray(descriptionProp?.rich_text) ? descriptionProp.rich_text : [];
     // Concatenate ALL rich_text blocks to avoid truncating multi-block content.
     const fullText = richText
-      .map((item: unknown) => {
-        const record = asRecord(item);
-        return normalizeText(record?.plain_text) || normalizeText(asRecord(record?.text)?.content) || "";
-      })
+      .map((item: unknown) => extractRichTextFragment(item))
       .join("");
     description = normalizeText(fullText);
   }
@@ -342,12 +317,32 @@ function extractTitleFromProp(prop: unknown): string {
   }
   const title = Array.isArray(record.title) ? record.title : [];
   return title
-    .map((item) => {
-      const candidate = asRecord(item);
-      return normalizeText(candidate?.plain_text) || normalizeText(asRecord(candidate?.text)?.content) || "";
-    })
+    .map((item) => extractRichTextFragment(item))
     .join("")
     .trim();
+}
+
+function extractRichTextFragment(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) {
+    return "";
+  }
+  return stringValue(record.plain_text)
+    || stringValue(asRecord(record.text)?.content)
+    || "";
+}
+
+function firstNamedItem(value: unknown): string | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  for (const item of value) {
+    const name = normalizeText(asRecord(item)?.name);
+    if (name) {
+      return name;
+    }
+  }
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -362,4 +357,8 @@ function normalizeText(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized || null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
