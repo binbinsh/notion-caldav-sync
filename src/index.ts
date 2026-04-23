@@ -12,7 +12,6 @@ import {
   canonicalizeAuthPath,
   resolveRequestedRedirectUrl,
 } from "./auth/navigation";
-import { renderClerkSignOutHtml } from "./auth/pages";
 import { customAppSchemaSQL, schemaMigrations } from "./db/app-schema";
 import {
   getAppState,
@@ -160,10 +159,13 @@ app.get("/sign-out", async (c) => {
   if (!userId) {
     return c.redirect(redirectTarget, 302);
   }
-  return c.html(renderClerkSignOutHtml(c.env.CLERK_PUBLISHABLE_KEY, redirectTarget));
+  return c.redirect(
+    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
+    302,
+  );
 });
 
-// Clerk sign-out sub-routes (similar to sign-in).
+// Preserve old local sign-out URLs by redirecting them to the shared Clerk hosted page.
 app.get("/sign-out/*", async (c) => {
   const redirectTarget = resolveRequestedRedirectUrl(
     c.req.raw.url,
@@ -175,7 +177,10 @@ app.get("/sign-out/*", async (c) => {
   if (!userId) {
     return c.redirect(redirectTarget, 302);
   }
-  return c.html(renderClerkSignOutHtml(c.env.CLERK_PUBLISHABLE_KEY, redirectTarget));
+  return c.redirect(
+    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
+    302,
+  );
 });
 
 app.get("/dashboard", async (c) => {
@@ -184,6 +189,12 @@ app.get("/dashboard", async (c) => {
     return redirectToHostedSignIn(c, servicePathWithCurrentQuery(c, "/dashboard"));
   }
   return serveIndexHtml(c.env);
+});
+
+app.get("/api/session-config", async (c) => {
+  return c.json({
+    clerkPublishableKey: c.env.CLERK_PUBLISHABLE_KEY,
+  });
 });
 
 // ---------------------------------------------------------------------------
