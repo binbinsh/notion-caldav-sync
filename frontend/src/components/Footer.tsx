@@ -12,7 +12,8 @@ export function Footer() {
         &copy; {year}{" "}
         <a className="text-muted no-underline hover:underline" href="https://gridheap.com/">
           Grid Heap
-        </a>{" "}
+        </a>
+        .{" "}
         {t("footerCopyright")} &nbsp;|&nbsp;{" "}
         <a className="text-muted no-underline hover:underline" href={`${LEGAL_ORIGIN}/privacy-policy`}>
           {t("footerPrivacy")}
