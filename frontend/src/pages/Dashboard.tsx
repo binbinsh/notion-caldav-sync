@@ -1,6 +1,7 @@
 import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, type Translations } from "../lib/i18n";
+import { Footer } from "../components/Footer";
 import { Topbar } from "../components/Topbar";
 import {
   CLERK_ACCOUNTS_URL,
@@ -62,7 +63,7 @@ function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss:
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm shadow-lg border animate-slide-in ${
+          className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg animate-slide-in ${
             t.type === "error"
               ? "bg-red-soft text-red border-red/10"
               : t.type === "success"
@@ -117,7 +118,7 @@ function ConfirmDialog({
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-surface rounded-2xl shadow-2xl max-w-sm w-[calc(100%-2rem)] p-6 grid gap-4 animate-fade-in">
+      <div className="grid w-[calc(100%-2rem)] max-w-sm gap-4 rounded-lg bg-surface p-6 shadow-2xl animate-fade-in">
         <h2 className="text-base font-semibold m-0">{title}</h2>
         <p className="text-sm text-muted m-0 leading-relaxed">{body}</p>
         <div className="flex items-center justify-end gap-2 pt-1">
@@ -133,9 +134,9 @@ function ConfirmDialog({
 // Shared UI primitives
 // ---------------------------------------------------------------------------
 const INPUT_SHELL_CLASS =
-  "flex h-10 w-full items-center overflow-hidden rounded-lg border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10";
+  "flex h-10 w-full items-center overflow-hidden rounded-md border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15";
 const INPUT_CLASS =
-  "w-full h-10 m-0 appearance-none rounded-lg border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 disabled:cursor-default disabled:text-muted disabled:opacity-100";
+  "w-full h-10 m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_CONTROL_CLASS =
   "m-0 h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 py-0 leading-[38px] text-sm font-[inherit] text-ink placeholder:text-subtle focus:outline-none focus:ring-0 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_SUFFIX_CLASS =
@@ -147,6 +148,8 @@ function Btn({
   disabled,
   loading,
   onClick,
+  title,
+  form,
   type = "button",
   className = "",
   children,
@@ -156,25 +159,29 @@ function Btn({
   disabled?: boolean;
   loading?: boolean;
   onClick?: () => void;
+  title?: string;
+  form?: string;
   type?: "button" | "submit";
   className?: string;
   children: ReactNode;
 }) {
-  const base = "inline-flex items-center justify-center gap-2 font-semibold transition-all duration-150 border-0 cursor-pointer disabled:opacity-50 disabled:cursor-default";
+  const base = "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border font-semibold transition-all duration-150 cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-default disabled:opacity-50";
   const sizeClass =
-    size === "sm" ? "text-xs px-3 py-1.5 rounded-lg" :
-    size === "lg" ? "text-sm px-6 py-3 rounded-xl" :
-    "text-sm px-4 py-2.5 rounded-lg";
+    size === "sm" ? "h-8 px-3 text-xs" :
+    size === "lg" ? "h-10 px-4 text-sm" :
+    "h-9 px-3.5 text-sm";
   const variantClass =
     variant === "primary"
-      ? "bg-accent text-white shadow-sm hover:bg-accent-hover"
+      ? "border-accent bg-accent text-white shadow-sm hover:bg-accent-hover"
       : variant === "secondary"
-        ? "bg-accent-soft text-accent hover:bg-accent/[0.12]"
-        : "bg-transparent text-muted hover:bg-line hover:text-ink";
+        ? "border-line-strong bg-surface text-ink hover:border-accent/35 hover:bg-accent-soft hover:text-accent"
+        : "border-transparent bg-transparent text-muted hover:bg-line hover:text-ink";
 
   return (
     <button
       type={type}
+      title={title}
+      form={form}
       disabled={disabled || loading}
       onClick={onClick}
       className={`${base} ${sizeClass} ${variantClass} ${className}`}
@@ -193,9 +200,95 @@ function Card({
   className?: string;
 }) {
   return (
-    <section className={`bg-surface border border-line rounded-2xl p-6 animate-fade-in ${className}`}>
+    <section className={`overflow-hidden rounded-lg border border-line bg-surface shadow-[0_1px_2px_rgba(15,23,42,0.04)] animate-fade-in ${className}`}>
       {children}
     </section>
+  );
+}
+
+function SectionHeader({
+  title,
+  description,
+  actions,
+  expanded,
+  onToggle,
+  className = "",
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  expanded?: boolean;
+  onToggle?: () => void;
+  className?: string;
+}) {
+  const collapsible = Boolean(onToggle);
+  return (
+    <div className={`flex items-start justify-between gap-4 border-b border-line px-5 py-4 max-[480px]:flex-col max-[480px]:items-stretch ${className}`}>
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 border-0 bg-transparent p-0 text-left"
+        >
+          <Icon
+            name="chevronDown"
+            className={`mt-0.5 h-4 w-4 shrink-0 text-muted transition-transform ${expanded ? "" : "-rotate-90"}`}
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-ink">{title}</span>
+            {description && (
+              <span className="mt-1 block text-xs leading-relaxed text-muted">{description}</span>
+            )}
+          </span>
+        </button>
+      ) : (
+        <div className="min-w-0 flex-1">
+          <h3 className="m-0 text-sm font-semibold text-ink">{title}</h3>
+          {description && (
+            <p className="m-0 mt-1 text-xs leading-relaxed text-muted">{description}</p>
+          )}
+        </div>
+      )}
+      {actions && (
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[480px]:w-full max-[480px]:justify-start [&>button]:max-[480px]:w-full">
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectionBody({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`px-5 py-5 ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function ActionBar({
+  children,
+  notice,
+  className = "",
+}: {
+  children: ReactNode;
+  notice?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`flex items-center justify-between gap-3 border-t border-line pt-4 max-[480px]:flex-col max-[480px]:items-stretch ${className}`}>
+      <div className="min-h-5 text-xs text-muted">{notice}</div>
+      <div className="flex items-center justify-end gap-2 max-[480px]:w-full max-[480px]:flex-col-reverse [&>button]:max-[480px]:w-full">
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -236,10 +329,69 @@ function Spinner({ small }: { small?: boolean }) {
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
-      className={`inline-block w-2 h-2 rounded-full ${ok ? "bg-green" : "bg-amber"}`}
+      className={`inline-block h-2 w-2 rounded-full ring-4 ${ok ? "bg-green ring-green-soft" : "bg-amber ring-amber-soft"}`}
       role="img"
       aria-label={ok ? "Connected" : "Not connected"}
     />
+  );
+}
+
+type IconName = "check" | "chevronDown" | "chevronRight" | "edit" | "link" | "refresh" | "save" | "sync";
+
+function Icon({ name, className = "h-4 w-4" }: { name: IconName; className?: string }) {
+  const path: Record<IconName, ReactNode> = {
+    check: <path d="M20 6 9 17l-5-5" />,
+    chevronDown: <path d="m6 9 6 6 6-6" />,
+    chevronRight: <path d="m9 6 6 6-6 6" />,
+    edit: (
+      <>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </>
+    ),
+    link: (
+      <>
+        <path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
+        <path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M21 12a9 9 0 0 1-15.1 6.6" />
+        <path d="M3 12A9 9 0 0 1 18.1 5.4" />
+        <path d="M18 2v4h-4" />
+        <path d="M6 22v-4h4" />
+      </>
+    ),
+    save: (
+      <>
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" />
+        <path d="M17 21v-8H7v8" />
+        <path d="M7 3v5h8" />
+      </>
+    ),
+    sync: (
+      <>
+        <path d="m17 1 4 4-4 4" />
+        <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+        <path d="m7 23-4-4 4-4" />
+        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+      </>
+    ),
+  };
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {path[name]}
+    </svg>
   );
 }
 
@@ -258,7 +410,6 @@ export function DashboardPage() {
   const [syncingFull, setSyncingFull] = useState(false);
   const [syncingQuick, setSyncingQuick] = useState(false);
   const [showSyncConfirm, setShowSyncConfirm] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const toast = useToast();
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -318,11 +469,6 @@ export function DashboardPage() {
       setDebugLoading(false);
     }
   };
-
-  useEffect(() => {
-    // Intentionally do NOT auto-load debug snapshot when Advanced is opened.
-    // Debug fetch is expensive (hits Notion + CalDAV + ledger) — require explicit click.
-  }, [showAdvanced]);
 
   // Sync handlers
   const executeSync = async (mode: "full" | "incremental") => {
@@ -427,41 +573,43 @@ export function DashboardPage() {
         />
       )}
 
-      <main className="max-w-[960px] mx-auto px-6 py-8 pb-16 grid gap-6">
+      <main className="mx-auto grid max-w-[1040px] gap-5 px-6 py-8 pb-16 max-sm:px-4">
         {/* Header */}
-        <div className="flex items-end justify-between flex-wrap gap-4">
-          <div>
+        <div className="flex items-end justify-between gap-4 max-md:flex-col max-md:items-start">
+          <div className="grid gap-1">
             <h1
-              className={`text-2xl font-bold m-0 tracking-[-0.02em] ${
-                lang === "zh-hans" ? "font-serif-sc" : lang === "zh-hant" ? "font-serif-tc" : "font-serif"
-              }`}
+              className="m-0 text-2xl font-semibold text-ink"
             >
               {t("greeting")}{userName ? `, ${userName}` : ""}
             </h1>
             {!needsSetup && cfg?.last_full_sync_at && (
-              <p className="text-xs text-subtle mt-1 m-0">
+              <p className="m-0 text-xs text-subtle">
                 {t("lastSyncLabel")}: {humanizeTimestamp(cfg.last_full_sync_at, t)}
               </p>
             )}
           </div>
           {!needsSetup && data.workspaceId && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 max-[480px]:w-full [&>button]:max-[480px]:flex-1">
               <Btn
                 variant="secondary"
-                size="sm"
+                size="md"
                 disabled={syncingQuick}
                 loading={syncingQuick}
+                title={t("quickSyncHelp")}
                 onClick={() => handleSync("incremental")}
               >
+                <Icon name="refresh" />
                 {syncingQuick ? t("syncing") : t("quickSync")}
               </Btn>
               <Btn
                 variant="primary"
-                size="sm"
+                size="md"
                 disabled={syncingFull}
                 loading={syncingFull}
+                title={t("syncAllHelp")}
                 onClick={() => handleSync("full")}
               >
+                <Icon name="sync" />
                 {syncingFull ? t("syncing") : t("syncAll")}
               </Btn>
             </div>
@@ -486,6 +634,7 @@ export function DashboardPage() {
               notionConnected={data.notionConnected}
               appleConfigured={appleConfigured}
               workspaceName={cfg?.notion_workspace_name || ""}
+              onNotionConnect={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
             />
 
             {/* Settings */}
@@ -498,64 +647,24 @@ export function DashboardPage() {
             {/* Status indicator settings (tenant-level) */}
             {data.notionConnected && <StatusIndicatorCard />}
 
-            {/* Notion connection + pages to sync */}
-            <Card>
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <h3 className="text-sm font-semibold m-0">Notion</h3>
-                  <p className="text-xs text-muted m-0 mt-0.5">
-                    {data.notionConnected ? t("notionOk") : t("notionMissing")}
-                  </p>
-                </div>
-                <Btn
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
-                >
-                  {data.notionConnected ? t("reconnectNotion") : t("connectNotion")}
-                </Btn>
-              </div>
-              {data.notionConnected && (
-                <div className="mt-5 pt-5 border-t border-line">
-                  <DataSourcesCard />
-                </div>
-              )}
-            </Card>
+            {/* Notion pages to sync */}
+            {data.notionConnected && <DataSourcesCard />}
 
-            {/* Recent webhook calls — visible outside Advanced */}
+            {/* Recent webhook calls */}
             <WebhookLogCard logs={webhookLogs} />
 
-            {/* Advanced toggle */}
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="flex items-center gap-2 text-xs font-medium text-muted bg-transparent border-0 cursor-pointer px-0 hover:text-ink transition-colors"
-            >
-              <svg
-                className={`w-3 h-3 transition-transform duration-200 ${showAdvanced ? "rotate-90" : ""}`}
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
-              </svg>
-              Advanced
-            </button>
-
-            {showAdvanced && (
-              <div className="grid gap-6 animate-expand">
-                <SyncDebugCard
-                  workspaceId={data.workspaceId}
-                  ready={debugReady}
-                  snapshot={debugSnapshot}
-                  loading={debugLoading}
-                  error={debugError}
-                  onLoad={loadDebug}
-                />
-              </div>
-            )}
+            <SyncDebugCard
+              workspaceId={data.workspaceId}
+              ready={debugReady}
+              snapshot={debugSnapshot}
+              loading={debugLoading}
+              error={debugError}
+              onLoad={loadDebug}
+            />
           </>
         )}
       </main>
+      <Footer />
     </>
   );
 }
@@ -585,45 +694,46 @@ function SetupWizard({
 
   return (
     <Card>
-      <h2 className="text-lg font-bold m-0 mb-6">{t("setupTitle")}</h2>
+      <SectionHeader title={t("setupTitle")} />
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-0 mb-8">
-        {[1, 2, 3, 4].map((step) => {
-          const done = currentStep > step;
-          const active = currentStep === step;
-          const label = step === 1
-            ? (done ? t("setupStep1Done") : t("setupStep1"))
-            : step === 2
-              ? (done ? t("setupStep2Done") : t("setupStep2"))
-              : step === 3
-                ? (done ? t("setupStep3Done") : t("setupStep3"))
-                : t("setupStep4");
-          return (
-            <div key={step} className="flex-1 flex items-center">
-              <div className="flex flex-col items-center gap-1.5 flex-none">
-                <div
-                  className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center ${
-                    done ? "bg-green text-white" : active ? "bg-accent text-white" : "bg-line text-muted"
-                  }`}
-                >
-                  {done ? "\u2713" : step}
+      <SectionBody className="grid gap-7">
+        {/* Step indicator */}
+        <div className="flex items-start gap-0">
+          {[1, 2, 3, 4].map((step) => {
+            const done = currentStep > step;
+            const active = currentStep === step;
+            const label = step === 1
+              ? (done ? t("setupStep1Done") : t("setupStep1"))
+              : step === 2
+                ? (done ? t("setupStep2Done") : t("setupStep2"))
+                : step === 3
+                  ? (done ? t("setupStep3Done") : t("setupStep3"))
+                  : t("setupStep4");
+            return (
+              <div key={step} className="flex flex-1 items-start">
+                <div className="flex flex-none flex-col items-center gap-2">
+                  <div
+                    className={`flex h-8 w-8 items-center justify-center rounded-md text-xs font-bold ${
+                      done ? "bg-green text-white" : active ? "bg-accent text-white" : "bg-bg text-muted ring-1 ring-line"
+                    }`}
+                  >
+                    {done ? <Icon name="check" className="h-4 w-4" /> : step}
+                  </div>
+                  <span className={`max-w-[108px] text-center text-[11px] font-medium leading-snug ${active ? "text-ink" : done ? "text-green" : "text-muted"}`}>
+                    {label}
+                  </span>
                 </div>
-                <span className={`text-[11px] font-medium text-center max-w-[100px] ${active ? "text-ink" : done ? "text-green" : "text-muted"}`}>
-                  {label}
-                </span>
+                {step < 4 && (
+                  <div className={`mx-3 mt-4 h-px flex-1 ${done ? "bg-green" : "bg-line"}`} />
+                )}
               </div>
-              {step < 3 && (
-                <div className={`flex-1 h-px mx-3 ${done ? "bg-green" : "bg-line"}`} />
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      {/* Step content */}
-      {currentStep === 1 && (
-        <div className="grid gap-4 text-center py-2">
+        {/* Step content */}
+        {currentStep === 1 && (
+          <div className="grid gap-4 py-2 text-center">
           <p className="text-sm text-muted m-0">{t("setupStep1Desc")}</p>
           <Btn
             variant="primary"
@@ -631,13 +741,14 @@ function SetupWizard({
             className="mx-auto"
             onClick={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
           >
+            <Icon name="link" />
             {t("connectNotion")}
           </Btn>
-        </div>
-      )}
+          </div>
+        )}
 
-      {currentStep === 2 && (
-        <div className="grid gap-4">
+        {currentStep === 2 && (
+          <div className="grid gap-4">
           <p className="text-sm text-muted m-0">{t("setupStep2Desc")}</p>
           <NotionBindingCard
             selectedSourceIds={data.notionBinding?.selectedSourceIds || null}
@@ -645,11 +756,11 @@ function SetupWizard({
             forceEditing
             compact
           />
-        </div>
-      )}
+          </div>
+        )}
 
-      {currentStep === 3 && (
-        <div className="grid gap-4">
+        {currentStep === 3 && (
+          <div className="grid gap-4">
           <p className="text-sm text-muted m-0">{t("setupStep3Desc")}</p>
           <AppleSettingsCard
             config={data.config}
@@ -658,12 +769,14 @@ function SetupWizard({
             forceEditing
             compact
           />
-        </div>
-      )}
+          </div>
+        )}
 
-      {currentStep === 4 && (
-        <div className="grid gap-4 text-center py-6">
-          <div className="text-4xl">&#127881;</div>
+        {currentStep === 4 && (
+          <div className="grid gap-4 py-6 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-green-soft text-green">
+            <Icon name="check" className="h-6 w-6" />
+          </div>
           <p className="text-sm text-muted m-0">{t("setupStep4Desc")}</p>
           <Btn
             variant="primary"
@@ -673,10 +786,12 @@ function SetupWizard({
             loading={syncingFull}
             onClick={onSync}
           >
+            <Icon name="sync" />
             {syncingFull ? t("syncing") : t("setupRunSync")}
           </Btn>
-        </div>
-      )}
+          </div>
+        )}
+      </SectionBody>
     </Card>
   );
 }
@@ -699,6 +814,7 @@ function NotionBindingCard({
   const [error, setError] = useState("");
   const [sources, setSources] = useState<NotionBindingSource[]>([]);
   const [selected, setSelected] = useState<string[]>(selectedSourceIds || []);
+  const [expanded, setExpanded] = useState(true);
 
   const loadSources = useCallback(async () => {
     setLoading(true);
@@ -749,29 +865,44 @@ function NotionBindingCard({
 
   const Wrapper = compact ? "div" : Card;
   const selectedCount = selectedSourceIds?.length || 0;
+  const resetSelection = () => {
+    setSelected(selectedSourceIds || []);
+    setError("");
+    setEditing(false);
+  };
 
   return (
     <Wrapper className="">
       {!forceEditing && (
-        <div className="flex items-center justify-between mb-4 gap-3">
-          <div>
-            <h3 className="text-sm font-semibold m-0">{t("bindingSection")}</h3>
-            <p className="text-xs text-muted m-0 mt-0.5">
+        <SectionHeader
+          title={t("bindingSection")}
+          description={(
+            <>
               {selectedCount > 0
                 ? t("bindingSelectedCount").replace("{n}", String(selectedCount))
                 : t("bindingLegacyAll")}
-            </p>
-          </div>
-          {!editing && (
-            <Btn variant="ghost" size="sm" onClick={() => setEditing(true)}>
+            </>
+          )}
+          expanded={expanded}
+          onToggle={() => setExpanded((current) => !current)}
+          actions={!editing && (
+            <Btn
+              variant="secondary"
+              size="md"
+              onClick={() => {
+                setExpanded(true);
+                setEditing(true);
+              }}
+            >
+              <Icon name="edit" />
               {t("editBtn")}
             </Btn>
           )}
-        </div>
+        />
       )}
 
-      {(forceEditing || editing) ? (
-        <form onSubmit={handleSubmit} className="grid gap-4">
+      {(forceEditing || expanded) && ((forceEditing || editing) ? (
+        <form onSubmit={handleSubmit} className={`grid gap-4 ${compact || forceEditing ? "" : "px-5 pb-5 pt-5"}`}>
           <p className="text-sm text-muted m-0">{t("bindingSectionHelp")}</p>
           {error && <p className="text-xs text-red m-0">{error}</p>}
           {loading ? (
@@ -782,7 +913,7 @@ function NotionBindingCard({
           ) : sources.length === 0 ? (
             <p className="text-xs text-muted m-0">{t("bindingEmpty")}</p>
           ) : (
-            <div className="grid gap-2 max-h-72 overflow-auto rounded-xl border border-line bg-bg p-3">
+            <div className="grid max-h-72 gap-2 overflow-auto rounded-md border border-line bg-bg p-3">
               {sources.map((source) => (
                 <label key={source.id} className="flex items-start gap-3 text-sm text-ink cursor-pointer">
                   <input
@@ -796,12 +927,20 @@ function NotionBindingCard({
               ))}
             </div>
           )}
-          <Btn variant="primary" size="lg" type="submit" disabled={saving || loading} loading={saving} className="w-full">
-            {saving ? t("saving") : t("bindingSaveBtn")}
-          </Btn>
+          <ActionBar>
+            {!forceEditing && selectedCount > 0 && (
+              <Btn variant="ghost" size="md" onClick={resetSelection}>
+                {t("cancelBtn")}
+              </Btn>
+            )}
+            <Btn variant="primary" size="md" type="submit" disabled={saving || loading} loading={saving}>
+              <Icon name="save" />
+              {saving ? t("saving") : t("bindingSaveBtn")}
+            </Btn>
+          </ActionBar>
         </form>
       ) : (
-        <div className="grid gap-2">
+        <div className="grid gap-2 px-5 pb-5 pt-5">
           <p className="text-xs text-muted m-0">{t("bindingSectionHelp")}</p>
           <p className="text-sm text-ink m-0">
             {selectedCount > 0
@@ -809,7 +948,7 @@ function NotionBindingCard({
               : t("bindingLegacyAll")}
           </p>
         </div>
-      )}
+      ))}
     </Wrapper>
   );
 }
@@ -821,34 +960,59 @@ function SyncStatusBar({
   notionConnected,
   appleConfigured,
   workspaceName,
+  onNotionConnect,
 }: {
   notionConnected: boolean;
   appleConfigured: boolean;
   workspaceName: string;
+  onNotionConnect: () => void;
 }) {
   const { t } = useI18n();
   return (
-    <div className="flex flex-wrap items-center gap-4 px-5 py-3 bg-surface border border-line rounded-xl text-sm">
-      <div className="flex items-center gap-2">
-        <StatusDot ok={notionConnected} />
-        <span className="text-muted text-xs">Notion</span>
-        <span className="text-ink text-xs font-medium">{notionConnected ? t("notionOk") : t("notionMissing")}</span>
-      </div>
-      <div className="w-px h-4 bg-line" />
-      <div className="flex items-center gap-2">
-        <StatusDot ok={appleConfigured} />
-        <span className="text-muted text-xs">{t("appleLabel")}</span>
-        <span className="text-ink text-xs font-medium">{appleConfigured ? t("appleOk") : t("appleMissing")}</span>
-      </div>
+    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 rounded-lg border border-line bg-surface p-2 text-sm shadow-[0_1px_2px_rgba(15,23,42,0.04)] max-[560px]:grid-cols-1">
+      <StatusSummaryItem
+        label="Notion"
+        value={notionConnected ? t("notionOk") : t("notionMissing")}
+        ok={notionConnected}
+        action={(
+          <Btn variant="secondary" size="sm" onClick={onNotionConnect}>
+            <Icon name="link" className="h-3.5 w-3.5" />
+            {notionConnected ? t("reconnectNotionShort") : t("connectNotionShort")}
+          </Btn>
+        )}
+      />
+      <StatusSummaryItem label={t("appleLabel")} value={appleConfigured ? t("appleOk") : t("appleMissing")} ok={appleConfigured} />
       {workspaceName && (
-        <>
-          <div className="w-px h-4 bg-line" />
-          <div className="flex items-center gap-2">
-            <span className="text-muted text-xs">{t("workspaceLabel")}</span>
-            <span className="text-ink text-xs font-medium truncate max-w-[140px]">{workspaceName}</span>
-          </div>
-        </>
+        <div className="flex min-w-[180px] items-center gap-2 rounded-md bg-bg px-3 py-2">
+          <span className="text-xs text-muted">{t("workspaceLabel")}</span>
+          <span className="truncate text-xs font-medium text-ink">{workspaceName}</span>
+        </div>
       )}
+    </div>
+  );
+}
+
+function StatusSummaryItem({
+  label,
+  value,
+  ok,
+  action,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md bg-bg px-3 py-2">
+      <div className="flex min-w-0 items-center gap-3">
+        <StatusDot ok={ok} />
+        <div className="min-w-0">
+          <p className="m-0 text-[11px] font-medium text-muted">{label}</p>
+          <p className="m-0 truncate text-xs font-semibold text-ink">{value}</p>
+        </div>
+      </div>
+      {action}
     </div>
   );
 }
@@ -882,6 +1046,20 @@ function AppleSettingsCard({
   const [appPw, setAppPw] = useState("");
   const [calName, setCalName] = useState(config?.calendar_name || "Notion");
   const [showPwHelp, setShowPwHelp] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  const resetForm = useCallback(() => {
+    const detectedTz = detectIanaTimezone();
+    setColor(config?.calendar_color || "#FF7F00");
+    setCalTz(normalizeTimezoneValue(config?.calendar_timezone) || detectedTz || "");
+    setDayTz(normalizeTimezoneValue(config?.date_only_timezone) || detectedTz || "");
+    setPollInterval(String(config?.poll_interval_minutes ?? 5));
+    setFullSyncInterval(String(config?.full_sync_interval_minutes ?? 60));
+    setAppleId("");
+    setAppPw("");
+    setCalName(config?.calendar_name || "Notion");
+    setShowPwHelp(false);
+  }, [config]);
 
   useEffect(() => {
     const tz = detectIanaTimezone();
@@ -889,6 +1067,10 @@ function AppleSettingsCard({
     setCalTz((cur) => cur || tz);
     setDayTz((cur) => cur || tz);
   }, []);
+
+  useEffect(() => {
+    if (!editing) resetForm();
+  }, [editing, resetForm]);
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -916,22 +1098,62 @@ function AppleSettingsCard({
   };
 
   const Wrapper = compact ? "div" : Card;
+  const appleFormId = forceEditing ? "apple-settings-setup-form" : "apple-settings-form";
+  const appleActions = editing ? (
+    <>
+      {!forceEditing && hasSaved && (
+        <Btn
+          variant="ghost"
+          size="md"
+          onClick={() => {
+            resetForm();
+            setEditing(false);
+          }}
+        >
+          {t("cancelBtn")}
+        </Btn>
+      )}
+      <Btn
+        variant="secondary"
+        size="md"
+        type="submit"
+        form={appleFormId}
+        disabled={saving}
+        loading={saving}
+      >
+        <Icon name="save" />
+        {saving ? t("saving") : t("saveBtn")}
+      </Btn>
+    </>
+  ) : (
+    <Btn
+      variant="secondary"
+      size="md"
+      onClick={() => {
+        setExpanded(true);
+        setEditing(true);
+      }}
+    >
+      <Icon name="edit" />
+      {t("editBtn")}
+    </Btn>
+  );
 
   return (
     <Wrapper className="">
       {!forceEditing && (
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="text-sm font-semibold m-0">{t("appleSection")}</h3>
-          {!editing && (
-            <Btn variant="ghost" size="sm" onClick={() => setEditing(true)}>
-              {t("editBtn")}
-            </Btn>
-          )}
-        </div>
+        <SectionHeader
+          title={t("appleSection")}
+          description={credentials?.hasAppleId ? t("appleSectionReady") : t("appleSectionMissing")}
+          expanded={editing || expanded}
+          onToggle={() => setExpanded((current) => editing ? current : !current)}
+          actions={appleActions}
+        />
       )}
-      <form onSubmit={handleSubmit} className="grid gap-4">
+      {(forceEditing || expanded || editing) && (
+      <form id={appleFormId} onSubmit={handleSubmit} className={`grid gap-4 ${compact || forceEditing ? "" : "px-5 pb-5 pt-5"}`}>
         {/* Credentials row */}
-        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 gap-4 max-[520px]:grid-cols-1">
           <SecretField
             id="apple_id"
             label={t("appleIdLabel")}
@@ -982,7 +1204,7 @@ function AppleSettingsCard({
         </div>
 
         {showPwHelp && (
-          <div className="rounded-xl bg-accent/[0.04] border border-accent/10 p-4 grid gap-2">
+          <div className="grid gap-2 rounded-md border border-accent/10 bg-accent/[0.04] p-4">
             <p className="text-sm font-semibold text-ink m-0">{t("appPwExplainerTitle")}</p>
             <p className="text-xs text-muted m-0">{t("appPwExplainerBody")}</p>
             <ol className="text-xs text-muted m-0 pl-5 grid gap-1">
@@ -995,7 +1217,7 @@ function AppleSettingsCard({
         )}
 
         {/* Calendar name + color */}
-        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 gap-4 max-[520px]:grid-cols-1">
           <Field id="calendar_name" label={t("calNameLabel")} help={t("calNameHelp")} value={calName} onInput={setCalName} disabled={!editing} />
           <div className="grid gap-1.5">
             <label htmlFor="calendar_color" className="text-xs font-medium text-muted">{t("calColorLabel")}</label>
@@ -1021,13 +1243,13 @@ function AppleSettingsCard({
         </div>
 
         {/* Timezones */}
-        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 gap-4 max-[520px]:grid-cols-1">
           <TimezoneField id="calendar_timezone" label={t("tzLabel")} help={t("tzHelp")} value={calTz} onInput={setCalTz} disabled={!editing} />
           <TimezoneField id="date_only_timezone" label={t("allDayTzLabel")} help={t("allDayTzHelp")} value={dayTz} onInput={setDayTz} disabled={!editing} />
         </div>
 
         {/* Intervals */}
-        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
+        <div className="grid grid-cols-2 gap-4 max-[520px]:grid-cols-1">
           <div className="grid gap-1.5">
             <label htmlFor="poll_interval_minutes" className="text-xs font-medium text-muted">{t("checkEveryLabel")}</label>
             <div className={INPUT_SHELL_CLASS}>
@@ -1055,12 +1277,16 @@ function AppleSettingsCard({
         </div>
 
         {/* Save button */}
-        {editing && (
-          <Btn variant="primary" size="lg" type="submit" disabled={saving} loading={saving} className="w-full mt-1">
-            {saving ? t("saving") : t("saveBtn")}
-          </Btn>
+        {editing && forceEditing && (
+          <ActionBar>
+            <Btn variant="primary" size="md" type="submit" disabled={saving} loading={saving}>
+              <Icon name="save" />
+              {saving ? t("saving") : t("saveBtn")}
+            </Btn>
+          </ActionBar>
         )}
       </form>
+      )}
     </Wrapper>
   );
 }
@@ -1084,6 +1310,7 @@ function SyncDebugCard({
   onLoad: () => void;
 }) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(true);
   const sections = snapshot ? buildDebugSections(snapshot.entries, t) : [];
   const tableLabels = {
     item: t("debugTableItem"),
@@ -1095,37 +1322,42 @@ function SyncDebugCard({
 
   return (
     <Card>
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
-        <div>
-          <h3 className="text-sm font-semibold m-0">{t("debugLabel")}</h3>
-          <p className="text-xs text-muted m-0 mt-0.5">{t("debugHelp")}</p>
-        </div>
-        <Btn
-          variant="secondary"
-          size="sm"
-          disabled={!workspaceId || !ready || loading}
-          loading={loading}
-          onClick={onLoad}
-        >
-          {snapshot ? t("debugRefresh") : t("debugLoad")}
-        </Btn>
-      </div>
+      <SectionHeader
+        title={t("debugLabel")}
+        description={t("debugHelp")}
+        expanded={expanded}
+        onToggle={() => setExpanded((current) => !current)}
+        actions={(
+          <Btn
+            variant="secondary"
+            size="md"
+            disabled={!workspaceId || !ready || loading}
+            loading={loading}
+            onClick={onLoad}
+          >
+            <Icon name="refresh" />
+            {snapshot ? t("debugRefresh") : t("debugLoad")}
+          </Btn>
+        )}
+      />
 
-      {!workspaceId ? (
-        <p className="text-xs text-muted">{t("debugNoWorkspace")}</p>
-      ) : !ready ? (
-        <p className="text-xs text-muted">{t("debugUnavailable")}</p>
-      ) : loading && !snapshot ? (
-        <div className="flex items-center gap-2">
-          <Spinner small />
-          <p className="text-xs text-muted m-0">{t("debugLoading")}</p>
-        </div>
-      ) : error ? (
-        <p className="text-xs text-red">{error}</p>
-      ) : !snapshot ? (
-        <p className="text-xs text-muted">{t("debugEmpty")}</p>
-      ) : (
-        <div className="grid gap-4">
+      {expanded && (
+      <SectionBody>
+        {!workspaceId ? (
+          <p className="text-xs text-muted">{t("debugNoWorkspace")}</p>
+        ) : !ready ? (
+          <p className="text-xs text-muted">{t("debugUnavailable")}</p>
+        ) : loading && !snapshot ? (
+          <div className="flex items-center gap-2">
+            <Spinner small />
+            <p className="text-xs text-muted m-0">{t("debugLoading")}</p>
+          </div>
+        ) : error ? (
+          <p className="text-xs text-red">{error}</p>
+        ) : !snapshot ? (
+          <p className="text-xs text-muted">{t("debugEmpty")}</p>
+        ) : (
+          <div className="grid gap-4">
           {/* Metric chips */}
           <div className="flex flex-wrap gap-2">
             <MetricChip label={t("debugNotionCount")} value={snapshot.summary.notionTaskCount} />
@@ -1177,7 +1409,9 @@ function SyncDebugCard({
               </div>
             </div>
           )}
-        </div>
+          </div>
+        )}
+      </SectionBody>
       )}
     </Card>
   );
@@ -1186,7 +1420,7 @@ function SyncDebugCard({
 function MetricChip({ label, value, tone }: { label: string; value: number; tone?: "amber" | "red" }) {
   const cls = tone === "red" ? "border-red/15 text-red" : tone === "amber" ? "border-amber/15 text-amber" : "border-line text-ink";
   return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-bg text-xs ${cls}`}>
+    <div className={`flex items-center gap-2 rounded-md border bg-bg px-3 py-1.5 text-xs ${cls}`}>
       <span className="text-muted font-medium">{label}</span>
       <span className="font-bold">{value}</span>
     </div>
@@ -1203,7 +1437,7 @@ function DebugSection({
   const [expanded, setExpanded] = useState(section.tone === "red" || section.tone === "amber");
 
   return (
-    <div className="rounded-xl border border-line bg-bg">
+    <div className="rounded-md border border-line bg-bg">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -1290,48 +1524,57 @@ function DebugEntryRow({ entry }: { entry: SyncDebugEntry }) {
 // ---------------------------------------------------------------------------
 function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(true);
   return (
     <Card>
-      <h3 className="text-sm font-semibold m-0 mb-4">{t("webhookLogLabel")}</h3>
-      {logs.length === 0 ? (
-        <p className="text-xs text-muted">{t("webhookLogEmpty")}</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="text-left text-[11px] text-muted border-b border-line">
-                <th className="py-2 pr-3 font-semibold">{t("webhookLogTime")}</th>
-                <th className="py-2 pr-3 font-semibold">{t("webhookLogEvents")}</th>
-                <th className="py-2 pr-3 font-semibold">{t("webhookLogPages")}</th>
-                <th className="py-2 font-semibold">{t("webhookLogResult")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id} className="border-b border-line/50 last:border-0">
-                  <td className="py-2 pr-3 text-ink whitespace-nowrap" title={formatTimestamp(log.createdAt)}>
-                    {humanizeTimestamp(log.createdAt, t)}
-                  </td>
-                  <td className="py-2 pr-3 text-muted">
-                    {Array.isArray(log.eventTypes) && log.eventTypes.length > 0
-                      ? log.eventTypes.map((et) => et.replace("page.", "")).join(", ")
-                      : "\u2014"}
-                  </td>
-                  <td className="py-2 pr-3 text-muted font-mono">
-                    {Array.isArray(log.pageIds) && log.pageIds.length > 0
-                      ? `${log.pageIds.length} page${log.pageIds.length > 1 ? "s" : ""}`
-                      : "\u2014"}
-                  </td>
-                  <td className="py-2">
-                    <Badge tone={log.result && (log.result as Record<string, unknown>).ok ? "green" : "red"}>
-                      {log.result && (log.result as Record<string, unknown>).ok ? "OK" : "Error"}
-                    </Badge>
-                  </td>
+      <SectionHeader
+        title={t("webhookLogLabel")}
+        expanded={expanded}
+        onToggle={() => setExpanded((current) => !current)}
+      />
+      {expanded && (
+      <SectionBody>
+        {logs.length === 0 ? (
+          <p className="text-xs text-muted">{t("webhookLogEmpty")}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="text-left text-[11px] text-muted border-b border-line">
+                  <th className="py-2 pr-3 font-semibold">{t("webhookLogTime")}</th>
+                  <th className="py-2 pr-3 font-semibold">{t("webhookLogEvents")}</th>
+                  <th className="py-2 pr-3 font-semibold">{t("webhookLogPages")}</th>
+                  <th className="py-2 font-semibold">{t("webhookLogResult")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={log.id} className="border-b border-line/50 last:border-0">
+                    <td className="py-2 pr-3 text-ink whitespace-nowrap" title={formatTimestamp(log.createdAt)}>
+                      {humanizeTimestamp(log.createdAt, t)}
+                    </td>
+                    <td className="py-2 pr-3 text-muted">
+                      {Array.isArray(log.eventTypes) && log.eventTypes.length > 0
+                        ? log.eventTypes.map((et) => et.replace("page.", "")).join(", ")
+                        : "\u2014"}
+                    </td>
+                    <td className="py-2 pr-3 text-muted font-mono">
+                      {Array.isArray(log.pageIds) && log.pageIds.length > 0
+                        ? `${log.pageIds.length} page${log.pageIds.length > 1 ? "s" : ""}`
+                        : "\u2014"}
+                    </td>
+                    <td className="py-2">
+                      <Badge tone={log.result && (log.result as Record<string, unknown>).ok ? "green" : "red"}>
+                        {log.result && (log.result as Record<string, unknown>).ok ? "OK" : "Error"}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionBody>
       )}
     </Card>
   );
@@ -1367,6 +1610,7 @@ function DataSourcesCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [expanded, setExpanded] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -1415,43 +1659,53 @@ function DataSourcesCard() {
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4 gap-3">
-        <div>
-          <h3 className="text-sm font-semibold m-0">{t("bindingSection")}</h3>
-          <p className="text-xs text-muted m-0 mt-0.5">{t("bindingSectionHelp")}</p>
-        </div>
-      </div>
-
-      {loading && !entries ? (
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <Spinner small />
-          {t("loading")}
-        </div>
-      ) : error ? (
-        <p className="text-xs text-red m-0">{error}</p>
-      ) : !entries || entries.length === 0 ? (
-        <p className="text-xs text-muted m-0">{t("bindingEmpty")}</p>
-      ) : (
-        <div className="grid gap-2">
-          {entries.map((entry) => (
-            <DataSourceRow
-              key={entry.id}
-              entry={entry}
-              expanded={expandedId === entry.id}
-              onToggleExpand={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
-              onChange={(patch) => update(entry.id, patch)}
-            />
-          ))}
-          <div className="flex items-center gap-3 mt-2">
-            <Btn variant="primary" size="sm" onClick={save} disabled={saving} loading={saving}>
-              {saving ? t("saving") : t("bindingSaveBtn")}
-            </Btn>
-            {notice && <span className="text-xs text-muted">{notice}</span>}
-          </div>
-        </div>
+    <Card>
+      <SectionHeader
+        title={t("bindingSection")}
+        description={t("bindingSectionHelp")}
+        expanded={expanded}
+        onToggle={() => setExpanded((current) => !current)}
+        actions={(
+          <Btn
+            variant="secondary"
+            size="md"
+            onClick={save}
+            disabled={saving || loading || !entries}
+            loading={saving}
+          >
+            <Icon name="save" />
+            {saving ? t("saving") : t("bindingSaveBtn")}
+          </Btn>
+        )}
+      />
+      {expanded && (
+        <SectionBody>
+          {loading && !entries ? (
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <Spinner small />
+              {t("loading")}
+            </div>
+          ) : error ? (
+            <p className="text-xs text-red m-0">{error}</p>
+          ) : !entries || entries.length === 0 ? (
+            <p className="text-xs text-muted m-0">{t("bindingEmpty")}</p>
+          ) : (
+            <div className="grid gap-2">
+              {entries.map((entry) => (
+                <DataSourceRow
+                  key={entry.id}
+                  entry={entry}
+                  expanded={expandedId === entry.id}
+                  onToggleExpand={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+                  onChange={(patch) => update(entry.id, patch)}
+                />
+              ))}
+              {notice && <p className="m-0 border-t border-line pt-3 text-xs text-muted">{notice}</p>}
+            </div>
+          )}
+        </SectionBody>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1468,7 +1722,7 @@ function DataSourceRow({
 }) {
   const { t } = useI18n();
   return (
-    <div className="rounded-xl border border-line bg-bg">
+    <div className="rounded-md border border-line bg-bg">
       <div className="flex items-center gap-3 p-3">
         <input
           type="checkbox"
@@ -1476,13 +1730,9 @@ function DataSourceRow({
           onChange={() => onChange({ enabled: !entry.enabled })}
         />
         <span className="flex-1 text-sm text-ink">{entry.title}</span>
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="text-xs text-muted hover:text-ink bg-transparent border-0 cursor-pointer"
-        >
+        <Btn variant="ghost" size="sm" onClick={onToggleExpand}>
           {expanded ? t("configureClose") || "Hide" : t("configureOpen") || "Configure"}
-        </button>
+        </Btn>
       </div>
       {expanded && (
         <div className="border-t border-line p-3">
@@ -1597,6 +1847,7 @@ function StatusIndicatorCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [expanded, setExpanded] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1635,39 +1886,46 @@ function StatusIndicatorCard() {
 
   return (
     <Card>
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-sm font-semibold m-0">
-            {t("statusSettingsSection") || "Status indicator"}
-          </h3>
-          <p className="text-xs text-muted m-0 mt-0.5">
-            {t("statusSettingsHelp") ||
-              "Controls the glyph prepended to event titles based on each task's status."}
-          </p>
-        </div>
-      </div>
-      {loading ? (
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <Spinner small />
-          {t("loading")}
-        </div>
-      ) : error ? (
-        <p className="text-xs text-red m-0">{error}</p>
-      ) : settings ? (
-        <>
-          <StatusSettingsEditor
-            settings={settings}
-            allowInherit={false}
-            onChange={(next) => setSettings({ ...settings, ...(next as StatusSettings) })}
-          />
-          <div className="flex items-center gap-3 mt-4">
-            <Btn variant="primary" size="sm" onClick={save} disabled={saving} loading={saving}>
-              {saving ? t("saving") : t("saveBtn") || "Save"}
-            </Btn>
-            {notice && <span className="text-xs text-muted">{notice}</span>}
+      <SectionHeader
+        title={t("statusSettingsSection") || "Status indicator"}
+        description={t("statusSettingsHelp") ||
+          "Controls the glyph prepended to event titles based on each task's status."}
+        expanded={expanded}
+        onToggle={() => setExpanded((current) => !current)}
+        actions={(
+          <Btn
+            variant="secondary"
+            size="md"
+            onClick={save}
+            disabled={saving || loading || !settings}
+            loading={saving}
+          >
+            <Icon name="save" />
+            {saving ? t("saving") : t("saveBtn") || "Save"}
+          </Btn>
+        )}
+      />
+      {expanded && (
+      <SectionBody>
+        {loading ? (
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <Spinner small />
+            {t("loading")}
           </div>
-        </>
-      ) : null}
+        ) : error ? (
+          <p className="text-xs text-red m-0">{error}</p>
+        ) : settings ? (
+          <div className="grid gap-4">
+            <StatusSettingsEditor
+              settings={settings}
+              allowInherit={false}
+              onChange={(next) => setSettings({ ...settings, ...(next as StatusSettings) })}
+            />
+            {notice && <p className="m-0 text-xs text-muted">{notice}</p>}
+          </div>
+        ) : null}
+      </SectionBody>
+      )}
     </Card>
   );
 }
@@ -1733,16 +1991,27 @@ function StatusSettingsEditor({
     });
   };
 
-  const renderPreview = (style: StatusEmojiStyle) => {
+  const renderPreview = (style: StatusEmojiStyle, isSelected: boolean) => {
+    const hasCustomOverrides =
+      style === "custom" &&
+      settings.statusEmojiOverrides &&
+      Object.keys(settings.statusEmojiOverrides).length > 0;
+    const showUnsetCustom = style === "custom" && !hasCustomOverrides && !isSelected;
     const source =
-      style === "custom"
-        ? { ...DEFAULT_STATUS_EMOJIS.emoji, ...(settings.statusEmojiOverrides || {}) }
-        : DEFAULT_STATUS_EMOJIS[style];
+      showUnsetCustom
+        ? {}
+        : style === "custom"
+          ? { ...DEFAULT_STATUS_EMOJIS.emoji, ...(settings.statusEmojiOverrides || {}) }
+          : DEFAULT_STATUS_EMOJIS[style];
     return (
-      <div className="flex flex-wrap gap-3 text-sm">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-muted">
         {DEFAULT_STATUS_CANONICALS.map((canonical) => (
-          <span key={canonical} className="inline-flex items-center gap-1">
-            <span className="text-base leading-none">{source[canonical] || "?"}</span>
+          <span key={canonical} className="inline-flex shrink-0 items-center gap-1">
+            {source[canonical] ? (
+              <span className="text-base leading-none">{source[canonical]}</span>
+            ) : (
+              <span className="h-3 w-3 rounded-sm border border-line bg-bg" aria-hidden="true" />
+            )}
             <span className="text-xs text-muted">{canonical}</span>
           </span>
         ))}
@@ -1776,22 +2045,21 @@ function StatusSettingsEditor({
             return (
               <label
                 key={opt.value || "__inherit"}
-                className={`flex flex-col gap-2 p-3 rounded-md border cursor-pointer transition-colors ${
+                className={`flex cursor-pointer items-center gap-3 rounded-md border p-3 transition-colors ${
                   isSelected
                     ? "border-accent bg-accent/5"
-                    : "border-border hover:border-accent/60"
+                    : "border-line hover:border-accent/60"
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="statusEmojiStyle"
-                    checked={isSelected}
-                    onChange={() => pickStyle(opt.value)}
-                  />
-                  <span className="text-sm font-medium">{opt.label}</span>
-                </div>
-                {opt.preview && <div className="pl-6">{renderPreview(opt.preview)}</div>}
+                <input
+                  type="radio"
+                  name="statusEmojiStyle"
+                  checked={isSelected}
+                  onChange={() => pickStyle(opt.value)}
+                  className="shrink-0"
+                />
+                <span className="shrink-0 text-sm font-medium text-ink">{opt.label}</span>
+                {opt.preview && renderPreview(opt.preview, isSelected)}
               </label>
             );
           })}

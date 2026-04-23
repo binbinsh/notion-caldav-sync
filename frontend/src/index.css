@@ -10,10 +10,10 @@
   --color-line: rgba(15, 23, 42, 0.07);
   --color-line-strong: rgba(15, 23, 42, 0.12);
 
-  /* Accent — indigo for a polished feel */
-  --color-accent: #4f46e5;
-  --color-accent-hover: #4338ca;
-  --color-accent-soft: rgba(79, 70, 229, 0.07);
+  /* Accent — calendar-sync teal, distinct from semantic green */
+  --color-accent: #0e7490;
+  --color-accent-hover: #155e75;
+  --color-accent-soft: rgba(14, 116, 144, 0.08);
 
   /* Semantic colors */
   --color-green: #059669;
@@ -24,7 +24,7 @@
   --color-red-soft: rgba(220, 38, 38, 0.08);
 
   /* Typography */
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: "Aptos", "SF Pro Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-serif: "DM Serif Display", Georgia, serif;
   --font-serif-sc: "Noto Serif SC", "DM Serif Display", serif;
   --font-serif-tc: "Noto Serif TC", "DM Serif Display", serif;

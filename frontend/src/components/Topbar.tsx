@@ -43,22 +43,16 @@ export function Topbar({
   return (
     <>
       <header className="sticky top-0 z-40 backdrop-blur-md bg-surface/80 border-b border-line">
-        <div className="max-w-[960px] mx-auto px-6 h-14 flex items-center justify-between">
+        <div className="mx-auto flex h-14 max-w-[1040px] items-center justify-between px-6 max-sm:px-4">
           <a
             href={`${BASE}/`}
-            aria-label={`${t("brandName")} ${t("productStageAlpha")}`}
-            className="flex items-center gap-3 text-[15px] font-semibold text-ink no-underline tracking-[-0.01em]"
+            aria-label={t("brandName")}
+            className="flex items-center gap-3 text-[15px] font-semibold text-ink no-underline"
           >
             <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center">
               <SyncIcon />
             </div>
             <span>{t("brandName")}</span>
-            <span
-              aria-hidden="true"
-              className="inline-flex -rotate-6 items-center rounded-md bg-[linear-gradient(135deg,#f59e0b,#f97316)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-white shadow-[0_4px_12px_rgba(249,115,22,0.28)]"
-            >
-              {t("productStageAlpha")}
-            </span>
           </a>
           <div className="flex items-center gap-2">
             <LangBar lang={lang} setLang={setLang} />

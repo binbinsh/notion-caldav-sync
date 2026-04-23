@@ -53,7 +53,7 @@ function AppContent() {
   if (error) {
     return (
       <div className="min-h-screen grid place-items-center bg-bg px-6">
-        <div className="max-w-sm rounded-2xl border border-line bg-surface px-6 py-5 text-center shadow-sm">
+        <div className="max-w-sm rounded-lg border border-line bg-surface px-6 py-5 text-center shadow-sm">
           <p className="m-0 text-sm font-medium text-ink">Could not load account configuration.</p>
           <p className="m-0 mt-2 text-xs text-muted">{error}</p>
         </div>
