@@ -16,8 +16,8 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - **Secrets** are encrypted at rest via `APP_ENCRYPTION_KEY` before storage in D1.
 
 ## Required Secrets / Env Vars
-- `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` – deploy-time only
-- `AUTH_DB_DATABASE_ID` – D1 database ID
+- `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` – optional, deploy-time only for token-auth CI
+- `wrangler.toml` (or `wrangler.toml-example` when bootstrapping) must contain the D1 database ID and `APP_BASE_PATH`
 - `CLERK_PUBLISHABLE_KEY` – Clerk frontend API publishable key
 - `CLERK_SECRET_KEY` – Clerk Backend API secret key
 - `APP_ENCRYPTION_KEY` – encrypts stored provider credentials (Apple passwords)
@@ -47,7 +47,8 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 | `src/db/app-schema.ts` | D1 schema definitions (raw SQL) |
 | `src/lib/secrets.ts` | AES-GCM encryption/decryption for stored secrets |
 | `scripts/predeploy-check.mjs` | Pre-deploy validation script |
-| `deploy.sh` | Deployment script (generates wrangler.toml, sets secrets, deploys) |
+| `wrangler.toml` | Active Cloudflare deploy configuration |
+| `wrangler.toml-example` | Template for bootstrapping a new Cloudflare environment |
 | `frontend/` | Preact + Tailwind dashboard SPA |
 | `frontend/src/pages/Dashboard.tsx` | Dashboard page component (setup wizard + settings) |
 | `frontend/src/lib/i18n.tsx` | i18n system (EN / 简体中文 / 繁體中文) via Preact Context |
@@ -66,7 +67,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 
 ## Development Workflow
 1. `npm install`
-2. Copy `.env-example` to `.env` and fill in all required variables.
+2. Copy `.env-example` to `.env` if you want local values for helper scripts or live integration tests.
 3. `npm run dev` (runs `wrangler dev`)
 4. Configure Notion as a social provider in Clerk Dashboard (with custom OAuth credentials and scopes). Users connect Notion via Clerk's account portal.
 5. Tests:
@@ -76,7 +77,8 @@ Use this guide when you need to extend or operate the worker. For user-facing in
    npm run typecheck       # TypeScript type checking
    ```
 6. Pre-deploy check: `npm run predeploy:check`
-7. Deploy: `./deploy.sh` (generates `wrangler.toml` from template, uploads secrets, runs `wrangler deploy`).
+7. Put/update Cloudflare secrets with `wrangler secret put ...` when needed.
+8. Deploy: `npm run deploy`
 
 ## Coding Tips
 - This worker serves the dashboard SPA, API routes, assets, and webhooks under `/caldav-sync/`. The public landing page at `/caldav-sync/` is handled by `../gridheap-sites`.

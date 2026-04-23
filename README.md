@@ -5,153 +5,146 @@
 [![Notion API](https://img.shields.io/badge/Notion%20API-2025--09--03-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
 [![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/calendar/caldav.ts)
 
-**Keep your Notion tasks and iCloud Calendar in sync — both ways.**
+**Two-way sync between Notion tasks and iCloud Calendar.**
 
-Notion CalDAV Sync connects your Notion workspace to iCloud Calendar so your dated tasks automatically appear on your iPhone, iPad, and Mac. Edit a task in Notion and it updates on your calendar within seconds. Reschedule an event on your calendar and the change flows back to Notion.
+Notion CalDAV Sync keeps dated Notion tasks and calendar events in sync. Edit a task in Notion and it shows up on your Apple devices. Move an event in your calendar and the change flows back to Notion.
 
-## How It Works
-
-1. **Sign in with Clerk** — authenticate via the shared superplanner.ai account system.
-2. **Connect Notion** — link your Notion workspace through Clerk's social connection management.
-3. **Link Apple Calendar** — enter your Apple ID and an app-specific password.
-4. **Everything stays in sync** — tasks appear on your calendar instantly. Changes in either direction are synced automatically.
-
-## Features
-
-- **Two-way sync** — changes flow from Notion to iCloud Calendar and back.
-- **Instant updates** — webhooks push changes within seconds.
-- **Always accurate** — a periodic background check catches anything that slipped through.
-- **All your databases** — every shared Notion database is discovered automatically.
-- **Private & encrypted** — Apple credentials are encrypted with AES-256 and stored securely.
-- **Runs 24/7** — always on, no app to keep open, no computer to leave running.
-- **Smart reminders** — events include status, category, and a link back to the Notion page.
-
-## Getting Started
-
-### As a user
+## For Users
 
 1. Visit `https://superplanner.ai/caldav-sync/`
-2. Sign in via Clerk (shared superplanner.ai account)
-3. Connect your Notion workspace through your Clerk account settings
+2. Sign in with your Clerk account
+3. Connect your Notion workspace
 4. Enter your Apple ID and [app-specific password](https://support.apple.com/en-us/102654)
-5. Your tasks start syncing automatically
+5. Sync starts automatically
 
-### Self-hosting
+## What It Does
 
-This project runs as a Cloudflare Worker with D1 and Durable Objects.
+- Two-way sync between Notion and iCloud Calendar
+- Fast updates through Notion webhooks, plus a scheduled full sync every 5 minutes
+- Support for multiple Notion data sources
+- Calendar titles can include task status and link back to Notion
+- Apple credentials are encrypted before storage
 
-#### Prerequisites
+## Self-Hosting
+
+This app runs as a Cloudflare Worker with D1 and Durable Objects.
+
+### Prerequisites
 
 - Node.js 18+
 - A Cloudflare account with Workers, D1, and Durable Objects enabled
-- A [Clerk](https://clerk.com/) account with Notion configured as a social provider (using custom OAuth credentials from your [Notion integration](https://developers.notion.com/docs/getting-started))
+- A [Clerk](https://clerk.com/) account with Notion configured as a social provider
 - An Apple ID with an [app-specific password](https://support.apple.com/en-us/102654)
 
-#### Environment Variables
+### 1. Configure Cloudflare
 
-Create a `.env` file with:
+Use `wrangler.toml` as the deploy config. If you are starting a new environment, begin from `wrangler.toml-example` and fill in:
 
-| Key | Purpose |
-| --- | --- |
-| `AUTH_DB_DATABASE_ID` | D1 database ID |
-| `APP_BASE_PATH` | Route base path, defaults to `/caldav-sync` |
-| `WRANGLER_AUTH_MODE` | Optional, defaults to `oauth`; set to `token` only for CI or non-interactive deploys |
-| `CLERK_PUBLISHABLE_KEY` | Clerk frontend API publishable key |
-| `CLERK_SECRET_KEY` | Clerk Backend API secret key |
-| `APP_ENCRYPTION_KEY` | Base64url-encoded 32-byte AES key for credential encryption |
+- the D1 database ID
+- the Worker routes
+- `APP_BASE_PATH`
 
-For local deploys, use Wrangler's native OAuth:
+Sign in to Wrangler:
 
 ```bash
 npm exec wrangler login
 ```
 
-Only set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` when you explicitly want token-based auth, for example in CI with `WRANGLER_AUTH_MODE=token`.
+Only set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` if you want token-based deploys, such as CI.
 
-Generate the encryption key:
+### 2. Set Secrets
+
+Generate the encryption key once:
 
 ```bash
 node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'))"
 ```
 
-#### Clerk Configuration
-
-1. In Clerk Dashboard, add **Notion** as an SSO connection / social provider.
-2. Enable **"Use custom credentials"** and enter your Notion integration's OAuth Client ID and Client Secret.
-3. Configure the required OAuth scopes in the Scopes field.
-
-#### Notion Webhook Configuration
-
-This app's fast Notion-to-calendar sync depends on a webhook subscription created in the
-[Notion integration settings](https://www.notion.so/profile/integrations).
-
-1. Create a webhook subscription that points to your public worker URL:
-   `https://superplanner.ai/caldav-sync/webhook/notion`
-   For self-hosting, replace the hostname and base path with your deployed worker URL.
-2. Copy the one-time `verification_token` that Notion POSTs to the endpoint and paste it
-   back into Notion's **Verify subscription** dialog.
-3. Subscribe to the event types that this sync actually depends on. For API version
-   `2025-09-03`, the minimum recommended set is:
-   - `page.created`
-   - `page.properties_updated`
-   - `page.deleted`
-   - `page.undeleted`
-   - `page.moved`
-   - `data_source.content_updated`
-   - `data_source.schema_updated`
-
-Why these matter: this worker syncs task titles, dates, reminders, status, and categories
-from database properties. Those changes are delivered via `page.properties_updated`, not
-`page.content_updated`. If you only subscribe to `page.content_updated`, edits to task
-properties can appear to "miss" the webhook path even though the endpoint is healthy.
-
-Troubleshooting:
-- If no real events arrive, confirm the subscription is **Active** and **Verified**.
-- Make sure the Notion integration has access to the databases/pages you are testing.
-- If you change the webhook URL after verification, delete and recreate the subscription.
-- For older Notion API versions, replace the `data_source.*` events above with the legacy
-  `database.content_updated` and `database.schema_updated` events.
-
-#### Deploy
+Then write the Worker secrets:
 
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+npm exec wrangler secret put CLERK_PUBLISHABLE_KEY
+npm exec wrangler secret put CLERK_SECRET_KEY
+npm exec wrangler secret put APP_ENCRYPTION_KEY
+# optional
+npm exec wrangler secret put INTERNAL_SERVICE_TOKEN
 ```
 
-The script installs dependencies, runs type checks, writes secrets, and deploys the worker.
+### 3. Configure Clerk
+
+1. Add **Notion** as an SSO connection / social provider in Clerk
+2. Turn on **Use custom credentials**
+3. Paste your Notion OAuth client ID and client secret
+4. Configure the required scopes
+
+### 4. Configure the Notion Webhook
+
+Create a webhook subscription in the [Notion integration settings](https://www.notion.so/profile/integrations) that points to:
+
+`https://superplanner.ai/caldav-sync/webhook/notion`
+
+If you are self-hosting, replace the hostname and base path with your own deployed URL.
+
+After Notion sends the one-time `verification_token`, paste it back into Notion's **Verify subscription** dialog.
+
+For API version `2025-09-03`, subscribe to:
+
+- `page.created`
+- `page.properties_updated`
+- `page.deleted`
+- `page.undeleted`
+- `page.moved`
+- `data_source.content_updated`
+- `data_source.schema_updated`
+
+If real events do not arrive, check that the subscription is active, verified, and that the integration can access the pages you are testing.
+
+### 5. Deploy
+
+```bash
+npm install
+npm run predeploy:check
+npm run deploy
+```
+
+`npm run deploy` runs `wrangler deploy --config wrangler.toml`.
+
+### Optional Local `.env`
+
+For local helper scripts such as `npm run predeploy:check` and the legacy live integration tests, you can create a `.env` file based on `.env-example`.
+
+Useful keys:
+
+- `APP_BASE_PATH`
+- `CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
+- `APP_ENCRYPTION_KEY`
+- `NOTION_TOKEN` for legacy live tests
+- `APPLE_ID` for legacy live tests
+- `APPLE_APP_PASSWORD` for legacy live tests
 
 ## Development
 
 ```bash
 npm install
-npm run dev          # Start local dev server
-npm test             # Run unit tests
-npm run test:live    # Run live integration tests
-npm run typecheck    # Type-check the codebase
+npm run dev
+npm test
+npm run test:live
+npm run typecheck
 ```
 
-### Architecture
+## Project Layout
 
 | Directory | Purpose |
 | --- | --- |
 | `src/index.ts` | Worker entrypoint, routing, dashboard UI, and API endpoints |
-| `src/auth/` | Clerk integration (middleware, client factory, Notion OAuth token helper) |
+| `src/auth/` | Clerk integration and Notion OAuth token helpers |
 | `src/notion/` | Notion API client and webhook parsing |
-| `src/calendar/` | CalDAV discovery, event CRUD, ICS generation |
-| `src/sync/` | Sync domain models, reconcile logic, rendering |
+| `src/calendar/` | CalDAV discovery, event CRUD, and ICS generation |
+| `src/sync/` | Sync models, reconcile logic, and rendering |
 | `src/durable/` | Durable Object per-tenant sync runtime |
 | `src/db/` | D1 schema and tenant data access |
 | `src/lib/` | Encryption helpers |
-
-### Tech Stack
-
-- **Runtime**: Cloudflare Workers (TypeScript)
-- **Auth**: Clerk (shared `accounts.superplanner.ai` instance, Notion OAuth via social provider)
-- **Database**: Cloudflare D1
-- **Sync isolation**: Durable Objects (one per tenant)
-- **CalDAV**: tsdav + custom iCloud helpers
-- **ICS**: ical-generator + ical.js
 
 ## License
 
