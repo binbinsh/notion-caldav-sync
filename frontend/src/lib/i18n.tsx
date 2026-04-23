@@ -64,12 +64,13 @@ export const translations = {
   en: {
     // Common
     brandName: "Notion CalDAV Sync",
+    productStageAlpha: "Alpha",
     accountTitle: "Account",
     closeAccount: "Close account",
     signOut: "Sign Out",
 
     // Sign-in page
-    signInTitle: "Sign In | Notion CalDAV Sync",
+    signInTitle: "Sign In | Notion CalDAV Sync Alpha",
     signInHeadline: "Connect Notion to iCloud Calendar",
     signInSub: "Sign in with your Notion account to get started. You'll connect your Apple Calendar on the next screen.",
     feat1Title: "One-Click Notion Login",
@@ -83,7 +84,7 @@ export const translations = {
     signInBtn: "Continue with Notion",
 
     // Dashboard
-    dashboardTitle: "Settings | Notion CalDAV Sync",
+    dashboardTitle: "Settings | Notion CalDAV Sync Alpha",
     greeting: "Welcome back",
     connectNotion: "Connect Notion",
     reconnectNotion: "Reconnect Notion",
@@ -261,11 +262,12 @@ export const translations = {
 
   "zh-hans": {
     brandName: "Notion CalDAV Sync",
+    productStageAlpha: "Alpha",
     accountTitle: "账户",
     closeAccount: "关闭账户",
     signOut: "退出登录",
 
-    signInTitle: "登录 | Notion CalDAV Sync",
+    signInTitle: "登录 | Notion CalDAV Sync Alpha",
     signInHeadline: "连接 Notion 与 iCloud 日历",
     signInSub: "使用 Notion 账号登录即可开始。下一步将连接你的 Apple 日历。",
     feat1Title: "一键登录 Notion",
@@ -278,7 +280,7 @@ export const translations = {
     signInCardLead: "连接你的 Notion 工作区即可开始。下一步设置 Apple 日历。",
     signInBtn: "继续连接 Notion",
 
-    dashboardTitle: "设置 | Notion CalDAV Sync",
+    dashboardTitle: "设置 | Notion CalDAV Sync Alpha",
     greeting: "欢迎回来",
     connectNotion: "连接 Notion",
     reconnectNotion: "重新连接 Notion",
@@ -444,11 +446,12 @@ export const translations = {
 
   "zh-hant": {
     brandName: "Notion CalDAV Sync",
+    productStageAlpha: "Alpha",
     accountTitle: "帳戶",
     closeAccount: "關閉帳戶",
     signOut: "登出",
 
-    signInTitle: "登入 | Notion CalDAV Sync",
+    signInTitle: "登入 | Notion CalDAV Sync Alpha",
     signInHeadline: "連接 Notion 與 iCloud 行事曆",
     signInSub: "使用 Notion 帳號登入即可開始。下一步將連接你的 Apple 行事曆。",
     feat1Title: "一鍵登入 Notion",
@@ -461,7 +464,7 @@ export const translations = {
     signInCardLead: "連接你的 Notion 工作區即可開始。下一步設定 Apple 行事曆。",
     signInBtn: "繼續連接 Notion",
 
-    dashboardTitle: "設定 | Notion CalDAV Sync",
+    dashboardTitle: "設定 | Notion CalDAV Sync Alpha",
     greeting: "歡迎回來",
     connectNotion: "連接 Notion",
     reconnectNotion: "重新連接 Notion",

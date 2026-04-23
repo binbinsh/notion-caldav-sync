@@ -51,7 +51,10 @@ export function Topbar({
             <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center">
               <SyncIcon />
             </div>
-            {t("brandName")}
+            <span>{t("brandName")}</span>
+            <span className="rounded-full border border-accent/20 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent">
+              {t("productStageAlpha")}
+            </span>
           </a>
           <div className="flex items-center gap-2">
             <LangBar lang={lang} setLang={setLang} />
