@@ -1375,7 +1375,7 @@ function SyncDebugCard({
 
           {/* Debug sections */}
           {sections.map((section) => (
-            <DebugSection key={section.id} section={section} tableLabels={tableLabels} />
+            <DebugSection key={section.id} section={section} />
           ))}
 
           {/* Unmanaged events */}
@@ -1429,10 +1429,8 @@ function MetricChip({ label, value, tone }: { label: string; value: number; tone
 
 function DebugSection({
   section,
-  tableLabels,
 }: {
   section: DebugSectionModel;
-  tableLabels: { item: string; schedule: string; action: string; sync: string; notes: string };
 }) {
   const [expanded, setExpanded] = useState(section.tone === "red" || section.tone === "amber");
 
@@ -1456,66 +1454,117 @@ function DebugSection({
         </svg>
       </button>
       {expanded && (
-        <div className="px-4 pb-3 overflow-x-auto">
+        <div className="grid gap-2 px-4 pb-4">
           <p className="text-[11px] text-muted m-0 mb-2">{section.description}</p>
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="text-left text-[11px] text-muted border-b border-line">
-                <th className="py-1.5 pr-3 font-semibold">{tableLabels.item}</th>
-                <th className="py-1.5 pr-3 font-semibold">{tableLabels.schedule}</th>
-                <th className="py-1.5 pr-3 font-semibold">{tableLabels.action}</th>
-                <th className="py-1.5 pr-3 font-semibold">{tableLabels.sync}</th>
-                <th className="py-1.5 font-semibold">{tableLabels.notes}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {section.entries.map((entry) => (
-                <DebugEntryRow key={entry.pageId} entry={entry} />
-              ))}
-            </tbody>
-          </table>
+          {section.entries.map((entry) => (
+            <DebugEntryCard key={entry.pageId} entry={entry} />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function DebugEntryRow({ entry }: { entry: SyncDebugEntry }) {
+function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
   const { t } = useI18n();
-  const notes = buildDebugNotes(entry);
-  const tooltip = buildDebugTooltip(entry, t);
   const schedule = formatDateRange(
     asString(entry.notion?.startDate) || asString(entry.calendar?.startDate),
     asString(entry.notion?.endDate) || asString(entry.calendar?.endDate),
   );
+  const eventHref = asString(entry.calendar?.eventHref) || asString(entry.ledger?.eventHref);
 
   return (
-    <tr className="align-top border-b border-line/50 last:border-0" title={tooltip}>
-      <td className="py-2 pr-3 max-w-[240px]">
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-ink truncate">{entry.title}</span>
-          <Badge tone="slate">{formatRelation(entry.relation, t)}</Badge>
+    <article className="grid gap-3 rounded-md border border-line bg-surface p-3 text-xs">
+      <div className="flex items-start justify-between gap-3 max-[560px]:flex-col">
+        <div className="grid min-w-0 gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="min-w-0 break-words text-sm font-semibold text-ink">{entry.title}</span>
+            <Badge tone="slate">{formatRelation(entry.relation, t)}</Badge>
+          </div>
+          <span className="break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
         </div>
-      </td>
-      <td className="py-2 pr-3 whitespace-nowrap text-muted">{schedule}</td>
-      <td className="py-2 pr-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 max-[560px]:justify-start">
           <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
           {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
           {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
         </div>
-      </td>
-      <td className="py-2 pr-3 text-[11px] text-muted">
-        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-          <span>N:{formatOperation(entry.operations.notion, t)}</span>
-          <span>C:{formatOperation(entry.operations.calendar, t)}</span>
-          <span>L:{formatOperation(entry.operations.ledger, t)}</span>
-        </div>
-      </td>
-      <td className="py-2 max-w-[300px]">
-        <span className="text-muted truncate block" title={tooltip}>{notes}</span>
-      </td>
-    </tr>
+      </div>
+
+      <div className="grid gap-2 rounded-md bg-bg p-3 sm:grid-cols-2">
+        <DebugDetail label={t("debugTableSchedule")}>{schedule}</DebugDetail>
+        <DebugDetail label={t("debugTableSync")}>
+          <span className="inline-flex flex-wrap gap-x-2 gap-y-1">
+            <span>N: {formatOperation(entry.operations.notion, t)}</span>
+            <span>C: {formatOperation(entry.operations.calendar, t)}</span>
+            <span>L: {formatOperation(entry.operations.ledger, t)}</span>
+          </span>
+        </DebugDetail>
+        <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
+        <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
+      </div>
+
+      <div className="grid gap-2">
+        <DebugLabeledBlock label={t("debugReasonLabel")}>
+          {entry.reason}
+        </DebugLabeledBlock>
+
+        {entry.warnings.length > 0 && (
+          <DebugLabeledBlock label={t("debugWarningsLabel")}>
+            <ul className="m-0 grid gap-1 pl-4">
+              {entry.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </DebugLabeledBlock>
+        )}
+
+        {entry.duplicateCalendarEvents.length > 0 && (
+          <DebugLabeledBlock label={t("debugDuplicatesLabel")}>
+            {entry.duplicateCalendarEvents.length}
+          </DebugLabeledBlock>
+        )}
+
+        {eventHref && (
+          <DebugLabeledBlock label={t("debugEventHrefLabel")}>
+            <span className="break-all font-mono text-[11px]">{formatEventHref(eventHref)}</span>
+          </DebugLabeledBlock>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function DebugDetail({
+  label,
+  mono = false,
+  children,
+}: {
+  label: string;
+  mono?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-0.5">
+      <span className="text-[11px] font-medium text-subtle">{label}</span>
+      <span className={`${mono ? "font-mono" : ""} min-w-0 break-words text-muted`}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function DebugLabeledBlock({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-1">
+      <span className="text-[11px] font-medium text-subtle">{label}</span>
+      <div className="min-w-0 break-words text-muted">{children}</div>
+    </div>
   );
 }
 
@@ -2222,33 +2271,25 @@ function formatDateRange(start?: string | null, end?: string | null): string {
   return `${start} \u2192 ${end}`;
 }
 
-function valueOrDash(value: unknown): string {
-  if (typeof value !== "string") return "\u2014";
-  return value.trim() || "\u2014";
-}
-
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function buildDebugNotes(entry: SyncDebugEntry): string {
-  const parts = [entry.reason];
-  if (entry.warnings.length > 0) parts.push(`Warnings: ${entry.warnings.join("; ")}`);
-  if (entry.duplicateCalendarEvents.length > 0) parts.push(`Duplicates: ${entry.duplicateCalendarEvents.length}`);
-  const href = valueOrDash(entry.calendar?.eventHref || entry.ledger?.eventHref);
-  if (href !== "\u2014") parts.push(`Event: ${href}`);
-  return parts.join(" | ");
+function shortHash(value: string | null): string {
+  if (!value) return "\u2014";
+  return value.length > 16 ? `${value.slice(0, 12)}...${value.slice(-6)}` : value;
 }
 
-function buildDebugTooltip(entry: SyncDebugEntry, t: TFunc): string {
-  return [
-    `Title: ${entry.title}`,
-    `Page: ${entry.pageId}`,
-    `Relation: ${formatRelation(entry.relation, t)}`,
-    `Action: ${formatAction(entry.action, t)}`,
-    `Notion hash: ${valueOrDash(entry.notionHash)}`,
-    `Calendar hash: ${valueOrDash(entry.calendarHash)}`,
-  ].join("\n");
+function formatEventHref(href: string): string {
+  try {
+    const url = new URL(href);
+    const leaf = url.pathname.split("/").filter(Boolean).pop();
+    return leaf ? `${url.host}/.../${leaf}` : url.host;
+  } catch {
+    const parts = href.split("/").filter(Boolean);
+    const leaf = parts[parts.length - 1];
+    return leaf && href.length > leaf.length ? `.../${leaf}` : href;
+  }
 }
 
 function formatAction(action: SyncDebugAction, t: TFunc): string {
