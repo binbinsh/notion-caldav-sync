@@ -542,7 +542,6 @@ export async function updateTenantStatusSettings(
     tenantId: string;
     statusEmojiStyle: string | null; // "emoji" | "symbol" | "custom" | null to clear
     statusEmojiOverridesJson: string | null;
-    statusVocabOverridesJson: string | null;
   },
 ): Promise<void> {
   const now = new Date().toISOString();
@@ -559,7 +558,7 @@ export async function updateTenantStatusSettings(
     .bind(
       input.statusEmojiStyle,
       input.statusEmojiOverridesJson,
-      input.statusVocabOverridesJson,
+      null,
       now,
       input.tenantId,
     )
@@ -599,7 +598,6 @@ export interface NotionDataSourceInput {
   title: string | null;
   enabled: boolean;
   propertyMappingJson: string | null;
-  statusVocabOverridesJson: string | null;
 }
 
 /**
@@ -651,12 +649,12 @@ export async function replaceNotionDataSources(
               property_mapping_json, status_vocab_overrides_json,
               status_emoji_style, status_emoji_overrides_json,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
             ON CONFLICT(tenant_id, source_id) DO UPDATE SET
               title = excluded.title,
               enabled = excluded.enabled,
               property_mapping_json = excluded.property_mapping_json,
-              status_vocab_overrides_json = excluded.status_vocab_overrides_json,
+              status_vocab_overrides_json = NULL,
               status_emoji_style = NULL,
               status_emoji_overrides_json = NULL,
               updated_at = excluded.updated_at`,
@@ -667,7 +665,6 @@ export async function replaceNotionDataSources(
            src.title,
            src.enabled ? 1 : 0,
            src.propertyMappingJson,
-           src.statusVocabOverridesJson,
            now,
            now,
          ),

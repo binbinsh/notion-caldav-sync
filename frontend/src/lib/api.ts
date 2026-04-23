@@ -233,7 +233,7 @@ export async function triggerSync(
 }
 
 // ---------------------------------------------------------------------------
-// Data sources + status settings (per-DS config)
+// Data sources + tenant-level status settings
 // ---------------------------------------------------------------------------
 
 export type NotionPropertySpec = {
@@ -252,11 +252,7 @@ export type PropertyMapping = {
 
 export type StatusEmojiStyle = "emoji" | "symbol" | "custom";
 
-export type StatusVocabSettings = {
-  statusVocabOverrides: Record<string, string[]> | null;
-};
-
-export type StatusSettings = StatusVocabSettings & {
+export type StatusSettings = {
   statusEmojiStyle: StatusEmojiStyle | null;
   statusEmojiOverrides: Record<string, string> | null;
 };
@@ -267,7 +263,7 @@ export type DataSourceEntry = {
   enabled: boolean;
   properties: NotionPropertySpec[];
   propertyMapping: PropertyMapping | null;
-} & StatusVocabSettings;
+};
 
 export type DataSourcesResponse = {
   ok: boolean;
@@ -291,7 +287,6 @@ export async function saveDataSources(
     id: string;
     enabled: boolean;
     propertyMapping?: PropertyMapping | null;
-    statusVocabOverrides?: Record<string, string[]> | null;
   }>,
 ): Promise<ApiJsonResult & { count?: number; enabled?: number }> {
   const { response, data } = await fetchJson<ApiJsonResult & { count?: number; enabled?: number }>(

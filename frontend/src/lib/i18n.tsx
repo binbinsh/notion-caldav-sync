@@ -276,7 +276,7 @@ export const translations = {
     // Status indicator settings
     statusSettingsSection: "Status indicators",
     statusSettingsHelp:
-      "Choose how task statuses are rendered as emojis/symbols in calendar event titles, and customize the status names Notion uses.",
+      "Choose how task statuses are shown in calendar event titles.",
     statusSettingsLoadError: "Failed to load status settings",
     statusSettingsSaved: "Status settings saved",
     statusEmojiStyle: "Indicator style",
@@ -490,7 +490,7 @@ export const translations = {
     // 状态指示符设置
     statusSettingsSection: "状态指示符",
     statusSettingsHelp:
-      "选择任务状态在日历事件标题中显示为表情/符号的方式，并自定义 Notion 使用的状态名称。",
+      "选择任务状态在日历事件标题中的显示方式。",
     statusSettingsLoadError: "加载状态设置失败",
     statusSettingsSaved: "状态设置已保存",
     statusEmojiStyle: "指示符样式",
@@ -704,7 +704,7 @@ export const translations = {
     // 狀態指示符設定
     statusSettingsSection: "狀態指示符",
     statusSettingsHelp:
-      "選擇任務狀態在行事曆事件標題中顯示為表情符號／符號的方式，並自訂 Notion 使用的狀態名稱。",
+      "選擇任務狀態在行事曆事件標題中的顯示方式。",
     statusSettingsLoadError: "載入狀態設定失敗",
     statusSettingsSaved: "狀態設定已儲存",
     statusEmojiStyle: "指示符樣式",

@@ -488,6 +488,16 @@ export function DashboardPage() {
               workspaceName={cfg?.notion_workspace_name || ""}
             />
 
+            {/* Settings */}
+            <AppleSettingsCard
+              config={cfg}
+              credentials={data.appleCredentials}
+              onSave={handleSaveSettings}
+            />
+
+            {/* Status indicator settings (tenant-level) */}
+            {data.notionConnected && <StatusIndicatorCard />}
+
             {/* Notion connection + pages to sync */}
             <Card>
               <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -511,16 +521,6 @@ export function DashboardPage() {
                 </div>
               )}
             </Card>
-
-            {/* Status indicator settings (tenant-level) */}
-            {data.notionConnected && <StatusIndicatorCard />}
-
-            {/* Settings */}
-            <AppleSettingsCard
-              config={cfg}
-              credentials={data.appleCredentials}
-              onSave={handleSaveSettings}
-            />
 
             {/* Recent webhook calls — visible outside Advanced */}
             <WebhookLogCard logs={webhookLogs} />
@@ -1402,7 +1402,6 @@ function DataSourcesCard() {
           id: e.id,
           enabled: e.enabled,
           propertyMapping: e.propertyMapping,
-          statusVocabOverrides: e.statusVocabOverrides,
         })),
       );
       if (!result.ok) {
@@ -1486,28 +1485,12 @@ function DataSourceRow({
         </button>
       </div>
       {expanded && (
-        <div className="border-t border-line p-3 grid gap-4">
+        <div className="border-t border-line p-3">
           <PropertyMappingEditor
             properties={entry.properties}
             mapping={entry.propertyMapping}
             onChange={(propertyMapping) => onChange({ propertyMapping })}
           />
-          <div className="border-t border-line pt-4 grid gap-3">
-            <p className="text-xs text-muted m-0">
-              {t("dataSourceStatusOverrideHelp") ||
-                "Leave fields empty to inherit the tenant defaults."}
-            </p>
-            <StatusSettingsEditor
-              settings={{
-                statusEmojiStyle: null,
-                statusEmojiOverrides: null,
-                statusVocabOverrides: entry.statusVocabOverrides,
-              }}
-              allowInherit
-              showEmojiControls={false}
-              onChange={(next) => onChange({ statusVocabOverrides: next.statusVocabOverrides ?? null })}
-            />
-          </div>
         </div>
       )}
     </div>
@@ -1692,21 +1675,16 @@ function StatusIndicatorCard() {
 /**
  * Shared editor for a StatusSettings object.
  *
- * - When `showEmojiControls` is false, only the status-vocabulary editor is shown.
  * - When `allowInherit` is true, the style can be cleared to inherit the tenant default.
  * - When false (tenant-level), the style falls back to "emoji" instead of null.
  */
 function StatusSettingsEditor({
   settings,
   allowInherit,
-  showEmojiControls = true,
-  showVocabControls = true,
   onChange,
 }: {
   settings: StatusSettings;
   allowInherit: boolean;
-  showEmojiControls?: boolean;
-  showVocabControls?: boolean;
   onChange: (next: Partial<StatusSettings>) => void;
 }) {
   const { t } = useI18n();
@@ -1722,22 +1700,6 @@ function StatusSettingsEditor({
     }
     onChange({
       statusEmojiOverrides: Object.keys(next).length ? next : null,
-    });
-  };
-
-  const updateVocab = (canonical: string, csv: string) => {
-    const next = { ...(settings.statusVocabOverrides || {}) };
-    const arr = csv
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (arr.length) {
-      next[canonical] = arr;
-    } else {
-      delete next[canonical];
-    }
-    onChange({
-      statusVocabOverrides: Object.keys(next).length ? next : null,
     });
   };
 
@@ -1806,116 +1768,61 @@ function StatusSettingsEditor({
 
   return (
     <div className="grid gap-4">
-      {showEmojiControls && (
+      <div className="grid gap-2">
+        <span className="text-xs text-muted">{t("statusEmojiStyle") || "Indicator style"}</span>
         <div className="grid gap-2">
-          <span className="text-xs text-muted">{t("statusEmojiStyle") || "Indicator style"}</span>
+          {styleOptions.map((opt) => {
+            const isSelected = selected === opt.value;
+            return (
+              <label
+                key={opt.value || "__inherit"}
+                className={`flex flex-col gap-2 p-3 rounded-md border cursor-pointer transition-colors ${
+                  isSelected
+                    ? "border-accent bg-accent/5"
+                    : "border-border hover:border-accent/60"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="statusEmojiStyle"
+                    checked={isSelected}
+                    onChange={() => pickStyle(opt.value)}
+                  />
+                  <span className="text-sm font-medium">{opt.label}</span>
+                </div>
+                {opt.preview && <div className="pl-6">{renderPreview(opt.preview)}</div>}
+              </label>
+            );
+          })}
+        </div>
+
+        {effectiveStyle === "custom" && (
           <div className="grid gap-2">
-            {styleOptions.map((opt) => {
-              const isSelected = selected === opt.value;
-              return (
-                <label
-                  key={opt.value || "__inherit"}
-                  className={`flex flex-col gap-2 p-3 rounded-md border cursor-pointer transition-colors ${
-                    isSelected
-                      ? "border-accent bg-accent/5"
-                      : "border-border hover:border-accent/60"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
+            <p className="text-xs text-muted m-0">
+              {t("statusCustomEmojiHelp") ||
+                "Enter a glyph for each status. Leave blank to fall back to the emoji default."}
+            </p>
+            <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+              {DEFAULT_STATUS_CANONICALS.map((canonical) => {
+                const current = settings.statusEmojiOverrides?.[canonical] || "";
+                const placeholder = DEFAULT_STATUS_EMOJIS.emoji[canonical] || "";
+                return (
+                  <label key={canonical} className="grid gap-1">
+                    <span className="text-xs text-muted">{canonical}</span>
                     <input
-                      type="radio"
-                      name="statusEmojiStyle"
-                      checked={isSelected}
-                      onChange={() => pickStyle(opt.value)}
+                      className={INPUT_CLASS}
+                      value={current}
+                      placeholder={placeholder}
+                      onChange={(e) => updateEmoji(canonical, (e.target as HTMLInputElement).value)}
                     />
-                    <span className="text-sm font-medium">{opt.label}</span>
-                  </div>
-                  {opt.preview && <div className="pl-6">{renderPreview(opt.preview)}</div>}
-                </label>
-              );
-            })}
-          </div>
-
-          {effectiveStyle === "custom" && (
-            <div className="grid gap-2">
-              <p className="text-xs text-muted m-0">
-                {t("statusCustomEmojiHelp") ||
-                  "Enter a glyph for each status. Leave blank to fall back to the emoji default."}
-              </p>
-              <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
-                {DEFAULT_STATUS_CANONICALS.map((canonical) => {
-                  const current = settings.statusEmojiOverrides?.[canonical] || "";
-                  const placeholder = DEFAULT_STATUS_EMOJIS.emoji[canonical] || "";
-                  return (
-                    <label key={canonical} className="grid gap-1">
-                      <span className="text-xs text-muted">{canonical}</span>
-                      <input
-                        className={INPUT_CLASS}
-                        value={current}
-                        placeholder={placeholder}
-                        onChange={(e) => updateEmoji(canonical, (e.target as HTMLInputElement).value)}
-                      />
-                    </label>
-                  );
-                })}
-              </div>
+                  </label>
+                );
+              })}
             </div>
-          )}
-        </div>
-      )}
-
-      {showVocabControls && (showEmojiControls ? (
-        <details className="grid gap-2">
-          <summary className="text-xs text-muted cursor-pointer select-none">
-            {t("statusVocabSection") || "Custom status names (advanced)"}
-          </summary>
-          <p className="text-xs text-muted m-0 mt-2">
-            {t("statusVocabHelp") ||
-              "Comma-separated list of Notion status values that should map to each canonical status."}
-          </p>
-          <div className="grid gap-2 mt-2">
-            {DEFAULT_STATUS_CANONICALS.map((canonical) => {
-              const arr = settings.statusVocabOverrides?.[canonical];
-              const value = Array.isArray(arr) ? arr.join(", ") : "";
-              return (
-                <label key={canonical} className="grid gap-1">
-                  <span className="text-xs text-muted">{canonical}</span>
-                  <input
-                    className={INPUT_CLASS}
-                    value={value}
-                    placeholder={canonical}
-                    onChange={(e) => updateVocab(canonical, (e.target as HTMLInputElement).value)}
-                  />
-                </label>
-              );
-            })}
           </div>
-        </details>
-      ) : (
-        <div className="grid gap-2">
-          <p className="text-xs text-muted m-0">
-            {t("statusVocabHelp") ||
-              "Comma-separated list of Notion status values that should map to each canonical status."}
-          </p>
-          <div className="grid gap-2">
-            {DEFAULT_STATUS_CANONICALS.map((canonical) => {
-              const arr = settings.statusVocabOverrides?.[canonical];
-              const value = Array.isArray(arr) ? arr.join(", ") : "";
-              return (
-                <label key={canonical} className="grid gap-1">
-                  <span className="text-xs text-muted">{canonical}</span>
-                  <input
-                    className={INPUT_CLASS}
-                    value={value}
-                    placeholder={canonical}
-                    onChange={(e) => updateVocab(canonical, (e.target as HTMLInputElement).value)}
-                  />
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      ))}
+        )}
+      </div>
     </div>
   );
 }

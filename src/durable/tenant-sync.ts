@@ -374,26 +374,6 @@ function parseStringRecord(value: string | null | undefined): Record<string, str
   }
 }
 
-function parseStatusVocabOverrides(
-  value: string | null | undefined,
-): Record<string, string[]> | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const out: Record<string, string[]> = {};
-    for (const [canonical, variants] of Object.entries(parsed)) {
-      if (Array.isArray(variants)) {
-        const cleaned = variants.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
-        if (cleaned.length) out[canonical] = cleaned;
-      }
-    }
-    return Object.keys(out).length ? out : null;
-  } catch {
-    return null;
-  }
-}
-
 function parsePropertyMapping(
   value: string | null | undefined,
 ): SyncProfileOverrides | null {
@@ -427,8 +407,6 @@ function buildTenantProfileOverrides(config: TenantConfigRow): SyncProfileOverri
   }
   const emojiOverrides = parseStringRecord(config.status_emoji_overrides_json);
   if (emojiOverrides) overrides.statusEmojis = emojiOverrides;
-  const vocabOverrides = parseStatusVocabOverrides(config.status_vocab_overrides_json);
-  if (vocabOverrides) overrides.statusVariants = vocabOverrides;
   return Object.keys(overrides).length ? overrides : null;
 }
 
@@ -442,8 +420,6 @@ function buildDataSourceProfileOverrides(
     const overrides: SyncProfileOverrides = {};
     const propMapping = parsePropertyMapping(row.property_mapping_json);
     if (propMapping) Object.assign(overrides, propMapping);
-    const vocabOverrides = parseStatusVocabOverrides(row.status_vocab_overrides_json);
-    if (vocabOverrides) overrides.statusVariants = vocabOverrides;
     if (Object.keys(overrides).length) map[row.source_id] = overrides;
   }
   return { map, selectedIds };

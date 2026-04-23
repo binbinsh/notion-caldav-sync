@@ -415,7 +415,7 @@ app.post("/api/notion/sources", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Data sources: per-DS config (property mapping, status vocab, emoji)
+// Data sources: per-DS config (property mapping only)
 // Single-PUT semantics: GET returns the full list; PUT replaces it entirely.
 // ---------------------------------------------------------------------------
 
@@ -496,9 +496,6 @@ app.get("/api/data-sources", async (c) => {
       enabled,
       properties: source.properties,
       propertyMapping: stored?.property_mapping_json ? safeJsonParse(stored.property_mapping_json) : null,
-      statusVocabOverrides: stored?.status_vocab_overrides_json
-        ? safeJsonParse(stored.status_vocab_overrides_json)
-        : null,
     };
   });
 
@@ -509,9 +506,6 @@ app.get("/api/data-sources", async (c) => {
       statusEmojiStyle: config?.status_emoji_style || null,
       statusEmojiOverrides: config?.status_emoji_overrides_json
         ? safeJsonParse(config.status_emoji_overrides_json)
-        : null,
-      statusVocabOverrides: config?.status_vocab_overrides_json
-        ? safeJsonParse(config.status_vocab_overrides_json)
         : null,
     },
   });
@@ -559,14 +553,12 @@ app.put("/api/data-sources", async (c) => {
     if (enabled) enabledIds.push(sourceId);
 
     const propertyMapping = sanitizePropertyMappingInput(rec.propertyMapping);
-    const statusVocabOverrides = sanitizeStatusVocabInput(rec.statusVocabOverrides);
 
     inputs.push({
       sourceId,
       title: source.title,
       enabled,
       propertyMappingJson: propertyMapping ? JSON.stringify(propertyMapping) : null,
-      statusVocabOverridesJson: statusVocabOverrides ? JSON.stringify(statusVocabOverrides) : null,
     });
   }
 
@@ -607,7 +599,6 @@ app.put("/api/tenant/status-settings", async (c) => {
   const body = (await c.req.raw.json().catch(() => ({}))) as Record<string, unknown>;
   const statusEmojiStyle = sanitizeEmojiStyle(body.statusEmojiStyle);
   const statusEmojiOverrides = sanitizeStringRecord(body.statusEmojiOverrides);
-  const statusVocabOverrides = sanitizeStatusVocabInput(body.statusVocabOverrides);
 
   // Ensure a config row exists (updateTenantStatusSettings is a plain UPDATE).
   const existing = await getTenantConfigByTenantId(c.env.AUTH_DB, tenantId);
@@ -633,14 +624,12 @@ app.put("/api/tenant/status-settings", async (c) => {
     tenantId,
     statusEmojiStyle,
     statusEmojiOverridesJson: statusEmojiOverrides ? JSON.stringify(statusEmojiOverrides) : null,
-    statusVocabOverridesJson: statusVocabOverrides ? JSON.stringify(statusVocabOverrides) : null,
   });
 
   return c.json({
     ok: true,
     statusEmojiStyle,
     statusEmojiOverrides,
-    statusVocabOverrides,
   });
 });
 
@@ -1456,20 +1445,6 @@ function sanitizeStringRecord(value: unknown): Record<string, string> | null {
     const trimmed = v.trim();
     if (!trimmed) continue;
     out[key] = trimmed;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-function sanitizeStatusVocabInput(value: unknown): Record<string, string[]> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const out: Record<string, string[]> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    const key = typeof k === "string" ? k.trim() : "";
-    if (!key || !Array.isArray(v)) continue;
-    const arr = v
-      .map((item) => (typeof item === "string" ? item.trim() : ""))
-      .filter((item): item is string => item.length > 0);
-    if (arr.length) out[key] = arr;
   }
   return Object.keys(out).length ? out : null;
 }

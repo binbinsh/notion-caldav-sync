@@ -47,7 +47,7 @@ export type LiveBindings = {
   tenantProfileOverrides?: SyncProfileOverrides | null;
   /**
    * Per-data-source overrides keyed by Notion data-source id. These cover
-   * property mappings and status vocabulary only; icon mapping is tenant-wide.
+   * property mappings only; icon mapping is tenant-wide.
    */
   dataSourceProfileOverrides?: Record<string, SyncProfileOverrides> | null;
 };
@@ -79,8 +79,7 @@ export class LiveSyncFacade {
 
     // The legacy `statusEmojiStyle` binding is the fallback; tenant-level
     // overrides (if present) win. Icon mapping is tenant-wide, so we pre-build
-    // one tenant profile here and let per-DS profiles override only mappings
-    // and vocabulary.
+    // one tenant profile here and let per-DS profiles override only mappings.
     const legacyStyleOverride: SyncProfileOverrides = {
       statusEmojiStyle: bindings.statusEmojiStyle,
     };
@@ -92,7 +91,7 @@ export class LiveSyncFacade {
 
   /**
    * Resolve a SyncProfile for a specific Notion data source, merging per-DS
-   * property/vocabulary overrides (if any) on top of the tenant profile.
+   * property overrides (if any) on top of the tenant profile.
    * Results are cached for the lifetime of this facade instance (one sync run).
    */
   profileForDataSource(dataSourceId: string | null | undefined): SyncProfile {
