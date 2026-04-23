@@ -53,5 +53,5 @@ pattern = "superplanner.ai/caldav-sync/dashboard*"
 zone_name = "superplanner.ai"
 
 [[routes]]
-pattern = "superplanner.ai/caldav-sync/webhook/notion"
+pattern = "superplanner.ai/caldav-sync/webhook/*"
 zone_name = "superplanner.ai"

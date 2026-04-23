@@ -596,6 +596,10 @@ app.get("/api/workspaces/:workspaceId/debug", async (c) => {
 // Notion webhook
 // ---------------------------------------------------------------------------
 
+app.get("/webhook/notion", (c) =>
+  c.json({ ok: true, message: "Notion webhook endpoint is live. Use POST." }),
+);
+
 app.post("/webhook/notion", async (c) => {
   const raw = await c.req.text();
   const payload = safeJsonParse(raw);
@@ -635,61 +639,79 @@ app.post("/webhook/notion", async (c) => {
     await Promise.all(scopedTokenKeys.map((key) => setAppState(c.env.AUTH_DB, key, trustedToken)));
   }
 
-  const connections = await getProviderConnectionsForWebhookRouting(c.env.AUTH_DB, {
-    botIds: routingIds.botIds,
-    workspaceIds: routingIds.workspaceIds,
-  });
-  const tenantIds = [
-    ...new Set(connections.map((connection) => connection.tenant_id).filter(Boolean)),
-  ];
-
   const pageIds = collectPageIds(payload);
   const eventTypes = extractEventTypes(payload);
   const forceFull = needsFullSync(eventTypes);
 
-  const results: Record<string, unknown> = {
-    ok: true,
-    tenantIds,
-  };
+  // Defer the potentially slow fan-out so Notion gets a fast 2xx response.
+  // Notion pauses webhook delivery after a small number of non-2xx or timed-out
+  // deliveries, so we must never keep it waiting on downstream CalDAV calls.
+  const env = c.env;
+  const executionCtx = c.executionCtx;
+  const backgroundWork = (async () => {
+    const results: Record<string, unknown> = { ok: true };
+    let tenantIds: string[] = [];
+    try {
+      const connections = await getProviderConnectionsForWebhookRouting(env.AUTH_DB, {
+        botIds: routingIds.botIds,
+        workspaceIds: routingIds.workspaceIds,
+      });
+      tenantIds = [
+        ...new Set(connections.map((connection) => connection.tenant_id).filter(Boolean)),
+      ];
+      results.tenantIds = tenantIds;
 
-  if (c.env.TENANT_SYNC) {
-    for (const tenantId of tenantIds) {
-      try {
-        const stub = c.env.TENANT_SYNC.getByName(tenantId);
-        const response = await stub.fetch("https://tenant-sync/sync/webhook", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-tenant-id": tenantId,
-          },
-          body: JSON.stringify({
-            pageIds,
-            forceFull,
+      if (env.TENANT_SYNC) {
+        await Promise.allSettled(
+          tenantIds.map(async (tenantId) => {
+            try {
+              const stub = env.TENANT_SYNC!.getByName(tenantId);
+              const response = await stub.fetch("https://tenant-sync/sync/webhook", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  "x-tenant-id": tenantId,
+                },
+                body: JSON.stringify({ pageIds, forceFull }),
+              });
+              results[tenantId] = await response
+                .json()
+                .catch(() => ({ ok: response.ok }));
+            } catch (error) {
+              results[tenantId] = {
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
           }),
-        });
-        results[tenantId] = await response.json().catch(() => ({ ok: response.ok }));
-      } catch (error) {
-        results[tenantId] = {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        );
       }
+    } catch (error) {
+      console.error("[webhook] background fan-out failed:", error);
+      results.ok = false;
+      results.error = error instanceof Error ? error.message : String(error);
     }
+
+    try {
+      await insertWebhookLog(env.AUTH_DB, {
+        tenantIds,
+        eventTypes,
+        pageIds,
+        result: results,
+      });
+    } catch (logError) {
+      console.error("[webhook-log] Failed to insert webhook log:", logError);
+    }
+  })();
+
+  if (executionCtx && typeof executionCtx.waitUntil === "function") {
+    executionCtx.waitUntil(backgroundWork);
+  } else {
+    // Fallback: in environments without waitUntil, don't block the response.
+    backgroundWork.catch((error) => console.error("[webhook] background error:", error));
   }
 
-  // Log the webhook call (best-effort)
-  try {
-    await insertWebhookLog(c.env.AUTH_DB, {
-      tenantIds,
-      eventTypes,
-      pageIds,
-      result: results,
-    });
-  } catch (logError) {
-    console.error("[webhook-log] Failed to insert webhook log:", logError);
-  }
-
-  return c.json(results);
+  return c.json({ ok: true, queued: true, pageIds, eventTypes, forceFull });
 });
 
 // ---------------------------------------------------------------------------
