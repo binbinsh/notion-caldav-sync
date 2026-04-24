@@ -101,6 +101,7 @@ class FakeFacade implements SyncFacade {
   deleteCalendarCalls: string[] = [];
   updateNotionCalls: string[] = [];
   clearScheduleCalls: string[] = [];
+  calendarCtag: string | null = null;
 
   async ensureCalendar() {
     return { ...this.settings };
@@ -158,6 +159,10 @@ class FakeFacade implements SyncFacade {
     }));
   }
 
+  async getCalendarCtag(_calendarHref: string) {
+    return this.calendarCtag;
+  }
+
   async listCalendarDebugEvents(_calendarHref: string) {
     return [
       ...[...this.calendarTasks.values()].map((task) => ({
@@ -186,7 +191,7 @@ class FakeFacade implements SyncFacade {
     _calendarHref: string,
     _calendarColor: string,
     notionTaskValue: NotionTask,
-    _options: { settings: Record<string, unknown> },
+    options: { settings: Record<string, unknown> },
   ) {
     this.putCalendarCalls.push(notionTaskValue.pageId);
     const task = calendarTask({
@@ -201,7 +206,9 @@ class FakeFacade implements SyncFacade {
       pageUrl: notionTaskValue.pageUrl,
       lastModified: iso(2),
       etag: `"etag-${this.putCalendarCalls.length}"`,
-      displayStatus: statusForTask(notionTaskValue),
+      displayStatus: statusForTask(notionTaskValue, {
+        dateOnlyTimezoneName: String(options.settings.date_only_timezone || options.settings.calendar_timezone || "UTC"),
+      }),
     });
     this.calendarTasks.set(task.eventHref, task);
     return { eventHref: task.eventHref, etag: task.etag };
@@ -768,6 +775,80 @@ describe("SyncService", () => {
       await service.runFullReconcile();
 
       expect(facade.updateNotionCalls).toEqual([]);
+      expect(facade.putCalendarCalls).toEqual(["page-1"]);
+      const updated = facade.calendarTasks.get(calendar.eventHref);
+      expect(updated?.displayStatus).toBe("Overdue");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes date-only overdue display state even when the calendar ctag is unchanged", async () => {
+    vi.useFakeTimers({ now: new Date("2026-04-23T12:00:00.000Z") });
+    try {
+      const facade = new FakeFacade();
+      facade.calendarCtag = "stable-ctag";
+      facade.settings = {
+        ...facade.settings,
+        date_only_timezone: "Asia/Shanghai",
+      };
+      const notion = notionTask({
+        status: "Todo",
+        startDate: "2026-04-21",
+        endDate: "2026-04-23",
+        reminder: null,
+        lastEditedTime: iso(0),
+      });
+      const calendar = calendarTask({
+        status: "Todo",
+        startDate: notion.startDate,
+        endDate: notion.endDate,
+        reminder: null,
+        lastModified: iso(1),
+        displayStatus: "Todo",
+      });
+      facade.notionTasks.set("page-1", notion);
+      facade.calendarTasks.set(calendar.eventHref, calendar);
+
+      const syncedPayload = {
+        ...canonicalPayload({
+          title: notion.title,
+          status: notion.status,
+          startDate: notion.startDate,
+          endDate: notion.endDate,
+          reminder: notion.reminder,
+          category: notion.category,
+          description: notion.description,
+          pageUrl: notion.pageUrl,
+        }),
+        displayStatus: "Todo",
+        notesFingerprint: notesFingerprint(descriptionForTask(notion)),
+      };
+      const ledger = new InMemoryLedger();
+      await ledger.putRecord(new LedgerRecord(
+        "page-1",
+        calendar.eventHref,
+        calendar.etag,
+        notion.lastEditedTime,
+        await canonicalHash(syncedPayload),
+        await canonicalHash(syncedPayload),
+        calendar.lastModified,
+        null,
+        null,
+        null,
+        null,
+        null,
+        JSON.stringify(syncedPayload),
+      ));
+      const service = new SyncService(facade, ledger);
+
+      await service.syncCaldavIncremental();
+      expect(facade.putCalendarCalls).toEqual([]);
+
+      vi.setSystemTime(new Date("2026-04-23T16:00:00.000Z"));
+      const result = await service.syncCaldavIncremental();
+
+      expect(result.entries).toEqual([{ pageId: "page-1", action: "updated_calendar" }]);
       expect(facade.putCalendarCalls).toEqual(["page-1"]);
       const updated = facade.calendarTasks.get(calendar.eventHref);
       expect(updated?.displayStatus).toBe("Overdue");

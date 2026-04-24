@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canonicalHash,
   canonicalPayload,
@@ -8,6 +8,10 @@ import {
   descriptionForTask,
   isTaskOverdue,
 } from "../src/sync/rendering";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("canonicalHash", () => {
   it("produces a SHA-256 hex string", async () => {
@@ -196,6 +200,23 @@ describe("statusForTask", () => {
 
   it("defaults to Todo for null status", () => {
     expect(statusForTask({ status: null })).toBe("Todo");
+  });
+
+  it("marks date-only ranges overdue after the inclusive end day in the configured timezone", () => {
+    const task = {
+      status: "Todo",
+      startDate: "2026-04-21",
+      endDate: "2026-04-23",
+    };
+    const options = { dateOnlyTimezoneName: "Asia/Shanghai" };
+
+    vi.useFakeTimers({ now: new Date("2026-04-23T15:59:59.000Z") });
+    expect(isTaskOverdue(task, options)).toBe(false);
+    expect(statusForTask(task, options)).toBe("Todo");
+
+    vi.setSystemTime(new Date("2026-04-23T16:00:00.000Z"));
+    expect(isTaskOverdue(task, options)).toBe(true);
+    expect(statusForTask(task, options)).toBe("Overdue");
   });
 });
 

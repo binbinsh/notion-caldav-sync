@@ -204,14 +204,20 @@ export class SyncService {
         if (currentCtag) {
           const storedCtag = this.lastCalendarCtag;
           if (storedCtag && storedCtag === currentCtag) {
-            return {
-              source: "caldav_incremental",
-              startedAt,
-              completedAt: this.nowIso(),
-              entries: [],
-              totalProcessed: 0,
-              totalErrors: 0,
-            };
+            const records = await this.ledger.listRecords();
+            const hasDerivedRefresh = records.some((record) =>
+              Boolean(record.eventHref) && this.needsDerivedDisplayStatusRefresh(record, settings),
+            );
+            if (!hasDerivedRefresh) {
+              return {
+                source: "caldav_incremental",
+                startedAt,
+                completedAt: this.nowIso(),
+                entries: [],
+                totalProcessed: 0,
+                totalErrors: 0,
+              };
+            }
           }
           this.lastCalendarCtag = currentCtag;
         }
@@ -237,6 +243,10 @@ export class SyncService {
       livePageIds.add(pageId);
       const record = recordsByPageId.get(pageId) || new LedgerRecord(pageId);
       if (record.eventHref === href && record.eventEtag && meta.etag && record.eventEtag === meta.etag) {
+        if (this.needsDerivedDisplayStatusRefresh(record, settings)) {
+          changedMetas.push({ pageId, href, etag: meta.etag, record });
+          continue;
+        }
         entries.push({ pageId, action: "skipped" });
         continue;
       }
@@ -1049,6 +1059,21 @@ export class SyncService {
     return notionTime.getTime() <= deletedAt.getTime();
   }
 
+  private needsDerivedDisplayStatusRefresh(
+    record: LedgerRecord,
+    settings: Record<string, unknown>,
+  ): boolean {
+    const payload = parseSyncedPayload(record.lastSyncedPayload);
+    if (!payload || !Object.prototype.hasOwnProperty.call(payload, "displayStatus")) {
+      return false;
+    }
+    const currentDisplayStatus = payload.displayStatus ?? null;
+    const derivedDisplayStatus = statusForTask(payload, {
+      dateOnlyTimezoneName: dateOnlyTimezone(settings),
+    });
+    return currentDisplayStatus !== derivedDisplayStatus;
+  }
+
   private parseTimestamp(value?: string | null): Date | null {
     if (!value) {
       return null;
@@ -1498,6 +1523,25 @@ function normalizeOptionalString(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized || null;
+}
+
+function parseSyncedPayload(value: string | null): CanonicalPayload | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const payload: CanonicalPayload = {};
+    for (const [key, raw] of Object.entries(parsed)) {
+      payload[key] = typeof raw === "string" ? raw : null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 function serializeNotionTask(task: NotionTask): Record<string, unknown> {
