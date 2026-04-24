@@ -1420,6 +1420,7 @@ function DebugSection({
 }: {
   section: DebugSectionModel;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(section.tone === "red" || section.tone === "amber");
 
   return (
@@ -1442,18 +1443,32 @@ function DebugSection({
         </svg>
       </button>
       {expanded && (
-        <div className="grid gap-2 px-4 pb-4">
+        <div className="grid gap-3 px-4 pb-4">
           <p className="text-[11px] text-muted m-0 mb-2">{section.description}</p>
-          {section.entries.map((entry) => (
-            <DebugEntryCard key={entry.pageId} entry={entry} />
-          ))}
+          <div className="overflow-x-auto rounded-md border border-line bg-surface">
+            <table className="w-full min-w-[760px] border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-line bg-bg/80 text-left text-[11px] text-muted">
+                  <th className="w-[38%] px-3 py-2 font-semibold">{t("debugTableItem")}</th>
+                  <th className="w-[22%] px-3 py-2 font-semibold">{t("debugNextActionLabel")}</th>
+                  <th className="w-[16%] px-3 py-2 font-semibold">{t("debugTableSchedule")}</th>
+                  <th className="w-[24%] px-3 py-2 font-semibold">{t("debugMappingLabel")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {section.entries.map((entry) => (
+                  <DebugEntryRows key={entry.pageId} entry={entry} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
+function DebugEntryRows({ entry }: { entry: SyncDebugEntry }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const schedule = formatDateRange(
@@ -1464,110 +1479,99 @@ function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
   const hasAttention = entry.pendingRemoteSync || entry.warnings.length > 0;
 
   return (
-    <article className="overflow-hidden rounded-lg border border-line bg-surface text-xs shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-        className="grid w-full gap-3 border-0 bg-transparent px-3.5 py-3 text-left text-xs cursor-pointer hover:bg-bg/70 focus-visible:outline-2 focus-visible:outline-accent"
-      >
-        <span className="flex min-w-0 items-start gap-2">
-          <Icon
-            name="chevronRight"
-            className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
-          />
-          <span className="block min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={entry.title}>
-            {entry.title}
-          </span>
-        </span>
-
-        <span className="grid gap-2 pl-5 max-[480px]:pl-0 sm:grid-cols-2">
-          <DebugSummaryCell label={t("debugNextActionLabel")}>
-            <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
-          </DebugSummaryCell>
-          <DebugSummaryCell label={t("debugTableSchedule")}>
-            <span title={schedule}>{schedule}</span>
-          </DebugSummaryCell>
-          <DebugSummaryCell label={t("debugMappingLabel")}>
-            {formatRelation(entry.relation, t)}
-          </DebugSummaryCell>
-          {hasAttention && (
-            <DebugSummaryCell label={t("debugAttentionLabel")}>
-              <span className="flex flex-wrap gap-1.5">
-                {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
-                {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
-              </span>
-            </DebugSummaryCell>
-          )}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="grid gap-3 border-t border-line px-3 py-3">
-          <span className="break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
-
-          <div className="grid gap-2 rounded-md bg-bg p-3 sm:grid-cols-2">
-            <DebugDetail label={t("debugTableSchedule")}>{schedule}</DebugDetail>
-            <DebugDetail label={t("debugMappingLabel")}>{formatRelation(entry.relation, t)}</DebugDetail>
-            <DebugDetail label={t("debugNextActionLabel")}>{formatAction(entry.action, t)}</DebugDetail>
-            <DebugDetail label={t("debugTableSync")}>
-              <DebugOperationList
-                operations={[
-                  { label: t("debugOperationNotion"), value: formatOperation(entry.operations.notion, t) },
-                  { label: t("debugOperationCalendar"), value: formatOperation(entry.operations.calendar, t) },
-                  { label: t("debugOperationLedger"), value: formatOperation(entry.operations.ledger, t) },
-                ]}
+    <>
+      <tr className="border-b border-line/60 align-middle hover:bg-bg/60">
+        <td className="px-3 py-2.5 align-middle">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((current) => !current)}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border-0 bg-transparent p-0 text-muted cursor-pointer hover:bg-line hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <Icon
+                name="chevronRight"
+                className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-90" : ""}`}
               />
-            </DebugDetail>
-            <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
-            <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
+            </button>
+            <span className="min-w-0 truncate text-sm font-semibold text-ink" title={entry.title}>
+              {entry.title}
+            </span>
           </div>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
+        </td>
+        <td className="px-3 py-2.5 align-middle text-muted whitespace-nowrap" title={schedule}>
+          {schedule}
+        </td>
+        <td className="px-3 py-2.5 align-middle text-muted">
+          <span className="block truncate" title={formatRelation(entry.relation, t)}>
+            {formatRelation(entry.relation, t)}
+          </span>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="border-b border-line/70 bg-bg/40">
+          <td colSpan={4} className="px-3 py-3">
+            <div className="grid gap-3">
+              <span className="break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
 
-          <div className="grid gap-2">
-            <DebugLabeledBlock label={t("debugReasonLabel")}>
-              {entry.reason}
-            </DebugLabeledBlock>
+              {hasAttention && (
+                <DebugLabeledBlock label={t("debugAttentionLabel")}>
+                  <div className="flex flex-wrap gap-1.5">
+                    {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
+                    {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
+                  </div>
+                </DebugLabeledBlock>
+              )}
 
-            {entry.warnings.length > 0 && (
-              <DebugLabeledBlock label={t("debugWarningsLabel")}>
-                <ul className="m-0 grid gap-1 pl-4">
-                  {entry.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </DebugLabeledBlock>
-            )}
+              <div className="grid gap-2 rounded-md bg-surface p-3 sm:grid-cols-2">
+                <DebugDetail label={t("debugTableSync")}>
+                  <DebugOperationList
+                    operations={[
+                      { label: t("debugOperationNotion"), value: formatOperation(entry.operations.notion, t) },
+                      { label: t("debugOperationCalendar"), value: formatOperation(entry.operations.calendar, t) },
+                      { label: t("debugOperationLedger"), value: formatOperation(entry.operations.ledger, t) },
+                    ]}
+                  />
+                </DebugDetail>
+                <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
+                <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
+              </div>
 
-            {entry.duplicateCalendarEvents.length > 0 && (
-              <DebugLabeledBlock label={t("debugDuplicatesLabel")}>
-                {entry.duplicateCalendarEvents.length}
-              </DebugLabeledBlock>
-            )}
+              <div className="grid gap-2">
+                <DebugLabeledBlock label={t("debugReasonLabel")}>
+                  {entry.reason}
+                </DebugLabeledBlock>
 
-            {eventHref && (
-              <DebugLabeledBlock label={t("debugEventHrefLabel")}>
-                <span className="break-all font-mono text-[11px]">{formatEventHref(eventHref)}</span>
-              </DebugLabeledBlock>
-            )}
-          </div>
-        </div>
+                {entry.warnings.length > 0 && (
+                  <DebugLabeledBlock label={t("debugWarningsLabel")}>
+                    <ul className="m-0 grid gap-1 pl-4">
+                      {entry.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </DebugLabeledBlock>
+                )}
+
+                {entry.duplicateCalendarEvents.length > 0 && (
+                  <DebugLabeledBlock label={t("debugDuplicatesLabel")}>
+                    {entry.duplicateCalendarEvents.length}
+                  </DebugLabeledBlock>
+                )}
+
+                {eventHref && (
+                  <DebugLabeledBlock label={t("debugEventHrefLabel")}>
+                    <span className="break-all font-mono text-[11px]">{formatEventHref(eventHref)}</span>
+                  </DebugLabeledBlock>
+                )}
+              </div>
+            </div>
+          </td>
+        </tr>
       )}
-    </article>
-  );
-}
-
-function DebugSummaryCell({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <span className="grid min-w-0 gap-1 rounded-md border border-line/70 bg-bg/70 px-2.5 py-2">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle">{label}</span>
-      <span className="min-w-0 break-words text-muted">{children}</span>
-    </span>
+    </>
   );
 }
 
