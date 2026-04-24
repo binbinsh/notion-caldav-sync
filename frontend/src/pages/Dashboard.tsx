@@ -137,9 +137,9 @@ const FIELD_STACK_CLASS = "grid gap-1";
 const FIELD_LABEL_CLASS = "text-xs font-medium leading-none text-muted";
 const FIELD_HELP_CLASS = "text-[11px] leading-tight text-subtle";
 const INPUT_SHELL_CLASS =
-  "flex h-10 w-full items-center overflow-hidden rounded-md border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15";
+  "flex h-8 w-full items-center overflow-hidden rounded-md border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15";
 const INPUT_CLASS =
-  "block h-10 w-full m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
+  "block h-8 w-full m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_CONTROL_CLASS =
   "block m-0 h-full min-h-0 min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle focus:outline-none focus:ring-0 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_SUFFIX_CLASS =
