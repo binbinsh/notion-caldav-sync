@@ -332,7 +332,7 @@ function Spinner({ small }: { small?: boolean }) {
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
-      className={`inline-block h-2 w-2 rounded-full ring-4 ${ok ? "bg-green ring-green-soft" : "bg-amber ring-amber-soft"}`}
+      className={`inline-block h-2 w-2 rounded-full ${ok ? "bg-green" : "bg-amber"}`}
       role="img"
       aria-label={ok ? "Connected" : "Not connected"}
     />
@@ -972,50 +972,35 @@ function SyncStatusBar({
 }) {
   const { t } = useI18n();
   return (
-    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 rounded-lg border border-line bg-surface p-2 text-sm shadow-[0_1px_2px_rgba(15,23,42,0.04)] max-[560px]:grid-cols-1">
-      <StatusSummaryItem
-        label="Notion"
-        value={notionConnected ? t("notionOk") : t("notionMissing")}
-        ok={notionConnected}
-        action={(
-          <Btn variant="secondary" size="sm" onClick={onNotionConnect}>
-            <Icon name="link" className="h-3.5 w-3.5" />
-            {notionConnected ? t("reconnectNotionShort") : t("connectNotionShort")}
-          </Btn>
-        )}
-      />
-      <StatusSummaryItem label={t("appleLabel")} value={appleConfigured ? t("appleOk") : t("appleMissing")} ok={appleConfigured} />
-      {workspaceName && (
-        <div className="flex min-w-[180px] items-center gap-2 rounded-md bg-bg px-3 py-2">
-          <span className="text-xs text-muted">{t("workspaceLabel")}</span>
-          <span className="truncate text-xs font-medium text-ink">{workspaceName}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatusSummaryItem({
-  label,
-  value,
-  ok,
-  action,
-}: {
-  label: string;
-  value: string;
-  ok: boolean;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md bg-bg px-3 py-2">
-      <div className="flex min-w-0 items-center gap-3">
-        <StatusDot ok={ok} />
-        <div className="flex min-w-0 items-baseline gap-1.5">
-          <span className="min-w-0 truncate text-[11px] font-medium text-muted">{label}</span>
-          <span className="shrink-0 text-xs font-semibold text-ink">{value}</span>
-        </div>
+    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-line bg-surface px-5 py-3 text-sm">
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusDot ok={notionConnected} />
+        <span className="text-xs text-muted">Notion</span>
+        <span className="text-xs font-medium text-ink">
+          {notionConnected ? t("notionOk") : t("notionMissing")}
+        </span>
+        <Btn variant="secondary" size="sm" onClick={onNotionConnect} className="ml-1 h-7 px-2.5">
+          <Icon name="link" className="h-3.5 w-3.5" />
+          {notionConnected ? t("reconnectNotionShort") : t("connectNotionShort")}
+        </Btn>
       </div>
-      {action}
+      <div className="h-4 w-px bg-line" />
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusDot ok={appleConfigured} />
+        <span className="text-xs text-muted">{t("appleLabel")}</span>
+        <span className="text-xs font-medium text-ink">
+          {appleConfigured ? t("appleOk") : t("appleMissing")}
+        </span>
+      </div>
+      {workspaceName && (
+        <>
+          <div className="h-4 w-px bg-line" />
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xs text-muted">{t("workspaceLabel")}</span>
+            <span className="max-w-[140px] truncate text-xs font-medium text-ink">{workspaceName}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
