@@ -2110,15 +2110,22 @@ function StatusSettingsEditor({
           ? { ...DEFAULT_STATUS_EMOJIS.emoji, ...(settings.statusEmojiOverrides || {}) }
           : DEFAULT_STATUS_EMOJIS[style];
     return (
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-muted">
+      <div className="grid min-w-0 grid-cols-[repeat(5,minmax(6.25rem,1fr))] items-center gap-x-3 gap-y-1 overflow-x-auto text-[11px] text-muted">
         {DEFAULT_STATUS_CANONICALS.map((canonical) => (
-          <span key={canonical} className="inline-flex shrink-0 items-center gap-1">
+          <span
+            key={canonical}
+            className="grid min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1"
+          >
             {source[canonical] ? (
-              <span className="text-base leading-none">{source[canonical]}</span>
+              <span className="flex h-5 w-5 items-center justify-center text-base leading-none">
+                {source[canonical]}
+              </span>
             ) : (
-              <span className="h-3 w-3 rounded-sm border border-line bg-bg" aria-hidden="true" />
+              <span className="flex h-5 w-5 items-center justify-center" aria-hidden="true">
+                <span className="h-3 w-3 rounded-sm border border-line bg-bg" />
+              </span>
             )}
-            <span className="text-xs text-muted">{canonical}</span>
+            <span className="truncate text-xs text-muted">{canonical}</span>
           </span>
         ))}
       </div>
@@ -2151,7 +2158,7 @@ function StatusSettingsEditor({
             return (
               <label
                 key={opt.value || "__inherit"}
-                className={`flex cursor-pointer items-center gap-3 rounded-md border p-3 transition-colors ${
+                className={`grid cursor-pointer grid-cols-[auto_minmax(5.5rem,7rem)_minmax(0,1fr)] items-center gap-3 rounded-md border p-3 transition-colors ${
                   isSelected
                     ? "border-accent bg-accent/5"
                     : "border-line hover:border-accent/60"
