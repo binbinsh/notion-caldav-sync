@@ -2408,6 +2408,8 @@ function isTwoWayMerge(entry: SyncDebugEntry): boolean {
 // Timezone helpers
 // ---------------------------------------------------------------------------
 type TimezoneOption = { value: string; label: string };
+type TimezoneOptionsBuild = { options: TimezoneOption[]; aliases: Record<string, string> };
+type TimezoneOptionGroup = { currentOffset: number | null; members: string[] };
 
 const FALLBACK_TIMEZONES = [
   "UTC", "Asia/Shanghai", "Asia/Hong_Kong", "Asia/Tokyo", "Asia/Singapore",
@@ -2416,22 +2418,48 @@ const FALLBACK_TIMEZONES = [
   "America/Toronto", "Australia/Sydney",
 ] as const;
 
-const TIMEZONE_DISPLAY_LABELS: Record<string, string> = {
-  UTC: "UTC+00:00 - Coordinated Universal Time",
-  "Asia/Shanghai": "UTC+08:00 - Beijing, Chongqing, Hong Kong, Urumqi",
-  "Asia/Hong_Kong": "UTC+08:00 - Hong Kong",
-  "Asia/Tokyo": "UTC+09:00 - Osaka, Sapporo, Tokyo",
-  "Asia/Singapore": "UTC+08:00 - Kuala Lumpur, Singapore",
-  "Asia/Seoul": "UTC+09:00 - Seoul",
-  "Europe/London": "UTC+00:00 - Dublin, Edinburgh, Lisbon, London",
-  "Europe/Paris": "UTC+01:00 - Brussels, Copenhagen, Madrid, Paris",
-  "Europe/Berlin": "UTC+01:00 - Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna",
-  "America/New_York": "UTC-05:00 - Eastern Time (US & Canada)",
-  "America/Chicago": "UTC-06:00 - Central Time (US & Canada)",
-  "America/Denver": "UTC-07:00 - Mountain Time (US & Canada)",
-  "America/Los_Angeles": "UTC-08:00 - Pacific Time (US & Canada)",
-  "America/Toronto": "UTC-05:00 - Eastern Time (Canada)",
-  "Australia/Sydney": "UTC+10:00 - Canberra, Melbourne, Sydney",
+const PREFERRED_TIMEZONE_VALUES = [
+  "UTC",
+  "Pacific/Pago_Pago",
+  "Pacific/Honolulu",
+  "America/Anchorage",
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "America/Sao_Paulo",
+  "Atlantic/Azores",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Europe/Moscow",
+  "Asia/Dubai",
+  "Asia/Karachi",
+  "Asia/Kolkata",
+  "Asia/Dhaka",
+  "Asia/Bangkok",
+  "Asia/Shanghai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "Pacific/Auckland",
+  "Pacific/Kiritimati",
+] as const;
+
+const TIMEZONE_VALUE_PRIORITY = new Map<string, number>(PREFERRED_TIMEZONE_VALUES.map((value, index) => [value, index]));
+const MAX_TIMEZONE_LOCATION_LABELS = 8;
+
+const TIMEZONE_GROUP_LOCATION_LABELS: Record<string, string[]> = {
+  UTC: ["Coordinated Universal Time"],
+  "Asia/Shanghai": ["Beijing", "Chongqing", "Hong Kong", "Kuala Lumpur", "Singapore"],
+  "Asia/Tokyo": ["Osaka", "Sapporo", "Tokyo", "Seoul"],
+  "Europe/London": ["Dublin", "Edinburgh", "Lisbon", "London"],
+  "Europe/Paris": ["Amsterdam", "Berlin", "Bern", "Brussels", "Copenhagen", "Madrid", "Paris", "Rome", "Stockholm", "Vienna"],
+  "America/New_York": ["Eastern Time (US & Canada)", "Toronto"],
+  "America/Chicago": ["Central Time (US & Canada)"],
+  "America/Denver": ["Mountain Time (US & Canada)"],
+  "America/Los_Angeles": ["Pacific Time (US & Canada)"],
+  "Australia/Sydney": ["Canberra", "Melbourne", "Sydney"],
 };
 
 const WINDOWS_TIMEZONE_TO_IANA: Record<string, string> = {
@@ -2450,23 +2478,114 @@ const WINDOWS_TIMEZONE_TO_IANA: Record<string, string> = {
   "AUS Eastern Standard Time": "Australia/Sydney",
 };
 
-const TIMEZONE_OPTIONS = buildTimezoneOptions();
+const TIMEZONE_OFFSET_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+const TIMEZONE_OPTIONS_BUILD = buildTimezoneOptions();
+const TIMEZONE_OPTIONS = TIMEZONE_OPTIONS_BUILD.options;
+const TIMEZONE_ALIAS_TO_OPTION_VALUE = TIMEZONE_OPTIONS_BUILD.aliases;
 
-function buildTimezoneOptions(): TimezoneOption[] {
+function buildTimezoneOptions(): TimezoneOptionsBuild {
   let values: string[] = [];
   try {
     if (typeof Intl.supportedValuesOf === "function") values = Intl.supportedValuesOf("timeZone");
   } catch {}
-  if (!values.length) values = [...FALLBACK_TIMEZONES];
-  return [...new Set(values)].map((v) => ({ value: v, label: formatTimezoneOptionLabel(v) }));
+
+  const allValues = [...new Set(["UTC", ...FALLBACK_TIMEZONES, ...values])];
+  const referenceDate = new Date();
+  const signatureDates = buildTimezoneSignatureDates(referenceDate);
+  const groups = new Map<string, TimezoneOptionGroup>();
+
+  for (const value of allValues) {
+    const signature = getTimezoneOffsetSignature(value, signatureDates);
+    const key = signature || `single:${value}`;
+    const currentOffset = getTimezoneOffsetMinutes(value, referenceDate);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.members.push(value);
+      if (existing.currentOffset == null) existing.currentOffset = currentOffset;
+    } else {
+      groups.set(key, { currentOffset, members: [value] });
+    }
+  }
+
+  const aliases: Record<string, string> = {};
+  const options = Array.from(groups.values())
+    .map((group) => {
+      const value = pickTimezoneGroupValue(group.members);
+      for (const member of group.members) {
+        if (member !== value) aliases[member] = value;
+      }
+      return {
+        value,
+        label: formatTimezoneGroupOptionLabel(value, group.members, group.currentOffset),
+        sortOffset: group.currentOffset ?? Number.POSITIVE_INFINITY,
+      };
+    })
+    .sort((a, b) => a.sortOffset - b.sortOffset || a.label.localeCompare(b.label))
+    .map(({ value, label }) => ({ value, label }));
+
+  return { options, aliases };
 }
 
 function formatTimezoneOptionLabel(value: string): string {
-  const known = TIMEZONE_DISPLAY_LABELS[value];
-  if (known) return known;
   const offset = formatUtcOffsetLabel(value);
   const city = value.split("/").pop()?.replace(/_/g, " ") || value;
   return offset ? `${offset} - ${city}` : city;
+}
+
+function buildTimezoneSignatureDates(referenceDate: Date): Date[] {
+  const year = referenceDate.getUTCFullYear();
+  const dates = [referenceDate];
+  for (const sampleYear of [year, year + 1]) {
+    for (const month of [0, 3, 6, 9]) {
+      dates.push(new Date(Date.UTC(sampleYear, month, 15, 12, 0, 0)));
+    }
+  }
+  return dates;
+}
+
+function getTimezoneOffsetSignature(timeZone: string, dates: Date[]): string {
+  const offsets = dates.map((date) => getTimezoneOffsetMinutes(timeZone, date));
+  return offsets.some((offset) => offset == null) ? "" : offsets.join("|");
+}
+
+function pickTimezoneGroupValue(members: string[]): string {
+  return [...members].sort(compareTimezonePreference)[0] || "UTC";
+}
+
+function compareTimezonePreference(a: string, b: string): number {
+  const aPriority = TIMEZONE_VALUE_PRIORITY.get(a) ?? Number.POSITIVE_INFINITY;
+  const bPriority = TIMEZONE_VALUE_PRIORITY.get(b) ?? Number.POSITIVE_INFINITY;
+  return aPriority - bPriority || humanizeTimezoneLocation(a).localeCompare(humanizeTimezoneLocation(b));
+}
+
+function formatTimezoneGroupOptionLabel(value: string, members: string[], currentOffset: number | null): string {
+  const offset = currentOffset == null ? formatUtcOffsetLabel(value) : formatUtcOffsetLabelFromMinutes(currentOffset);
+  const locations = buildTimezoneLocationLabel(value, members);
+  return offset ? `${offset} - ${locations}` : locations;
+}
+
+function buildTimezoneLocationLabel(value: string, members: string[]): string {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  const addLabel = (label: string) => {
+    const normalized = label.trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    labels.push(normalized);
+  };
+
+  for (const label of TIMEZONE_GROUP_LOCATION_LABELS[value] || []) addLabel(label);
+  for (const member of [...members].sort(compareTimezonePreference)) addLabel(humanizeTimezoneLocation(member));
+
+  const visible = labels.slice(0, MAX_TIMEZONE_LOCATION_LABELS);
+  const hiddenCount = labels.length - visible.length;
+  return hiddenCount > 0 ? `${visible.join(", ")} +${hiddenCount} more` : visible.join(", ");
+}
+
+function humanizeTimezoneLocation(value: string): string {
+  if (value === "UTC") return "Coordinated Universal Time";
+  return value.split("/").pop()?.replace(/_/g, " ") || value;
 }
 
 function detectIanaTimezone(): string | null {
@@ -2479,22 +2598,42 @@ function normalizeTimezoneValue(value: unknown): string {
   if (typeof value !== "string") return "";
   const s = value.trim();
   if (!s) return "";
-  return WINDOWS_TIMEZONE_TO_IANA[s] || s;
+  const iana = WINDOWS_TIMEZONE_TO_IANA[s] || s;
+  return TIMEZONE_ALIAS_TO_OPTION_VALUE[iana] || iana;
 }
 
 function formatUtcOffsetLabel(timeZone: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).formatToParts(new Date());
-    const raw = parts.find((p) => p.type === "timeZoneName")?.value || "";
-    return normalizeOffsetLabel(raw);
-  } catch { return ""; }
+  const offset = getTimezoneOffsetMinutes(timeZone);
+  return offset == null ? "" : formatUtcOffsetLabelFromMinutes(offset);
 }
 
-function normalizeOffsetLabel(value: string): string {
-  if (!value) return "";
-  if (value === "GMT" || value === "UTC") return "UTC+00:00";
-  const match = value.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/i);
-  if (!match) return value.replace(/^GMT/i, "UTC");
+function getTimezoneOffsetMinutes(timeZone: string, date = new Date()): number | null {
+  try {
+    let formatter = TIMEZONE_OFFSET_FORMATTERS.get(timeZone);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" });
+      TIMEZONE_OFFSET_FORMATTERS.set(timeZone, formatter);
+    }
+    const parts = formatter.formatToParts(date);
+    const raw = parts.find((p) => p.type === "timeZoneName")?.value || "";
+    return parseUtcOffsetMinutes(raw);
+  } catch { return null; }
+}
+
+function parseUtcOffsetMinutes(value: string): number | null {
+  if (!value) return null;
+  if (/^(GMT|UTC)$/i.test(value)) return 0;
+  const match = value.match(/^(?:GMT|UTC)([+-])(\d{1,2})(?::?(\d{2}))?$/i);
+  if (!match) return null;
   const [, sign, h, m] = match;
-  return `UTC${sign}${h.padStart(2, "0")}:${(m || "00").padStart(2, "0")}`;
+  const minutes = Number(h) * 60 + Number(m || "0");
+  return sign === "-" ? -minutes : minutes;
+}
+
+function formatUtcOffsetLabelFromMinutes(minutes: number): string {
+  const sign = minutes < 0 ? "-" : "+";
+  const abs = Math.abs(minutes);
+  const hours = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mins = String(abs % 60).padStart(2, "0");
+  return `UTC${sign}${hours}:${mins}`;
 }
