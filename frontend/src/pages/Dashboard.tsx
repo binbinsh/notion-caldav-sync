@@ -1461,39 +1461,45 @@ function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
     asString(entry.notion?.endDate) || asString(entry.calendar?.endDate),
   );
   const eventHref = asString(entry.calendar?.eventHref) || asString(entry.ledger?.eventHref);
-  const syncSummary = `N: ${formatOperation(entry.operations.notion, t)} · C: ${formatOperation(entry.operations.calendar, t)} · L: ${formatOperation(entry.operations.ledger, t)}`;
+  const hasAttention = entry.pendingRemoteSync || entry.warnings.length > 0;
 
   return (
-    <article className="overflow-hidden rounded-md border border-line bg-surface text-xs">
+    <article className="overflow-hidden rounded-lg border border-line bg-surface text-xs shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
-        className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-0 bg-transparent px-3 py-2.5 text-left text-xs cursor-pointer hover:bg-bg/70 focus-visible:outline-2 focus-visible:outline-accent"
+        className="grid w-full gap-3 border-0 bg-transparent px-3.5 py-3 text-left text-xs cursor-pointer hover:bg-bg/70 focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <Icon
-          name="chevronRight"
-          className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
-        />
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-sm font-semibold text-ink" title={entry.title}>
+        <span className="flex min-w-0 items-start gap-2">
+          <Icon
+            name="chevronRight"
+            className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
+          />
+          <span className="block min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={entry.title}>
             {entry.title}
           </span>
-          <span className="shrink-0">
-            <Badge tone="slate">{formatRelation(entry.relation, t)}</Badge>
-          </span>
-        </div>
-        <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5">
-          <span className="max-w-[160px] truncate text-[11px] text-muted max-[560px]:hidden" title={schedule}>
-            {schedule}
-          </span>
-          <span className="max-w-[220px] truncate font-mono text-[11px] text-subtle max-[720px]:hidden" title={syncSummary}>
-            {syncSummary}
-          </span>
-          <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
-          {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
-          {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
-        </div>
+        </span>
+
+        <span className="grid gap-2 pl-5 max-[480px]:pl-0 sm:grid-cols-2">
+          <DebugSummaryCell label={t("debugNextActionLabel")}>
+            <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
+          </DebugSummaryCell>
+          <DebugSummaryCell label={t("debugTableSchedule")}>
+            <span title={schedule}>{schedule}</span>
+          </DebugSummaryCell>
+          <DebugSummaryCell label={t("debugMappingLabel")}>
+            {formatRelation(entry.relation, t)}
+          </DebugSummaryCell>
+          {hasAttention && (
+            <DebugSummaryCell label={t("debugAttentionLabel")}>
+              <span className="flex flex-wrap gap-1.5">
+                {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
+                {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
+              </span>
+            </DebugSummaryCell>
+          )}
+        </span>
       </button>
 
       {expanded && (
@@ -1502,12 +1508,16 @@ function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
 
           <div className="grid gap-2 rounded-md bg-bg p-3 sm:grid-cols-2">
             <DebugDetail label={t("debugTableSchedule")}>{schedule}</DebugDetail>
+            <DebugDetail label={t("debugMappingLabel")}>{formatRelation(entry.relation, t)}</DebugDetail>
+            <DebugDetail label={t("debugNextActionLabel")}>{formatAction(entry.action, t)}</DebugDetail>
             <DebugDetail label={t("debugTableSync")}>
-              <span className="inline-flex flex-wrap gap-x-2 gap-y-1">
-                <span>N: {formatOperation(entry.operations.notion, t)}</span>
-                <span>C: {formatOperation(entry.operations.calendar, t)}</span>
-                <span>L: {formatOperation(entry.operations.ledger, t)}</span>
-              </span>
+              <DebugOperationList
+                operations={[
+                  { label: t("debugOperationNotion"), value: formatOperation(entry.operations.notion, t) },
+                  { label: t("debugOperationCalendar"), value: formatOperation(entry.operations.calendar, t) },
+                  { label: t("debugOperationLedger"), value: formatOperation(entry.operations.ledger, t) },
+                ]}
+              />
             </DebugDetail>
             <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
             <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
@@ -1543,6 +1553,38 @@ function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
         </div>
       )}
     </article>
+  );
+}
+
+function DebugSummaryCell({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className="grid min-w-0 gap-1 rounded-md border border-line/70 bg-bg/70 px-2.5 py-2">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-subtle">{label}</span>
+      <span className="min-w-0 break-words text-muted">{children}</span>
+    </span>
+  );
+}
+
+function DebugOperationList({
+  operations,
+}: {
+  operations: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <div className="grid gap-1">
+      {operations.map((operation) => (
+        <div key={operation.label} className="flex min-w-0 items-center justify-between gap-2 rounded border border-line/60 bg-surface px-2 py-1">
+          <span className="min-w-0 truncate text-subtle">{operation.label}</span>
+          <span className="shrink-0 font-medium text-ink">{operation.value}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
