@@ -136,7 +136,7 @@ function ConfirmDialog({
 const INPUT_SHELL_CLASS =
   "flex h-10 w-full items-center overflow-hidden rounded-md border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15";
 const INPUT_CLASS =
-  "w-full h-10 m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
+  "block h-10 w-full m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-[38px] font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_CONTROL_CLASS =
   "m-0 h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 py-0 leading-[38px] text-sm font-[inherit] text-ink placeholder:text-subtle focus:outline-none focus:ring-0 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_SUFFIX_CLASS =
@@ -1007,9 +1007,9 @@ function StatusSummaryItem({
     <div className="flex items-center justify-between gap-3 rounded-md bg-bg px-3 py-2">
       <div className="flex min-w-0 items-center gap-3">
         <StatusDot ok={ok} />
-        <div className="min-w-0">
-          <p className="m-0 text-[11px] font-medium text-muted">{label}</p>
-          <p className="m-0 truncate text-xs font-semibold text-ink">{value}</p>
+        <div className="flex min-w-0 items-baseline gap-1.5">
+          <span className="min-w-0 truncate text-[11px] font-medium text-muted">{label}</span>
+          <span className="shrink-0 text-xs font-semibold text-ink">{value}</span>
         </div>
       </div>
       {action}
@@ -2214,12 +2214,14 @@ function Field({
   return (
     <div className="grid gap-1.5">
       <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
-      <input
-        id={id} name={id} type={type} required={required} placeholder={placeholder}
-        value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-        disabled={disabled}
-        className={INPUT_CLASS}
-      />
+      <div className={INPUT_SHELL_CLASS}>
+        <input
+          id={id} name={id} type={type} required={required} placeholder={placeholder}
+          value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+          disabled={disabled}
+          className={INPUT_CONTROL_CLASS}
+        />
+      </div>
       <span className="text-[11px] text-subtle">{help}</span>
     </div>
   );
@@ -2246,19 +2248,21 @@ function SecretField({
   return (
     <div className="grid gap-1.5">
       <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
-      <input
-        id={id} name={id} type={editable ? type : "text"}
-        inputMode={editable ? inputMode : undefined}
-        autoComplete={autoComplete}
-        autoCapitalize={autoCapitalize}
-        spellCheck={spellCheck}
-        required={editable && required}
-        placeholder={editable ? placeholder : undefined}
-        value={editable ? value : maskedValue}
-        onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-        disabled={!editable}
-        className={INPUT_CLASS}
-      />
+      <div className={INPUT_SHELL_CLASS}>
+        <input
+          id={id} name={id} type={editable ? type : "text"}
+          inputMode={editable ? inputMode : undefined}
+          autoComplete={autoComplete}
+          autoCapitalize={autoCapitalize}
+          spellCheck={spellCheck}
+          required={editable && required}
+          placeholder={editable ? placeholder : undefined}
+          value={editable ? value : maskedValue}
+          onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+          disabled={!editable}
+          className={INPUT_CONTROL_CLASS}
+        />
+      </div>
       <span className="text-[11px] text-subtle">{help}</span>
     </div>
   );
