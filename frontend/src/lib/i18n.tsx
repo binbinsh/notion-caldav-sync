@@ -185,6 +185,7 @@ export const translations = {
 
     // Webhook Log
     webhookLogLabel: "Recent Webhook Calls",
+    webhookLogHelp: "Recent updates sent from Notion.",
     webhookLogEmpty: "No webhook calls yet",
     webhookLogTime: "Time",
     webhookLogEvents: "Events",
@@ -425,6 +426,7 @@ export const translations = {
     lastSyncNever: "从未同步",
 
     webhookLogLabel: "最近的 Webhook 调用",
+    webhookLogHelp: "Notion 最近发送的更新。",
     webhookLogEmpty: "暂无 Webhook 调用记录",
     webhookLogTime: "时间",
     webhookLogEvents: "事件",
@@ -656,6 +658,7 @@ export const translations = {
     lastSyncNever: "從未同步",
 
     webhookLogLabel: "最近的 Webhook 呼叫",
+    webhookLogHelp: "Notion 最近傳送的更新。",
     webhookLogEmpty: "暫無 Webhook 呼叫紀錄",
     webhookLogTime: "時間",
     webhookLogEvents: "事件",

@@ -133,12 +133,15 @@ function ConfirmDialog({
 // ---------------------------------------------------------------------------
 // Shared UI primitives
 // ---------------------------------------------------------------------------
+const FIELD_STACK_CLASS = "grid gap-1";
+const FIELD_LABEL_CLASS = "text-xs font-medium leading-none text-muted";
+const FIELD_HELP_CLASS = "text-[11px] leading-tight text-subtle";
 const INPUT_SHELL_CLASS =
   "flex h-10 w-full items-center overflow-hidden rounded-md border border-line bg-bg transition-all duration-150 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15";
 const INPUT_CLASS =
-  "block h-10 w-full m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-[38px] font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
+  "block h-10 w-full m-0 appearance-none rounded-md border border-line bg-bg px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle transition-all duration-150 focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_CONTROL_CLASS =
-  "m-0 h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 py-0 leading-[38px] text-sm font-[inherit] text-ink placeholder:text-subtle focus:outline-none focus:ring-0 disabled:cursor-default disabled:text-muted disabled:opacity-100";
+  "block m-0 h-full min-h-0 min-w-0 flex-1 appearance-none border-0 bg-transparent px-3 py-0 text-sm leading-normal font-[inherit] text-ink placeholder:text-subtle focus:outline-none focus:ring-0 disabled:cursor-default disabled:text-muted disabled:opacity-100";
 const INPUT_SUFFIX_CLASS =
   "flex h-full shrink-0 items-center gap-2 border-l border-line px-3 text-[11px] text-subtle whitespace-nowrap";
 
@@ -1219,8 +1222,8 @@ function AppleSettingsCard({
         {/* Calendar name + color */}
         <div className="grid grid-cols-2 gap-4 max-[520px]:grid-cols-1">
           <Field id="calendar_name" label={t("calNameLabel")} help={t("calNameHelp")} value={calName} onInput={setCalName} disabled={!editing} />
-          <div className="grid gap-1.5">
-            <label htmlFor="calendar_color" className="text-xs font-medium text-muted">{t("calColorLabel")}</label>
+          <div className={FIELD_STACK_CLASS}>
+            <label htmlFor="calendar_color" className={FIELD_LABEL_CLASS}>{t("calColorLabel")}</label>
             <div className={INPUT_SHELL_CLASS}>
               <input
                 id="calendar_color" value={color}
@@ -1238,7 +1241,7 @@ function AppleSettingsCard({
                 />
               </label>
             </div>
-            <span className="text-[11px] text-subtle">{t("calColorHelp")}</span>
+            <span className={FIELD_HELP_CLASS}>{t("calColorHelp")}</span>
           </div>
         </div>
 
@@ -1250,8 +1253,8 @@ function AppleSettingsCard({
 
         {/* Intervals */}
         <div className="grid grid-cols-2 gap-4 max-[520px]:grid-cols-1">
-          <div className="grid gap-1.5">
-            <label htmlFor="poll_interval_minutes" className="text-xs font-medium text-muted">{t("checkEveryLabel")}</label>
+          <div className={FIELD_STACK_CLASS}>
+            <label htmlFor="poll_interval_minutes" className={FIELD_LABEL_CLASS}>{t("checkEveryLabel")}</label>
             <div className={INPUT_SHELL_CLASS}>
               <input
                 id="poll_interval_minutes" type="number" min="1" value={pollInterval}
@@ -1262,8 +1265,8 @@ function AppleSettingsCard({
               <span className={INPUT_SUFFIX_CLASS}>{t("checkEveryUnit")}</span>
             </div>
           </div>
-          <div className="grid gap-1.5">
-            <label htmlFor="full_sync_interval_minutes" className="text-xs font-medium text-muted">{t("fullSyncEveryLabel")}</label>
+          <div className={FIELD_STACK_CLASS}>
+            <label htmlFor="full_sync_interval_minutes" className={FIELD_LABEL_CLASS}>{t("fullSyncEveryLabel")}</label>
             <div className={INPUT_SHELL_CLASS}>
               <input
                 id="full_sync_interval_minutes" type="number" min="15" value={fullSyncInterval}
@@ -1607,6 +1610,7 @@ function WebhookLogCard({ logs }: { logs: WebhookLogEntry[] }) {
     <Card>
       <SectionHeader
         title={t("webhookLogLabel")}
+        description={t("webhookLogHelp")}
         expanded={expanded}
         onToggle={() => setExpanded((current) => !current)}
       />
@@ -2186,8 +2190,8 @@ function TimezoneField({
   const options = hasOption ? TIMEZONE_OPTIONS : [{ value: resolvedValue, label: formatTimezoneOptionLabel(resolvedValue) }, ...TIMEZONE_OPTIONS];
 
   return (
-    <div className="grid gap-1.5">
-      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
+    <div className={FIELD_STACK_CLASS}>
+      <label htmlFor={id} className={FIELD_LABEL_CLASS}>{label}</label>
       <div className={`${INPUT_SHELL_CLASS} relative`}>
         <select
           id={id} name={id} value={resolvedValue}
@@ -2201,7 +2205,7 @@ function TimezoneField({
           <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.512a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>
       </div>
-      <span className="text-[11px] text-subtle">{help}</span>
+      <span className={FIELD_HELP_CLASS}>{help}</span>
     </div>
   );
 }
@@ -2212,17 +2216,15 @@ function Field({
   id: string; label: string; help: ReactNode; type?: string; required?: boolean; placeholder?: string; value: string; onInput: (v: string) => void; disabled?: boolean;
 }) {
   return (
-    <div className="grid gap-1.5">
-      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
-      <div className={INPUT_SHELL_CLASS}>
-        <input
-          id={id} name={id} type={type} required={required} placeholder={placeholder}
-          value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-          disabled={disabled}
-          className={INPUT_CONTROL_CLASS}
-        />
-      </div>
-      <span className="text-[11px] text-subtle">{help}</span>
+    <div className={FIELD_STACK_CLASS}>
+      <label htmlFor={id} className={FIELD_LABEL_CLASS}>{label}</label>
+      <input
+        id={id} name={id} type={type} required={required} placeholder={placeholder}
+        value={value} onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+        disabled={disabled}
+        className={INPUT_CLASS}
+      />
+      <span className={FIELD_HELP_CLASS}>{help}</span>
     </div>
   );
 }
@@ -2246,24 +2248,22 @@ function SecretField({
   onInput: (v: string) => void;
 }) {
   return (
-    <div className="grid gap-1.5">
-      <label htmlFor={id} className="text-xs font-medium text-muted">{label}</label>
-      <div className={INPUT_SHELL_CLASS}>
-        <input
-          id={id} name={id} type={editable ? type : "text"}
-          inputMode={editable ? inputMode : undefined}
-          autoComplete={autoComplete}
-          autoCapitalize={autoCapitalize}
-          spellCheck={spellCheck}
-          required={editable && required}
-          placeholder={editable ? placeholder : undefined}
-          value={editable ? value : maskedValue}
-          onInput={(e) => onInput((e.target as HTMLInputElement).value)}
-          disabled={!editable}
-          className={INPUT_CONTROL_CLASS}
-        />
-      </div>
-      <span className="text-[11px] text-subtle">{help}</span>
+    <div className={FIELD_STACK_CLASS}>
+      <label htmlFor={id} className={FIELD_LABEL_CLASS}>{label}</label>
+      <input
+        id={id} name={id} type={editable ? type : "text"}
+        inputMode={editable ? inputMode : undefined}
+        autoComplete={autoComplete}
+        autoCapitalize={autoCapitalize}
+        spellCheck={spellCheck}
+        required={editable && required}
+        placeholder={editable ? placeholder : undefined}
+        value={editable ? value : maskedValue}
+        onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+        disabled={!editable}
+        className={INPUT_CLASS}
+      />
+      <span className={FIELD_HELP_CLASS}>{help}</span>
     </div>
   );
 }
