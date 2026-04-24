@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
-import { Children, cloneElement, isValidElement, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, type Translations } from "../lib/i18n";
 import { Footer } from "../components/Footer";
 import { Topbar } from "../components/Topbar";
@@ -150,7 +150,6 @@ function Btn({
   size = "md",
   disabled,
   loading,
-  animateIconOnLoading = false,
   onClick,
   title,
   form,
@@ -162,7 +161,6 @@ function Btn({
   size?: "sm" | "md" | "lg";
   disabled?: boolean;
   loading?: boolean;
-  animateIconOnLoading?: boolean;
   onClick?: () => void;
   title?: string;
   form?: string;
@@ -181,20 +179,6 @@ function Btn({
       : variant === "secondary"
         ? "border-line-strong bg-surface text-ink hover:border-accent/35 hover:bg-accent-soft hover:text-accent"
         : "border-transparent bg-transparent text-muted hover:bg-line hover:text-ink";
-  let animatedIconApplied = false;
-  const renderedChildren = Children.map(children, (child) => {
-    if (!loading || !animateIconOnLoading || animatedIconApplied || !isValidElement(child) || child.type !== Icon) {
-      return child;
-    }
-    animatedIconApplied = true;
-    const existingClassName =
-      typeof (child.props as { className?: unknown }).className === "string"
-        ? ((child.props as { className?: string }).className ?? "")
-        : "";
-    return cloneElement(child, {
-      className: `${existingClassName} animate-spin`.trim(),
-    });
-  });
 
   return (
     <button
@@ -205,8 +189,8 @@ function Btn({
       onClick={onClick}
       className={`${base} ${sizeClass} ${variantClass} ${className}`}
     >
-      {loading && !(animateIconOnLoading && animatedIconApplied) && <Spinner small />}
-      {renderedChildren}
+      {loading && <Spinner small />}
+      {children}
     </button>
   );
 }
@@ -613,24 +597,20 @@ export function DashboardPage() {
                 variant="secondary"
                 size="md"
                 disabled={syncingQuick}
-                loading={syncingQuick}
-                animateIconOnLoading
                 title={t("quickSyncHelp")}
                 onClick={() => handleSync("incremental")}
               >
-                <Icon name="refresh" />
+                <Icon name="refresh" className={syncingQuick ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
                 {syncingQuick ? t("syncing") : t("quickSync")}
               </Btn>
               <Btn
                 variant="primary"
                 size="md"
                 disabled={syncingFull}
-                loading={syncingFull}
-                animateIconOnLoading
                 title={t("syncAllHelp")}
                 onClick={() => handleSync("full")}
               >
-                <Icon name="sync" />
+                <Icon name="sync" className={syncingFull ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
                 {syncingFull ? t("syncing") : t("syncAll")}
               </Btn>
             </div>
@@ -804,11 +784,9 @@ function SetupWizard({
             size="lg"
             className="mx-auto"
             disabled={syncingFull}
-            loading={syncingFull}
-            animateIconOnLoading
             onClick={onSync}
           >
-            <Icon name="sync" />
+            <Icon name="sync" className={syncingFull ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             {syncingFull ? t("syncing") : t("setupRunSync")}
           </Btn>
           </div>
@@ -1340,11 +1318,9 @@ function SyncDebugCard({
             variant="secondary"
             size="md"
             disabled={!workspaceId || !ready || loading}
-            loading={loading}
-            animateIconOnLoading
             onClick={onLoad}
           >
-            <Icon name="refresh" />
+            <Icon name="refresh" className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
             {snapshot ? t("debugRefresh") : t("debugLoad")}
           </Btn>
         )}
