@@ -660,6 +660,7 @@ export function DashboardPage() {
               snapshot={debugSnapshot}
               loading={debugLoading}
               error={debugError}
+              scheduleTimezone={normalizeTimezoneValue(cfg?.calendar_timezone) || undefined}
               onLoad={loadDebug}
             />
           </>
@@ -1284,6 +1285,7 @@ function SyncDebugCard({
   snapshot,
   loading,
   error,
+  scheduleTimezone,
   onLoad,
 }: {
   workspaceId: string | null;
@@ -1291,6 +1293,7 @@ function SyncDebugCard({
   snapshot: SyncDebugSnapshot | null;
   loading: boolean;
   error: string;
+  scheduleTimezone?: string;
   onLoad: () => void;
 }) {
   const { t } = useI18n();
@@ -1321,7 +1324,7 @@ function SyncDebugCard({
             onClick={onLoad}
           >
             <Icon name="refresh" className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            {snapshot ? t("debugRefresh") : t("debugLoad")}
+            {loading ? t("debugRefreshing") : snapshot ? t("debugRefresh") : t("debugLoad")}
           </Btn>
         )}
       />
@@ -1345,13 +1348,13 @@ function SyncDebugCard({
           <div className="grid gap-4">
           {/* Metric chips */}
           <div className="flex flex-wrap gap-2">
-            <MetricChip label={t("debugNotionCount")} value={snapshot.summary.notionTaskCount} />
-            <MetricChip label={t("debugCalendarCount")} value={snapshot.summary.managedCalendarEventCount} />
-            <MetricChip label={t("debugLedgerCount")} value={snapshot.summary.ledgerRecordCount} />
-            <MetricChip label={t("debugPendingCount")} value={snapshot.summary.pendingRemoteCount} tone={snapshot.summary.pendingRemoteCount > 0 ? "amber" : undefined} />
-            <MetricChip label={t("debugReviewCount")} value={reviewCount} tone={reviewCount > 0 ? "red" : undefined} />
+            <MetricChip label={t("debugNotionCount")} help={t("debugNotionCountHelp")} value={snapshot.summary.notionTaskCount} />
+            <MetricChip label={t("debugCalendarCount")} help={t("debugCalendarCountHelp")} value={snapshot.summary.managedCalendarEventCount} />
+            <MetricChip label={t("debugLedgerCount")} help={t("debugLedgerCountHelp")} value={snapshot.summary.ledgerRecordCount} />
+            <MetricChip label={t("debugPendingCount")} help={t("debugPendingCountHelp")} value={snapshot.summary.pendingRemoteCount} tone={snapshot.summary.pendingRemoteCount > 0 ? "amber" : undefined} />
+            <MetricChip label={t("debugReviewCount")} help={t("debugReviewCountHelp")} value={reviewCount} tone={reviewCount > 0 ? "red" : undefined} />
             {ledgerNoteCount > 0 && (
-              <MetricChip label={t("debugLedgerNoteCount")} value={ledgerNoteCount} tone="amber" />
+              <MetricChip label={t("debugLedgerNoteCount")} help={t("debugLedgerNoteCountHelp")} value={ledgerNoteCount} tone="amber" />
             )}
           </div>
 
@@ -1363,7 +1366,7 @@ function SyncDebugCard({
 
           {/* Debug sections */}
           {sections.map((section) => (
-            <DebugSection key={section.id} section={section} />
+            <DebugSection key={section.id} section={section} scheduleTimezone={scheduleTimezone} />
           ))}
 
           {/* Unmanaged events */}
@@ -1388,7 +1391,7 @@ function SyncDebugCard({
                             {ev.title || ev.href.split("/").pop() || ev.href}
                           </span>
                         </td>
-                        <td className="py-2 pr-3 whitespace-nowrap text-muted">{formatDateRange(ev.startDate, ev.endDate)}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap text-muted">{formatDateRange(ev.startDate, ev.endDate, scheduleTimezone)}</td>
                         <td className="py-2 text-muted truncate max-w-[300px]" title={ev.href}>{ev.href}</td>
                       </tr>
                     ))}
@@ -1405,20 +1408,31 @@ function SyncDebugCard({
   );
 }
 
-function MetricChip({ label, value, tone }: { label: string; value: number; tone?: "amber" | "red" }) {
+function MetricChip({ label, value, help, tone }: { label: string; value: number; help?: string; tone?: "amber" | "red" }) {
   const cls = tone === "red" ? "border-red/15 text-red" : tone === "amber" ? "border-amber/15 text-amber" : "border-line text-ink";
   return (
-    <div className={`flex items-center gap-2 rounded-md border bg-bg px-3 py-1.5 text-xs ${cls}`}>
+    <div
+      className={`flex items-center gap-2 rounded-md border bg-bg px-3 py-1.5 text-xs ${cls}`}
+      title={help}
+      aria-label={help ? `${label}: ${value}. ${help}` : `${label}: ${value}`}
+    >
       <span className="text-muted font-medium">{label}</span>
       <span className="font-bold">{value}</span>
+      {help && (
+        <span className="grid h-4 w-4 place-items-center rounded-full bg-ink/5 text-[10px] font-bold text-subtle" aria-hidden="true">
+          ?
+        </span>
+      )}
     </div>
   );
 }
 
 function DebugSection({
   section,
+  scheduleTimezone,
 }: {
   section: DebugSectionModel;
+  scheduleTimezone?: string;
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(section.tone === "red" || section.tone === "amber");
@@ -1451,13 +1465,13 @@ function DebugSection({
                 <tr className="border-b border-line bg-bg/80 text-left text-[11px] text-muted">
                   <th className="w-[280px] max-w-[280px] px-3 py-2 font-semibold whitespace-nowrap">{t("debugTableItem")}</th>
                   <th className="px-3 py-2 font-semibold whitespace-nowrap">{t("debugNextActionLabel")}</th>
-                  <th className="px-3 py-2 font-semibold whitespace-nowrap">{t("debugTableSchedule")}</th>
+                  <th className="w-[210px] max-w-[210px] px-3 py-2 font-semibold whitespace-nowrap">{t("debugTableSchedule")}</th>
                   <th className="px-3 py-2 font-semibold whitespace-nowrap">{t("debugMappingLabel")}</th>
                 </tr>
               </thead>
               <tbody>
                 {section.entries.map((entry) => (
-                  <DebugEntryRows key={entry.pageId} entry={entry} />
+                  <DebugEntryRows key={entry.pageId} entry={entry} scheduleTimezone={scheduleTimezone} />
                 ))}
               </tbody>
             </table>
@@ -1468,12 +1482,13 @@ function DebugSection({
   );
 }
 
-function DebugEntryRows({ entry }: { entry: SyncDebugEntry }) {
+function DebugEntryRows({ entry, scheduleTimezone }: { entry: SyncDebugEntry; scheduleTimezone?: string }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const schedule = formatDateRange(
     asString(entry.notion?.startDate) || asString(entry.calendar?.startDate),
     asString(entry.notion?.endDate) || asString(entry.calendar?.endDate),
+    scheduleTimezone,
   );
   const eventHref = asString(entry.calendar?.eventHref) || asString(entry.ledger?.eventHref);
   const hasAttention = entry.pendingRemoteSync || entry.warnings.length > 0;
@@ -1502,43 +1517,57 @@ function DebugEntryRows({ entry }: { entry: SyncDebugEntry }) {
         <td className="px-3 py-2.5 align-middle whitespace-nowrap">
           <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
         </td>
-        <td className="px-3 py-2.5 align-middle text-muted whitespace-nowrap" title={schedule}>
-          {schedule}
+        <td className="w-[210px] max-w-[210px] px-3 py-2.5 align-middle text-muted whitespace-nowrap">
+          <span className="block max-w-[210px] truncate" title={schedule}>
+            {schedule}
+          </span>
         </td>
         <td className="px-3 py-2.5 align-middle text-muted whitespace-nowrap">
           {formatRelation(entry.relation, t)}
         </td>
       </tr>
       {expanded && (
-        <tr className="border-b border-line/70 bg-bg/40">
+        <tr className="border-b border-line/70 bg-bg/30">
           <td colSpan={4} className="px-3 py-3">
-            <div className="grid gap-3">
-              <span className="break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
+            <div className="grid gap-3 rounded-md border border-line/70 bg-bg/60 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line/60 pb-3">
+                <span className="min-w-0 break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
 
-              {hasAttention && (
-                <DebugLabeledBlock label={t("debugAttentionLabel")}>
-                  <div className="flex flex-wrap gap-1.5">
-                    {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
-                    {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
+                {hasAttention && (
+                  <div className="shrink-0">
+                    <DebugLabeledBlock label={t("debugAttentionLabel")}>
+                      <div className="flex flex-wrap gap-1.5">
+                        {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
+                        {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
+                      </div>
+                    </DebugLabeledBlock>
                   </div>
-                </DebugLabeledBlock>
-              )}
-
-              <div className="grid gap-2 rounded-md bg-surface p-3 sm:grid-cols-2">
-                <DebugDetail label={t("debugTableSync")}>
-                  <DebugOperationList
-                    operations={[
-                      { label: t("debugOperationNotion"), value: formatOperation(entry.operations.notion, t) },
-                      { label: t("debugOperationCalendar"), value: formatOperation(entry.operations.calendar, t) },
-                      { label: t("debugOperationLedger"), value: formatOperation(entry.operations.ledger, t) },
-                    ]}
-                  />
-                </DebugDetail>
-                <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
-                <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
+                )}
               </div>
 
-              <div className="grid gap-2">
+              <div className="grid gap-3 lg:grid-cols-[minmax(260px,0.9fr)_minmax(0,1.1fr)]">
+                <div className="rounded-md border border-line/60 bg-surface p-3">
+                  <DebugDetail label={t("debugTableSync")}>
+                    <DebugOperationList
+                      operations={[
+                        { label: t("debugOperationNotion"), value: formatOperation(entry.operations.notion, t) },
+                        { label: t("debugOperationCalendar"), value: formatOperation(entry.operations.calendar, t) },
+                        { label: t("debugOperationLedger"), value: formatOperation(entry.operations.ledger, t) },
+                      ]}
+                    />
+                  </DebugDetail>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-md border border-line/60 bg-surface p-3">
+                    <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
+                  </div>
+                  <div className="rounded-md border border-line/60 bg-surface p-3">
+                    <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 rounded-md border border-line/60 bg-surface p-3">
                 <DebugLabeledBlock label={t("debugReasonLabel")}>
                   {entry.reason}
                 </DebugLabeledBlock>
@@ -1581,7 +1610,7 @@ function DebugOperationList({
   return (
     <div className="grid gap-1">
       {operations.map((operation) => (
-        <div key={operation.label} className="flex min-w-0 items-center justify-between gap-2 rounded border border-line/60 bg-surface px-2 py-1">
+        <div key={operation.label} className="flex min-w-0 items-center justify-between gap-2 rounded border border-line/60 bg-bg/70 px-2 py-1.5">
           <span className="min-w-0 truncate text-subtle">{operation.label}</span>
           <span className="shrink-0 font-medium text-ink">{operation.value}</span>
         </div>
@@ -2328,11 +2357,79 @@ function formatTimestamp(iso: string): string {
   } catch { return iso; }
 }
 
-function formatDateRange(start?: string | null, end?: string | null): string {
+const SCHEDULE_DATE_TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function formatDateRange(start?: string | null, end?: string | null, timeZone?: string): string {
   if (!start && !end) return "\u2014";
-  if (!start) return `Ends ${end}`;
-  if (!end || start === end) return start;
-  return `${start} \u2192 ${end}`;
+  const formattedStart = start ? formatScheduleValue(start, timeZone) : null;
+  const formattedEnd = end ? formatScheduleValue(end, timeZone) : null;
+  if (!formattedStart) return `Ends ${formattedEnd || end}`;
+  if (!formattedEnd || start === end || formattedStart === formattedEnd) return formattedStart;
+
+  const startParts = parseScheduleDateTime(start, timeZone);
+  const endParts = parseScheduleDateTime(end, timeZone);
+  if (startParts?.time && endParts?.time && startParts.date === endParts.date) {
+    return `${startParts.date} ${startParts.time} \u2192 ${endParts.time}`;
+  }
+
+  return `${formattedStart} \u2192 ${formattedEnd}`;
+}
+
+function formatScheduleValue(value: string, timeZone?: string): string {
+  if (isDateOnlyValue(value)) return value;
+  const parts = parseScheduleDateTime(value, timeZone);
+  return parts ? `${parts.date} ${parts.time}` : value;
+}
+
+function parseScheduleDateTime(value: string, timeZone?: string): { date: string; time: string } | null {
+  if (isDateOnlyValue(value)) return { date: value, time: "" };
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const formatted = formatScheduleDateTimeParts(parsed, timeZone) || formatScheduleDateTimeParts(parsed);
+  if (formatted) return formatted;
+  return {
+    date: `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())}`,
+    time: `${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`,
+  };
+}
+
+function formatScheduleDateTimeParts(date: Date, timeZone?: string): { date: string; time: string } | null {
+  try {
+    const key = timeZone || "__local";
+    let formatter = SCHEDULE_DATE_TIME_FORMATTERS.get(key);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-CA", {
+        ...(timeZone ? { timeZone } : {}),
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+      SCHEDULE_DATE_TIME_FORMATTERS.set(key, formatter);
+    }
+    const parts = formatter.formatToParts(date);
+    const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+    const year = get("year");
+    const month = get("month");
+    const day = get("day");
+    const hour = get("hour");
+    const minute = get("minute");
+    return year && month && day && hour && minute
+      ? { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isDateOnlyValue(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 function asString(value: unknown): string | null {
