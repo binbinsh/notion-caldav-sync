@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Children, cloneElement, isValidElement, useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, type Translations } from "../lib/i18n";
 import { Footer } from "../components/Footer";
 import { Topbar } from "../components/Topbar";
@@ -150,6 +150,7 @@ function Btn({
   size = "md",
   disabled,
   loading,
+  animateIconOnLoading = false,
   onClick,
   title,
   form,
@@ -161,6 +162,7 @@ function Btn({
   size?: "sm" | "md" | "lg";
   disabled?: boolean;
   loading?: boolean;
+  animateIconOnLoading?: boolean;
   onClick?: () => void;
   title?: string;
   form?: string;
@@ -179,6 +181,20 @@ function Btn({
       : variant === "secondary"
         ? "border-line-strong bg-surface text-ink hover:border-accent/35 hover:bg-accent-soft hover:text-accent"
         : "border-transparent bg-transparent text-muted hover:bg-line hover:text-ink";
+  let animatedIconApplied = false;
+  const renderedChildren = Children.map(children, (child) => {
+    if (!loading || !animateIconOnLoading || animatedIconApplied || !isValidElement(child) || child.type !== Icon) {
+      return child;
+    }
+    animatedIconApplied = true;
+    const existingClassName =
+      typeof (child.props as { className?: unknown }).className === "string"
+        ? ((child.props as { className?: string }).className ?? "")
+        : "";
+    return cloneElement(child, {
+      className: `${existingClassName} animate-spin`.trim(),
+    });
+  });
 
   return (
     <button
@@ -189,8 +205,8 @@ function Btn({
       onClick={onClick}
       className={`${base} ${sizeClass} ${variantClass} ${className}`}
     >
-      {loading && <Spinner small />}
-      {children}
+      {loading && !(animateIconOnLoading && animatedIconApplied) && <Spinner small />}
+      {renderedChildren}
     </button>
   );
 }
@@ -598,6 +614,7 @@ export function DashboardPage() {
                 size="md"
                 disabled={syncingQuick}
                 loading={syncingQuick}
+                animateIconOnLoading
                 title={t("quickSyncHelp")}
                 onClick={() => handleSync("incremental")}
               >
@@ -609,6 +626,7 @@ export function DashboardPage() {
                 size="md"
                 disabled={syncingFull}
                 loading={syncingFull}
+                animateIconOnLoading
                 title={t("syncAllHelp")}
                 onClick={() => handleSync("full")}
               >
@@ -787,6 +805,7 @@ function SetupWizard({
             className="mx-auto"
             disabled={syncingFull}
             loading={syncingFull}
+            animateIconOnLoading
             onClick={onSync}
           >
             <Icon name="sync" />
@@ -1322,6 +1341,7 @@ function SyncDebugCard({
             size="md"
             disabled={!workspaceId || !ready || loading}
             loading={loading}
+            animateIconOnLoading
             onClick={onLoad}
           >
             <Icon name="refresh" />
