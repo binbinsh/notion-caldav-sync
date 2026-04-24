@@ -1312,6 +1312,8 @@ function SyncDebugCard({
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(true);
   const sections = snapshot ? buildDebugSections(snapshot.entries, t) : [];
+  const reviewCount = snapshot ? snapshot.entries.filter(isAttentionEntry).length : 0;
+  const ledgerNoteCount = snapshot ? snapshot.entries.filter(hasLedgerOnlyWarning).length : 0;
   const tableLabels = {
     item: t("debugTableItem"),
     schedule: t("debugTableSchedule"),
@@ -1364,7 +1366,10 @@ function SyncDebugCard({
             <MetricChip label={t("debugCalendarCount")} value={snapshot.summary.managedCalendarEventCount} />
             <MetricChip label={t("debugLedgerCount")} value={snapshot.summary.ledgerRecordCount} />
             <MetricChip label={t("debugPendingCount")} value={snapshot.summary.pendingRemoteCount} tone={snapshot.summary.pendingRemoteCount > 0 ? "amber" : undefined} />
-            <MetricChip label={t("debugWarningCount")} value={snapshot.summary.warningCount} tone={snapshot.summary.warningCount > 0 ? "red" : undefined} />
+            <MetricChip label={t("debugReviewCount")} value={reviewCount} tone={reviewCount > 0 ? "red" : undefined} />
+            {ledgerNoteCount > 0 && (
+              <MetricChip label={t("debugLedgerNoteCount")} value={ledgerNoteCount} tone="amber" />
+            )}
           </div>
 
           <p className="text-[11px] text-subtle m-0">
@@ -1467,69 +1472,93 @@ function DebugSection({
 
 function DebugEntryCard({ entry }: { entry: SyncDebugEntry }) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
   const schedule = formatDateRange(
     asString(entry.notion?.startDate) || asString(entry.calendar?.startDate),
     asString(entry.notion?.endDate) || asString(entry.calendar?.endDate),
   );
   const eventHref = asString(entry.calendar?.eventHref) || asString(entry.ledger?.eventHref);
+  const syncSummary = `N: ${formatOperation(entry.operations.notion, t)} · C: ${formatOperation(entry.operations.calendar, t)} · L: ${formatOperation(entry.operations.ledger, t)}`;
 
   return (
-    <article className="grid gap-3 rounded-md border border-line bg-surface p-3 text-xs">
-      <div className="flex items-start justify-between gap-3 max-[560px]:flex-col">
-        <div className="grid min-w-0 gap-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="min-w-0 break-words text-sm font-semibold text-ink">{entry.title}</span>
+    <article className="overflow-hidden rounded-md border border-line bg-surface text-xs">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-0 bg-transparent px-3 py-2.5 text-left text-xs cursor-pointer hover:bg-bg/70 focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <Icon
+          name="chevronRight"
+          className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
+        />
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-sm font-semibold text-ink" title={entry.title}>
+            {entry.title}
+          </span>
+          <span className="shrink-0">
             <Badge tone="slate">{formatRelation(entry.relation, t)}</Badge>
-          </div>
-          <span className="break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
+          </span>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 max-[560px]:justify-start">
+        <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5">
+          <span className="max-w-[160px] truncate text-[11px] text-muted max-[560px]:hidden" title={schedule}>
+            {schedule}
+          </span>
+          <span className="max-w-[220px] truncate font-mono text-[11px] text-subtle max-[720px]:hidden" title={syncSummary}>
+            {syncSummary}
+          </span>
           <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
           {entry.pendingRemoteSync && <Badge tone="amber">{t("pendingRemoteSync")}</Badge>}
           {entry.warnings.length > 0 && <Badge tone="red">{t("warningCount").replace("{n}", String(entry.warnings.length))}</Badge>}
         </div>
-      </div>
+      </button>
 
-      <div className="grid gap-2 rounded-md bg-bg p-3 sm:grid-cols-2">
-        <DebugDetail label={t("debugTableSchedule")}>{schedule}</DebugDetail>
-        <DebugDetail label={t("debugTableSync")}>
-          <span className="inline-flex flex-wrap gap-x-2 gap-y-1">
-            <span>N: {formatOperation(entry.operations.notion, t)}</span>
-            <span>C: {formatOperation(entry.operations.calendar, t)}</span>
-            <span>L: {formatOperation(entry.operations.ledger, t)}</span>
-          </span>
-        </DebugDetail>
-        <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
-        <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
-      </div>
+      {expanded && (
+        <div className="grid gap-3 border-t border-line px-3 py-3">
+          <span className="break-all font-mono text-[11px] text-subtle">{entry.pageId}</span>
 
-      <div className="grid gap-2">
-        <DebugLabeledBlock label={t("debugReasonLabel")}>
-          {entry.reason}
-        </DebugLabeledBlock>
+          <div className="grid gap-2 rounded-md bg-bg p-3 sm:grid-cols-2">
+            <DebugDetail label={t("debugTableSchedule")}>{schedule}</DebugDetail>
+            <DebugDetail label={t("debugTableSync")}>
+              <span className="inline-flex flex-wrap gap-x-2 gap-y-1">
+                <span>N: {formatOperation(entry.operations.notion, t)}</span>
+                <span>C: {formatOperation(entry.operations.calendar, t)}</span>
+                <span>L: {formatOperation(entry.operations.ledger, t)}</span>
+              </span>
+            </DebugDetail>
+            <DebugDetail label={t("debugNotionHashLabel")} mono>{shortHash(entry.notionHash)}</DebugDetail>
+            <DebugDetail label={t("debugCalendarHashLabel")} mono>{shortHash(entry.calendarHash)}</DebugDetail>
+          </div>
 
-        {entry.warnings.length > 0 && (
-          <DebugLabeledBlock label={t("debugWarningsLabel")}>
-            <ul className="m-0 grid gap-1 pl-4">
-              {entry.warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          </DebugLabeledBlock>
-        )}
+          <div className="grid gap-2">
+            <DebugLabeledBlock label={t("debugReasonLabel")}>
+              {entry.reason}
+            </DebugLabeledBlock>
 
-        {entry.duplicateCalendarEvents.length > 0 && (
-          <DebugLabeledBlock label={t("debugDuplicatesLabel")}>
-            {entry.duplicateCalendarEvents.length}
-          </DebugLabeledBlock>
-        )}
+            {entry.warnings.length > 0 && (
+              <DebugLabeledBlock label={t("debugWarningsLabel")}>
+                <ul className="m-0 grid gap-1 pl-4">
+                  {entry.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </DebugLabeledBlock>
+            )}
 
-        {eventHref && (
-          <DebugLabeledBlock label={t("debugEventHrefLabel")}>
-            <span className="break-all font-mono text-[11px]">{formatEventHref(eventHref)}</span>
-          </DebugLabeledBlock>
-        )}
-      </div>
+            {entry.duplicateCalendarEvents.length > 0 && (
+              <DebugLabeledBlock label={t("debugDuplicatesLabel")}>
+                {entry.duplicateCalendarEvents.length}
+              </DebugLabeledBlock>
+            )}
+
+            {eventHref && (
+              <DebugLabeledBlock label={t("debugEventHrefLabel")}>
+                <span className="break-all font-mono text-[11px]">{formatEventHref(eventHref)}</span>
+              </DebugLabeledBlock>
+            )}
+          </div>
+        </div>
+      )}
     </article>
   );
 }
@@ -2341,14 +2370,35 @@ type DebugSectionModel = {
 };
 
 function buildDebugSections(entries: SyncDebugEntry[], t: TFunc): DebugSectionModel[] {
+  const attentionEntries = entries.filter(isAttentionEntry);
+  const routineEntries = entries.filter((entry) => !isAttentionEntry(entry));
+
   return [
-    { id: "attention", title: t("debugSectionAttention"), description: t("debugSectionAttentionHelp"), tone: "red" as const, entries: entries.filter((e) => e.warnings.length > 0) },
-    { id: "create", title: t("debugSectionCreate"), description: t("debugSectionCreateHelp"), tone: "blue" as const, entries: entries.filter((e) => e.warnings.length === 0 && e.action === "create_calendar_event") },
-    { id: "update", title: t("debugSectionUpdate"), description: t("debugSectionUpdateHelp"), tone: "amber" as const, entries: entries.filter((e) => e.warnings.length === 0 && (e.action === "update_calendar_event" || e.action === "update_notion_page")) },
-    { id: "cleanup", title: t("debugSectionCleanup"), description: t("debugSectionCleanupHelp"), tone: "amber" as const, entries: entries.filter((e) => e.warnings.length === 0 && (e.action === "clear_notion_schedule" || e.action === "delete_calendar_event" || e.action === "delete_ledger_record")) },
-    { id: "ledger", title: t("debugSectionLedger"), description: t("debugSectionLedgerHelp"), tone: "green" as const, entries: entries.filter((e) => e.warnings.length === 0 && e.action === "update_ledger_record") },
-    { id: "aligned", title: t("debugSectionAligned"), description: t("debugSectionAlignedHelp"), tone: "slate" as const, entries: entries.filter((e) => e.warnings.length === 0 && e.action === "noop") },
+    { id: "attention", title: t("debugSectionAttention"), description: t("debugSectionAttentionHelp"), tone: "red" as const, entries: attentionEntries },
+    { id: "create", title: t("debugSectionCreate"), description: t("debugSectionCreateHelp"), tone: "blue" as const, entries: routineEntries.filter((e) => e.action === "create_calendar_event") },
+    { id: "update", title: t("debugSectionUpdate"), description: t("debugSectionUpdateHelp"), tone: "amber" as const, entries: routineEntries.filter((e) => e.action === "update_calendar_event" || e.action === "update_notion_page") },
+    { id: "cleanup", title: t("debugSectionCleanup"), description: t("debugSectionCleanupHelp"), tone: "amber" as const, entries: routineEntries.filter((e) => e.action === "clear_notion_schedule" || e.action === "delete_calendar_event" || e.action === "delete_ledger_record") },
+    { id: "ledger", title: t("debugSectionLedger"), description: t("debugSectionLedgerHelp"), tone: "green" as const, entries: routineEntries.filter((e) => e.action === "update_ledger_record") },
+    { id: "aligned", title: t("debugSectionAligned"), description: t("debugSectionAlignedHelp"), tone: "slate" as const, entries: routineEntries.filter((e) => e.action === "noop") },
   ].filter((s) => s.entries.length > 0);
+}
+
+const LEDGER_ETAG_STALE_WARNING = "Ledger ETag is stale compared with the live calendar event.";
+
+function isAttentionEntry(entry: SyncDebugEntry): boolean {
+  return hasReviewWarning(entry) || isTwoWayMerge(entry);
+}
+
+function hasReviewWarning(entry: SyncDebugEntry): boolean {
+  return entry.warnings.some((warning) => warning !== LEDGER_ETAG_STALE_WARNING);
+}
+
+function hasLedgerOnlyWarning(entry: SyncDebugEntry): boolean {
+  return entry.warnings.length > 0 && !hasReviewWarning(entry);
+}
+
+function isTwoWayMerge(entry: SyncDebugEntry): boolean {
+  return entry.operations.notion !== "none" && entry.operations.calendar !== "none";
 }
 
 // ---------------------------------------------------------------------------

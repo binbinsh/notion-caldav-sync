@@ -77,7 +77,18 @@ app.notFound((c) => {
 // Global middleware: Clerk auth + service base path + schema
 // ---------------------------------------------------------------------------
 
-app.use("*", clerkMiddleware());
+const clerkAuthMiddleware = clerkMiddleware({
+  signInUrl: `${CLERK_ACCOUNTS_URL}/sign-in`,
+  signUpUrl: `${CLERK_ACCOUNTS_URL}/sign-in`,
+});
+
+app.use("*", async (c, next) => {
+  if (isLocalPageRequest(c.req.raw)) {
+    await next();
+    return;
+  }
+  return clerkAuthMiddleware(c, next);
+});
 
 app.use("*", async (c, next) => {
   const serviceBasePath = normalizeBasePath(c.env.APP_BASE_PATH);
@@ -118,15 +129,15 @@ app.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/sign-in", async (c) => {
-  const redirectTarget = resolveRequestedRedirectUrl(
-    c.req.raw.url,
-    c.var.serviceBasePath,
-    servicePath(c, "/dashboard"),
-    new URL(c.req.raw.url).searchParams.get("redirect_url"),
-  );
-  const { userId } = getAuth(c);
+  const redirectTarget = resolveAuthRedirectTarget(c, servicePath(c, "/dashboard"));
+  const userId = getOptionalUserId(c);
   if (userId) {
     return c.redirect(redirectTarget, 302);
+  }
+  if (isLocalPageRequest(c.req.raw)) {
+    return hostedAuthBridgeResponse(
+      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
+    );
   }
   return c.redirect(
     buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
@@ -136,15 +147,15 @@ app.get("/sign-in", async (c) => {
 
 // Preserve old local sign-in URLs by redirecting them to the shared Clerk hosted page.
 app.get("/sign-in/*", async (c) => {
-  const redirectTarget = resolveRequestedRedirectUrl(
-    c.req.raw.url,
-    c.var.serviceBasePath,
-    servicePath(c, "/dashboard"),
-    new URL(c.req.raw.url).searchParams.get("redirect_url"),
-  );
-  const { userId } = getAuth(c);
+  const redirectTarget = resolveAuthRedirectTarget(c, servicePath(c, "/dashboard"));
+  const userId = getOptionalUserId(c);
   if (userId) {
     return c.redirect(redirectTarget, 302);
+  }
+  if (isLocalPageRequest(c.req.raw)) {
+    return hostedAuthBridgeResponse(
+      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
+    );
   }
   return c.redirect(
     buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
@@ -153,15 +164,15 @@ app.get("/sign-in/*", async (c) => {
 });
 
 app.get("/sign-out", async (c) => {
-  const redirectTarget = resolveRequestedRedirectUrl(
-    c.req.raw.url,
-    c.var.serviceBasePath,
-    servicePath(c, "/"),
-    new URL(c.req.raw.url).searchParams.get("redirect_url"),
-  );
-  const { userId } = getAuth(c);
+  const redirectTarget = resolveAuthRedirectTarget(c, servicePath(c, "/"));
+  const userId = getOptionalUserId(c);
   if (!userId) {
     return c.redirect(redirectTarget, 302);
+  }
+  if (isLocalPageRequest(c.req.raw)) {
+    return hostedAuthBridgeResponse(
+      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
+    );
   }
   return c.redirect(
     buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
@@ -171,15 +182,15 @@ app.get("/sign-out", async (c) => {
 
 // Preserve old local sign-out URLs by redirecting them to the shared Clerk hosted page.
 app.get("/sign-out/*", async (c) => {
-  const redirectTarget = resolveRequestedRedirectUrl(
-    c.req.raw.url,
-    c.var.serviceBasePath,
-    servicePath(c, "/"),
-    new URL(c.req.raw.url).searchParams.get("redirect_url"),
-  );
-  const { userId } = getAuth(c);
+  const redirectTarget = resolveAuthRedirectTarget(c, servicePath(c, "/"));
+  const userId = getOptionalUserId(c);
   if (!userId) {
     return c.redirect(redirectTarget, 302);
+  }
+  if (isLocalPageRequest(c.req.raw)) {
+    return hostedAuthBridgeResponse(
+      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
+    );
   }
   return c.redirect(
     buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
@@ -188,8 +199,11 @@ app.get("/sign-out/*", async (c) => {
 });
 
 app.get("/dashboard", async (c) => {
-  const { userId } = getAuth(c);
+  const userId = getOptionalUserId(c);
   if (!userId) {
+    if (isLocalPageRequest(c.req.raw)) {
+      return serveIndexHtml(c.env);
+    }
     return redirectToHostedSignIn(c, servicePathWithCurrentQuery(c, "/dashboard"));
   }
   return serveIndexHtml(c.env);
@@ -1321,6 +1335,107 @@ function redirectToHostedSignIn(
       location: buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", returnPath),
     },
   });
+}
+
+function resolveAuthRedirectTarget(
+  c: { var: { serviceBasePath: string }; req: { raw: Request } },
+  fallbackPath: string,
+): string {
+  const requestedRedirectUrl = new URL(c.req.raw.url).searchParams.get("redirect_url");
+  if (isLocalPageRequest(c.req.raw)) {
+    const localRedirectUrl = resolveLocalRedirectUrl(requestedRedirectUrl, c.var.serviceBasePath);
+    if (localRedirectUrl) {
+      return localRedirectUrl;
+    }
+  }
+  return resolveRequestedRedirectUrl(
+    c.req.raw.url,
+    c.var.serviceBasePath,
+    fallbackPath,
+    requestedRedirectUrl,
+  );
+}
+
+function resolveLocalRedirectUrl(requestedRedirectUrl: string | null, serviceBasePath: string): string | null {
+  if (!requestedRedirectUrl) {
+    return null;
+  }
+  try {
+    const requestedUrl = new URL(requestedRedirectUrl);
+    if (!isLoopbackHost(requestedUrl.hostname)) {
+      return null;
+    }
+    const allowedRoot = serviceBasePath || "/";
+    const allowedPrefix = buildServicePath(serviceBasePath, "/");
+    if (requestedUrl.pathname === allowedRoot || requestedUrl.pathname.startsWith(allowedPrefix)) {
+      return requestedUrl.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getOptionalUserId(c: unknown): string | null {
+  try {
+    return normalizeText(getAuth(c as any).userId);
+  } catch {
+    return null;
+  }
+}
+
+function isLocalPageRequest(request: Request): boolean {
+  const url = new URL(request.url);
+  if (!isLoopbackHost(url.hostname) && !isLoopbackHost(request.headers.get("cf-connecting-ip"))) {
+    return false;
+  }
+  if (!isDocumentNavigationRequest(request)) {
+    return false;
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return false;
+  }
+  const pathname = url.pathname.replace(/^\/caldav-sync(?=\/|$)/, "") || "/";
+  return (
+    pathname === "/"
+    || pathname === "/dashboard"
+    || pathname === "/sign-in"
+    || pathname.startsWith("/sign-in/")
+    || pathname === "/sign-out"
+    || pathname.startsWith("/sign-out/")
+  );
+}
+
+function isLoopbackHost(value: string | null): boolean {
+  return value === "localhost" || value === "127.0.0.1" || value === "::1" || value === "[::1]";
+}
+
+function isDocumentNavigationRequest(request: Request): boolean {
+  const accept = request.headers.get("accept") || "";
+  const fetchMode = request.headers.get("sec-fetch-mode");
+  const fetchDest = request.headers.get("sec-fetch-dest");
+  return fetchMode === "navigate" || fetchDest === "document" || accept.includes("text/html");
+}
+
+function hostedAuthBridgeResponse(targetUrl: string): Response {
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><script>window.location.replace(${JSON.stringify(targetUrl)});</script><a href="${escapeHtml(targetUrl)}">Continue to sign in</a>`,
+    {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    },
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
