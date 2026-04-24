@@ -309,7 +309,7 @@ function Badge({
     tone === "blue" ? "bg-accent/10 text-accent" :
     "bg-ink/6 text-muted";
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${cls}`}>
+    <span className={`inline-flex whitespace-nowrap items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${cls}`}>
       {children}
     </span>
   );
@@ -1446,13 +1446,13 @@ function DebugSection({
         <div className="grid gap-3 px-4 pb-4">
           <p className="text-[11px] text-muted m-0 mb-2">{section.description}</p>
           <div className="overflow-x-auto rounded-md border border-line bg-surface">
-            <table className="w-full min-w-[760px] border-collapse text-xs">
+            <table className="w-full table-auto border-collapse text-xs">
               <thead>
                 <tr className="border-b border-line bg-bg/80 text-left text-[11px] text-muted">
-                  <th className="w-[38%] px-3 py-2 font-semibold">{t("debugTableItem")}</th>
-                  <th className="w-[22%] px-3 py-2 font-semibold">{t("debugNextActionLabel")}</th>
-                  <th className="w-[16%] px-3 py-2 font-semibold">{t("debugTableSchedule")}</th>
-                  <th className="w-[24%] px-3 py-2 font-semibold">{t("debugMappingLabel")}</th>
+                  <th className="w-[280px] max-w-[280px] px-3 py-2 font-semibold whitespace-nowrap">{t("debugTableItem")}</th>
+                  <th className="px-3 py-2 font-semibold whitespace-nowrap">{t("debugNextActionLabel")}</th>
+                  <th className="px-3 py-2 font-semibold whitespace-nowrap">{t("debugTableSchedule")}</th>
+                  <th className="px-3 py-2 font-semibold whitespace-nowrap">{t("debugMappingLabel")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1481,8 +1481,8 @@ function DebugEntryRows({ entry }: { entry: SyncDebugEntry }) {
   return (
     <>
       <tr className="border-b border-line/60 align-middle hover:bg-bg/60">
-        <td className="px-3 py-2.5 align-middle">
-          <div className="flex min-w-0 items-center gap-2">
+        <td className="w-[280px] max-w-[280px] px-3 py-2.5 align-middle">
+          <div className="flex min-w-0 max-w-[280px] items-center gap-2">
             <button
               type="button"
               aria-expanded={expanded}
@@ -1499,16 +1499,14 @@ function DebugEntryRows({ entry }: { entry: SyncDebugEntry }) {
             </span>
           </div>
         </td>
-        <td className="px-3 py-2.5 align-middle">
+        <td className="px-3 py-2.5 align-middle whitespace-nowrap">
           <Badge tone={actionTone(entry.action)}>{formatAction(entry.action, t)}</Badge>
         </td>
         <td className="px-3 py-2.5 align-middle text-muted whitespace-nowrap" title={schedule}>
           {schedule}
         </td>
-        <td className="px-3 py-2.5 align-middle text-muted">
-          <span className="block truncate" title={formatRelation(entry.relation, t)}>
-            {formatRelation(entry.relation, t)}
-          </span>
+        <td className="px-3 py-2.5 align-middle text-muted whitespace-nowrap">
+          {formatRelation(entry.relation, t)}
         </td>
       </tr>
       {expanded && (
