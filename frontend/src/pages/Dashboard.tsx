@@ -2447,19 +2447,31 @@ const PREFERRED_TIMEZONE_VALUES = [
 ] as const;
 
 const TIMEZONE_VALUE_PRIORITY = new Map<string, number>(PREFERRED_TIMEZONE_VALUES.map((value, index) => [value, index]));
-const MAX_TIMEZONE_LOCATION_LABELS = 8;
 
-const TIMEZONE_GROUP_LOCATION_LABELS: Record<string, string[]> = {
-  UTC: ["Coordinated Universal Time"],
-  "Asia/Shanghai": ["Beijing", "Chongqing", "Hong Kong", "Kuala Lumpur", "Singapore"],
-  "Asia/Tokyo": ["Osaka", "Sapporo", "Tokyo", "Seoul"],
-  "Europe/London": ["Dublin", "Edinburgh", "Lisbon", "London"],
-  "Europe/Paris": ["Amsterdam", "Berlin", "Bern", "Brussels", "Copenhagen", "Madrid", "Paris", "Rome", "Stockholm", "Vienna"],
-  "America/New_York": ["Eastern Time (US & Canada)", "Toronto"],
-  "America/Chicago": ["Central Time (US & Canada)"],
-  "America/Denver": ["Mountain Time (US & Canada)"],
-  "America/Los_Angeles": ["Pacific Time (US & Canada)"],
-  "Australia/Sydney": ["Canberra", "Melbourne", "Sydney"],
+const TIMEZONE_GROUP_DISPLAY_LABELS: Record<string, string> = {
+  UTC: "Coordinated Universal Time",
+  "Pacific/Pago_Pago": "Pago Pago",
+  "Pacific/Honolulu": "Honolulu",
+  "America/Anchorage": "Anchorage",
+  "America/Los_Angeles": "Los Angeles, San Francisco, Vancouver",
+  "America/Denver": "Denver, Calgary, Salt Lake City",
+  "America/Chicago": "Chicago, Dallas, Houston",
+  "America/New_York": "New York, Toronto, Miami",
+  "America/Sao_Paulo": "Sao Paulo, Buenos Aires",
+  "Atlantic/Azores": "Azores",
+  "Europe/London": "London, Dublin, Lisbon",
+  "Europe/Paris": "Paris, Berlin, Rome",
+  "Europe/Moscow": "Moscow, Istanbul",
+  "Asia/Dubai": "Dubai, Abu Dhabi",
+  "Asia/Karachi": "Karachi",
+  "Asia/Kolkata": "Mumbai, New Delhi, Kolkata",
+  "Asia/Dhaka": "Dhaka",
+  "Asia/Bangkok": "Bangkok, Jakarta, Hanoi",
+  "Asia/Shanghai": "Beijing, Shanghai, Hong Kong, Singapore",
+  "Asia/Tokyo": "Tokyo, Seoul, Osaka",
+  "Australia/Sydney": "Sydney, Melbourne, Canberra",
+  "Pacific/Auckland": "Auckland, Wellington",
+  "Pacific/Kiritimati": "Kiritimati",
 };
 
 const WINDOWS_TIMEZONE_TO_IANA: Record<string, string> = {
@@ -2560,27 +2572,15 @@ function compareTimezonePreference(a: string, b: string): number {
 
 function formatTimezoneGroupOptionLabel(value: string, members: string[], currentOffset: number | null): string {
   const offset = currentOffset == null ? formatUtcOffsetLabel(value) : formatUtcOffsetLabelFromMinutes(currentOffset);
-  const locations = buildTimezoneLocationLabel(value, members);
+  const locations = buildTimezoneLocationLabel(value);
   return offset ? `${offset} - ${locations}` : locations;
 }
 
-function buildTimezoneLocationLabel(value: string, members: string[]): string {
-  const labels: string[] = [];
-  const seen = new Set<string>();
-  const addLabel = (label: string) => {
-    const normalized = label.trim();
-    const key = normalized.toLowerCase();
-    if (!normalized || seen.has(key)) return;
-    seen.add(key);
-    labels.push(normalized);
-  };
+function buildTimezoneLocationLabel(value: string): string {
+  const known = TIMEZONE_GROUP_DISPLAY_LABELS[value];
+  if (known) return known;
 
-  for (const label of TIMEZONE_GROUP_LOCATION_LABELS[value] || []) addLabel(label);
-  for (const member of [...members].sort(compareTimezonePreference)) addLabel(humanizeTimezoneLocation(member));
-
-  const visible = labels.slice(0, MAX_TIMEZONE_LOCATION_LABELS);
-  const hiddenCount = labels.length - visible.length;
-  return hiddenCount > 0 ? `${visible.join(", ")} +${hiddenCount} more` : visible.join(", ");
+  return humanizeTimezoneLocation(value);
 }
 
 function humanizeTimezoneLocation(value: string): string {
