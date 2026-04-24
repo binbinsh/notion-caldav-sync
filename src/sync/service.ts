@@ -1355,7 +1355,7 @@ export class SyncService {
       action: "update_calendar_event",
       reason: record.lastSyncedPayload
         ? "Notion has changes that should be written to Calendar."
-        : "Calendar differs from Notion without a sync base, so Notion stays authoritative.",
+        : "Notion is the newer side without a sync base, so Calendar will be refreshed from Notion.",
       operations: {
         notion: "none",
         calendar: "update",
@@ -1578,7 +1578,8 @@ const MERGE_FIELDS: Array<keyof CanonicalPayload> = [
  *
  * For each field:
  * - If only one side changed it relative to the base, use that side's value.
- * - If both sides changed it, or there is no base to compare, default to Notion.
+ * - If both sides changed it, or there is no base to compare, use the
+ *   timestamp-selected winner for that field.
  *
  * This preserves non-conflicting edits from both sides instead of letting the
  * default conflict policy overwrite fields that only changed on one side.
@@ -1626,8 +1627,10 @@ function mergePayloads(
       // Both changed this field — fall through to the default conflict policy.
     }
 
-    // No base or both changed: default to Notion as the source of truth.
-    merged[field] = notionVal;
+    // No base, or both changed the same field: use the timestamp-selected
+    // winner. This is especially important for legacy ledger records created
+    // before lastSyncedPayload existed.
+    merged[field] = winner === "caldav" ? calendarVal : notionVal;
   }
   return merged;
 }
