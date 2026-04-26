@@ -12,7 +12,7 @@ Notion CalDAV Sync keeps dated Notion tasks and calendar events in sync. Edit a 
 ## For Users
 
 1. Visit `https://superplanner.ai/caldav-sync/`
-2. Sign in with your Clerk account
+2. Sign in with your account
 3. Connect your Notion workspace
 4. Enter your Apple ID and [app-specific password](https://support.apple.com/en-us/102654)
 5. Sync starts automatically
