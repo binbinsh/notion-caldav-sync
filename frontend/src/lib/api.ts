@@ -1,6 +1,10 @@
 import { getAppBasePath, redirectToSignIn } from "./auth";
 
-export { CLERK_ACCOUNTS_URL, isAuthRedirectError, redirectToSignIn } from "./auth";
+export {
+  buildConnectNotionUrl,
+  isAuthRedirectError,
+  redirectToSignIn,
+} from "./auth";
 
 /** Shape returned by GET /api/me */
 export type ApiMeResponse = {
@@ -10,6 +14,7 @@ export type ApiMeResponse = {
     name: string;
   } | null;
   workspaceId: string | null;
+  csrfToken?: string | null;
   notionConnected: boolean;
   notionBinding: {
     selectedSourceIds: string[] | null;
@@ -126,6 +131,7 @@ export type NotionBindingSource = {
 };
 
 const BASE = getAppBasePath();
+let csrfToken: string | null = null;
 
 type JsonFetchOptions = Omit<RequestInit, "body"> & {
   body?: BodyInit | null;
@@ -136,9 +142,15 @@ async function fetchJson<T>(path: string, options: JsonFetchOptions = {}): Promi
   response: Response;
   data: T | null;
 }> {
-  const { redirectOn401To, credentials, ...init } = options;
+  const { redirectOn401To, credentials, headers: inputHeaders, method, ...init } = options;
+  const headers = new Headers(inputHeaders || {});
+  if (csrfToken && isStateChangingMethod(method || "GET") && !headers.has("X-CSRF-Token")) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
   const response = await fetch(`${BASE}${path}`, {
     credentials: credentials ?? "include",
+    method,
+    headers,
     ...init,
   });
   if (response.status === 401 && redirectOn401To) {
@@ -151,9 +163,16 @@ async function fetchJson<T>(path: string, options: JsonFetchOptions = {}): Promi
 export async function fetchMe(): Promise<ApiMeResponse> {
   const { response, data } = await fetchJson<ApiMeResponse>("/api/me");
   if (!response.ok || !data) {
+    csrfToken = null;
     throw new Error(`API error: ${response.status}`);
   }
+  csrfToken = data.csrfToken || null;
   return data;
+}
+
+function isStateChangingMethod(method: string): boolean {
+  const normalized = method.toUpperCase();
+  return normalized === "POST" || normalized === "PUT" || normalized === "PATCH" || normalized === "DELETE";
 }
 
 export async function fetchRecentWebhooks(): Promise<WebhookLogEntry[]> {

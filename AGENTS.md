@@ -12,7 +12,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - **Dashboard SPA** – Preact + Tailwind CSS, built with Vite, served as Cloudflare Workers static assets via `ASSETS` binding.
 - **Durable Objects** (`TenantSyncObject`) – one per tenant, handles sync orchestration with per-tenant SQLite storage.
 - **D1** (`AUTH_DB`) – stores tenant configs, provider connections, and encrypted secrets.
-- **Clerk** – shared authentication system at `accounts.superplanner.ai`. Clerk also manages Notion OAuth (configured as a social provider in Clerk Dashboard with custom credentials). The frontend redirects to Clerk's hosted pages for sign-in and social connection management.
+- **Clerk** – shared authentication system at `accounts.superplanner.ai`. Clerk also manages Notion OAuth (configured as a social provider in Clerk Dashboard with custom credentials). The Worker owns all product auth navigation; the frontend links only to local product routes such as `/sign-in` and `/connect/notion`.
 - **Secrets** are encrypted at rest via `APP_ENCRYPTION_KEY` before storage in D1.
 
 ## Required Secrets / Env Vars
@@ -21,7 +21,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - `CLERK_PUBLISHABLE_KEY` – Clerk frontend API publishable key
 - `CLERK_SECRET_KEY` – Clerk Backend API secret key
 - `APP_ENCRYPTION_KEY` – encrypts stored provider credentials (Apple passwords)
-- `INTERNAL_SERVICE_TOKEN` – optional, for inter-service calls
+- `INTERNAL_SERVICE_TOKEN` – required for internal provisioning/admin calls such as storing Notion webhook verification tokens
 
 ## Key Files
 | Path | Role |
@@ -52,18 +52,21 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 | `frontend/` | Preact + Tailwind dashboard SPA |
 | `frontend/src/pages/Dashboard.tsx` | Dashboard page component (setup wizard + settings) |
 | `frontend/src/lib/i18n.tsx` | i18n system (EN / 简体中文 / 繁體中文) via Preact Context |
-| `frontend/src/lib/api.ts` | API client (`fetchMe()` for `/api/me`), `CLERK_ACCOUNTS_URL`, `signOut()` |
+| `frontend/src/lib/api.ts` | API client (`fetchMe()` for `/api/me`) and product auth-navigation helpers |
 | `frontend/vite.config.ts` | Vite build configuration |
 
 ## HTTP Endpoints
 - `GET /dashboard` – Dashboard page (setup wizard + settings)
 - `GET /sign-in` – Product-scoped Clerk sign-in page that returns users to `/caldav-sync/dashboard`
-- `GET /sign-out` – Product-scoped Clerk sign-out page that returns users to `/caldav-sync/`
+- `GET /connect/notion` – Product-scoped account portal entry for connecting Notion; returns through `/caldav-sync/auth/return`
+- `GET /auth/return` – Product-owned post-auth return boundary; validates the target before redirecting inside `/caldav-sync`
+- `GET /sign-out` – Product-scoped Clerk sign-out page; returns through `/caldav-sync/auth/return`
 - `POST /apple` – Saves Apple/CalDAV credentials
 - `GET /api/me` – Returns session, config, and connection status JSON for the SPA
 - `POST /api/tenants/:tenantId/sync/full` – Trigger full sync for a tenant
 - `POST /api/tenants/:tenantId/sync/incremental` – Trigger incremental sync
 - `POST /webhook/notion` – Notion webhook receiver
+- `POST /api/internal/notion-webhook/verification-token` – Internal-only endpoint for provisioning Notion webhook verification tokens; requires `Authorization: Bearer $INTERNAL_SERVICE_TOKEN`
 
 ## Development Workflow
 1. `npm install`
@@ -85,7 +88,8 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - The dashboard supports three languages (EN / 简体中文 / 繁體中文) with a `lang` query parameter; translations are defined in `frontend/src/lib/i18n.tsx` via Preact Context.
 - Authentication is handled by Clerk. The Worker uses `@clerk/hono` middleware to verify sessions. In non-Hono contexts (Durable Objects, cron), use `buildClerkClient(env)` from `src/auth/clerk.ts`.
 - Notion OAuth tokens are obtained via `getNotionOAuthToken(clerk, userId)` — Clerk manages the OAuth flow and token refresh.
-- The frontend redirects users to `accounts.superplanner.ai` for sign-in and to manage social connections (Notion).
+- The frontend must not redirect directly to `accounts.superplanner.ai`; use local product routes and let the Worker build Clerk hosted/account portal URLs.
+- Public webhook routes must not mutate webhook verification token state. Provision Notion webhook verification tokens only through the internal bearer-token-protected API.
 - Each tenant gets a Durable Object instance keyed by tenant ID (= Clerk user ID); sync state is stored in the DO's SQLite storage.
 - Provider credentials (Apple passwords) are AES-GCM encrypted before storage in D1. Notion tokens are managed by Clerk and fetched on-demand.
 - The cron schedule (`*/5 * * * *`) triggers full sync for all schedulable tenants.

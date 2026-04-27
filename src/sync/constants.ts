@@ -10,11 +10,11 @@ export const DEFAULT_CALENDAR_COLOR = "#FF7F00";
 export const DEFAULT_FULL_SYNC_MINUTES = 60;
 
 export const STATUS_CANONICAL_VARIANTS: Record<string, string[]> = {
-  Todo: ["Todo", "To Do", "Not started"],
+  Todo: ["Todo", "To Do", "To-do", "Not started"],
   "In progress": ["In progress", "Pinned"],
-  Completed: ["Completed", "Done"],
+  Completed: ["Completed", "Complete", "Done"],
   Overdue: ["Overdue"],
-  Cancelled: ["Cancelled", "Discarded"],
+  Cancelled: ["Cancelled", "Canceled", "Discarded"],
 };
 
 export const STATUS_EMOJI_SETS: Record<string, Record<string, string>> = {
@@ -220,6 +220,17 @@ export function normalizeStatusNameWithProfile(
     }
   }
   return normalized;
+}
+
+export function normalizeNotionStatusGroupName(group: string | null | undefined): string | null {
+  if (group == null) return null;
+  const normalized = group.trim();
+  if (!normalized) return null;
+  const needle = normalized.toLowerCase().replace(/[-_\s]+/g, "");
+  if (needle === "todo" || needle === "notstarted") return "Todo";
+  if (needle === "inprogress") return "In progress";
+  if (needle === "complete" || needle === "completed" || needle === "done") return "Completed";
+  return null;
 }
 
 /** Resolve a Notion status value to a glyph using a profile's emoji map. */

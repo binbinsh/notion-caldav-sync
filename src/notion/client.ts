@@ -1,6 +1,7 @@
 import { Client } from "@notionhq/client";
 import {
   DEFAULT_SYNC_PROFILE,
+  normalizeNotionStatusGroupName,
   normalizeStatusNameWithProfile,
   type SyncProfile,
 } from "../sync/constants";
@@ -210,6 +211,7 @@ export function extractDatabaseTitle(meta: unknown): string | null {
 export function parsePageToTask(
   page: Record<string, unknown>,
   profile?: SyncProfile | null,
+  databaseProperties?: Record<string, Record<string, unknown>> | null,
 ): TaskInfo {
   const props = (asRecord(page.properties) || {}) as Record<string, Record<string, unknown>>;
   const schema = TaskSchema.fromProperties(props, profile);
@@ -232,7 +234,12 @@ export function parsePageToTask(
   const statusData = schema.statusType === "status"
     ? asRecord(statusProp?.status) || {}
     : asRecord(statusProp?.select) || {};
-  const status = normalizeStatusNameWithProfile(normalizeText(statusData.name), resolvedProfile);
+  const status = resolvePageStatus({
+    statusData,
+    statusType: schema.statusType,
+    propertySchema: schema.statusProperty ? databaseProperties?.[schema.statusProperty] : undefined,
+    profile: resolvedProfile,
+  });
 
   const dateProp = schema.dateProperty ? asRecord(props[schema.dateProperty]) : null;
   const dateValue = asRecord(dateProp?.date) || {};
@@ -273,6 +280,84 @@ export function parsePageToTask(
     url: normalizeText(page.url),
     databaseName: "",
   };
+}
+
+function resolvePageStatus(input: {
+  statusData: Record<string, unknown>;
+  statusType: string | null;
+  propertySchema?: Record<string, unknown> | null;
+  profile: SyncProfile;
+}): string | null {
+  const rawName = normalizeText(input.statusData.name);
+  const optionName = rawName || lookupStatusOptionName(input.propertySchema, normalizeText(input.statusData.id));
+  const nameCanonical = normalizeStatusNameWithProfile(optionName, input.profile);
+  const groupCanonical = input.statusType === "status"
+    ? resolveStatusGroupCanonical(input.propertySchema, {
+        optionId: normalizeText(input.statusData.id),
+        optionName,
+      })
+    : null;
+
+  if (nameCanonical === "Cancelled" || nameCanonical === "Overdue") {
+    return nameCanonical;
+  }
+  return groupCanonical || nameCanonical;
+}
+
+function resolveStatusGroupCanonical(
+  propertySchema: unknown,
+  option: { optionId: string | null; optionName: string | null },
+): string | null {
+  const statusSchema = asRecord(asRecord(propertySchema)?.status);
+  if (!statusSchema) {
+    return null;
+  }
+  const groups = Array.isArray(statusSchema.groups) ? statusSchema.groups : [];
+  const options = Array.isArray(statusSchema.options) ? statusSchema.options : [];
+  const optionId = option.optionId || lookupStatusOptionId(options, option.optionName);
+  if (!optionId) {
+    return null;
+  }
+  for (const rawGroup of groups) {
+    const group = asRecord(rawGroup);
+    if (!group) {
+      continue;
+    }
+    const optionIds = Array.isArray(group.option_ids) ? group.option_ids : [];
+    if (optionIds.some((id) => normalizeText(id) === optionId)) {
+      return normalizeNotionStatusGroupName(normalizeText(group.name));
+    }
+  }
+  return null;
+}
+
+function lookupStatusOptionName(propertySchema: unknown, optionId: string | null): string | null {
+  if (!optionId) {
+    return null;
+  }
+  const statusSchema = asRecord(asRecord(propertySchema)?.status);
+  const options = Array.isArray(statusSchema?.options) ? statusSchema.options : [];
+  for (const rawOption of options) {
+    const option = asRecord(rawOption);
+    if (normalizeText(option?.id) === optionId) {
+      return normalizeText(option?.name);
+    }
+  }
+  return null;
+}
+
+function lookupStatusOptionId(options: unknown[], optionName: string | null): string | null {
+  if (!optionName) {
+    return null;
+  }
+  const needle = optionName.trim().toLowerCase();
+  for (const rawOption of options) {
+    const option = asRecord(rawOption);
+    if (normalizeText(option?.name)?.toLowerCase() === needle) {
+      return normalizeText(option?.id);
+    }
+  }
+  return null;
 }
 
 function resolveDataSourceId(meta: unknown): string | null {

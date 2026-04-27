@@ -41,6 +41,14 @@ pattern = "superplanner.ai/caldav-sync/apple*"
 zone_name = "superplanner.ai"
 
 [[routes]]
+pattern = "superplanner.ai/caldav-sync/auth/*"
+zone_name = "superplanner.ai"
+
+[[routes]]
+pattern = "superplanner.ai/caldav-sync/connect/*"
+zone_name = "superplanner.ai"
+
+[[routes]]
 pattern = "superplanner.ai/caldav-sync/sign-in*"
 zone_name = "superplanner.ai"
 

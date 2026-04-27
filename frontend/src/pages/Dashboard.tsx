@@ -4,7 +4,7 @@ import { useI18n, type Translations } from "../lib/i18n";
 import { Footer } from "../components/Footer";
 import { Topbar } from "../components/Topbar";
 import {
-  CLERK_ACCOUNTS_URL,
+  buildConnectNotionUrl,
   fetchNotionBindingSources,
   fetchDebugSnapshot,
   fetchMe,
@@ -31,6 +31,10 @@ import {
 } from "../lib/api";
 
 const APPLE_ACCOUNT_URL = "https://account.apple.com";
+
+function redirectToConnectNotion() {
+  window.location.href = buildConnectNotionUrl();
+}
 
 // ---------------------------------------------------------------------------
 // Toast system
@@ -635,7 +639,7 @@ export function DashboardPage() {
               notionConnected={data.notionConnected}
               appleConfigured={appleConfigured}
               workspaceName={cfg?.notion_workspace_name || ""}
-              onNotionConnect={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
+              onNotionConnect={redirectToConnectNotion}
             />
 
             {/* Settings */}
@@ -741,7 +745,7 @@ function SetupWizard({
             variant="primary"
             size="lg"
             className="mx-auto"
-            onClick={() => { window.location.href = `${CLERK_ACCOUNTS_URL}/user`; }}
+            onClick={redirectToConnectNotion}
           >
             <Icon name="link" />
             {t("connectNotion")}
@@ -1751,6 +1755,7 @@ function DataSourcesCard() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setNotice("");
     try {
       const resp = await fetchDataSources();
       setEntries(resp.sources);
@@ -1801,16 +1806,28 @@ function DataSourcesCard() {
         expanded={expanded}
         onToggle={() => setExpanded((current) => !current)}
         actions={(
-          <Btn
-            variant="secondary"
-            size="md"
-            onClick={save}
-            disabled={saving || loading || !entries}
-            loading={saving}
-          >
-            <Icon name="save" />
-            {saving ? t("saving") : t("bindingSaveBtn")}
-          </Btn>
+          <>
+            <Btn
+              variant="secondary"
+              size="md"
+              onClick={() => void load()}
+              disabled={loading || saving}
+              title={t("bindingRefreshBtn")}
+            >
+              <Icon name="refresh" className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+              {loading ? t("debugRefreshing") : t("bindingRefreshBtn")}
+            </Btn>
+            <Btn
+              variant="secondary"
+              size="md"
+              onClick={save}
+              disabled={saving || loading || !entries}
+              loading={saving}
+            >
+              <Icon name="save" />
+              {saving ? t("saving") : t("bindingSaveBtn")}
+            </Btn>
+          </>
         )}
       />
       {expanded && (
@@ -2366,6 +2383,7 @@ function formatDateRange(start?: string | null, end?: string | null, timeZone?: 
   if (!formattedStart) return `Ends ${formattedEnd || end}`;
   if (!formattedEnd || start === end || formattedStart === formattedEnd) return formattedStart;
 
+  if (!start || !end) return `${formattedStart} \u2192 ${formattedEnd}`;
   const startParts = parseScheduleDateTime(start, timeZone);
   const endParts = parseScheduleDateTime(end, timeZone);
   if (startParts?.time && endParts?.time && startParts.date === endParts.date) {

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { APIErrorCode, isNotionClientError } from "@notionhq/client";
 import {
   CLERK_ACCOUNTS_URL,
   clerkMiddleware,
@@ -7,6 +8,13 @@ import {
   type AppEnv,
 } from "./auth/clerk";
 import {
+  CSRF_HEADER_NAME,
+  createCsrfToken,
+  hasHostileBrowserOrigin,
+  verifyCsrfToken,
+} from "./auth/csrf";
+import {
+  buildClerkAccountPortalUrl,
   buildClerkHostedAuthUrl,
   buildServicePath,
   canonicalizeAuthPath,
@@ -51,6 +59,8 @@ import {
 import { isTaskProperties } from "./sync/constants";
 
 const NOTION_VERSION = "2025-09-03";
+const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
+const MAX_INTERNAL_JSON_BODY_BYTES = 16 * 1024;
 
 type AppVariables = {
   serviceBasePath: string;
@@ -83,7 +93,8 @@ const clerkAuthMiddleware = clerkMiddleware({
 });
 
 app.use("*", async (c, next) => {
-  if (isLocalPageRequest(c.req.raw)) {
+  const pathname = new URL(c.req.raw.url).pathname;
+  if (isClerkAuthExemptPath(pathname) || isLocalPageRequest(c.req.raw)) {
     await next();
     return;
   }
@@ -91,9 +102,12 @@ app.use("*", async (c, next) => {
 });
 
 app.use("*", async (c, next) => {
+  const pathname = new URL(c.req.raw.url).pathname;
   const serviceBasePath = normalizeBasePath(c.env.APP_BASE_PATH);
   c.set("serviceBasePath", serviceBasePath);
-  await ensureSchema(c.env);
+  if (!isSchemaExemptPath(pathname)) {
+    await ensureSchema(c.env);
+  }
   await next();
 });
 
@@ -104,6 +118,14 @@ app.use("*", async (c, next) => {
     const url = new URL(c.req.raw.url);
     url.pathname = servicePath(c, canonicalPath);
     return c.redirect(url.toString(), 301);
+  }
+  await next();
+});
+
+app.use("*", async (c, next) => {
+  const response = await enforceCsrfForBrowserWrite(c);
+  if (response) {
+    return response;
   }
   await next();
 });
@@ -134,15 +156,11 @@ app.get("/sign-in", async (c) => {
   if (userId) {
     return c.redirect(redirectTarget, 302);
   }
+  const hostedUrl = buildHostedAuthUrl(c, "sign-in", redirectTarget);
   if (isLocalPageRequest(c.req.raw)) {
-    return hostedAuthBridgeResponse(
-      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
-    );
+    return hostedAuthBridgeResponse(hostedUrl);
   }
-  return c.redirect(
-    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
-    302,
-  );
+  return c.redirect(hostedUrl, 302);
 });
 
 // Preserve old local sign-in URLs by redirecting them to the shared Clerk hosted page.
@@ -152,50 +170,46 @@ app.get("/sign-in/*", async (c) => {
   if (userId) {
     return c.redirect(redirectTarget, 302);
   }
+  const hostedUrl = buildHostedAuthUrl(c, "sign-in", redirectTarget);
   if (isLocalPageRequest(c.req.raw)) {
-    return hostedAuthBridgeResponse(
-      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
-    );
+    return hostedAuthBridgeResponse(hostedUrl);
   }
-  return c.redirect(
-    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", redirectTarget),
-    302,
-  );
+  return c.redirect(hostedUrl, 302);
 });
 
 app.get("/sign-out", async (c) => {
   const redirectTarget = resolveAuthRedirectTarget(c, servicePath(c, "/"));
-  const userId = getOptionalUserId(c);
-  if (!userId) {
-    return c.redirect(redirectTarget, 302);
-  }
+  const hostedUrl = buildHostedAuthUrl(c, "sign-out", redirectTarget);
   if (isLocalPageRequest(c.req.raw)) {
-    return hostedAuthBridgeResponse(
-      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
-    );
+    return hostedAuthBridgeResponse(hostedUrl);
   }
-  return c.redirect(
-    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
-    302,
-  );
+  return c.redirect(hostedUrl, 302);
 });
 
 // Preserve old local sign-out URLs by redirecting them to the shared Clerk hosted page.
 app.get("/sign-out/*", async (c) => {
   const redirectTarget = resolveAuthRedirectTarget(c, servicePath(c, "/"));
-  const userId = getOptionalUserId(c);
-  if (!userId) {
-    return c.redirect(redirectTarget, 302);
-  }
+  const hostedUrl = buildHostedAuthUrl(c, "sign-out", redirectTarget);
   if (isLocalPageRequest(c.req.raw)) {
-    return hostedAuthBridgeResponse(
-      buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
-    );
+    return hostedAuthBridgeResponse(hostedUrl);
   }
-  return c.redirect(
-    buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-out", redirectTarget),
-    302,
-  );
+  return c.redirect(hostedUrl, 302);
+});
+
+app.get("/connect/notion", async (c) => {
+  const userId = getOptionalUserId(c);
+  if (!userId && !isLocalPageRequest(c.req.raw)) {
+    return redirectToHostedSignIn(c, servicePathWithCurrentQuery(c, "/connect/notion"));
+  }
+  return serveIndexHtml(c.env);
+});
+
+app.get("/connect/notion/*", async (c) => {
+  return serveIndexHtml(c.env);
+});
+
+app.get("/auth/return", async (c) => {
+  return c.redirect(resolveAuthReturnTarget(c), 302);
 });
 
 app.get("/dashboard", async (c) => {
@@ -325,6 +339,7 @@ app.get("/api/me", async (c) => {
       name: userName,
     },
     workspaceId: tenantId,
+    csrfToken: await createCsrfToken(c.env.CLERK_SECRET_KEY, tenantId),
     notionConnected,
     notionBinding: {
       selectedSourceIds: parseSelectedNotionSourceIds(latestConfig?.selected_notion_source_ids_json ?? null),
@@ -445,24 +460,40 @@ async function loadCompatibleNotionSourcesWithSchema(
 ): Promise<Array<{ id: string; title: string; properties: NotionPropertySchema[] }>> {
   const databases = await listDatabases(notionClient);
   const results = await Promise.all(
-    databases.map(async (database) => {
-      const properties = await getDatabaseProperties(notionClient, database.id);
-      if (!isTaskProperties(properties)) {
-        return null;
-      }
-      const title = await getDatabaseTitle(notionClient, database.id);
-      const propertyList: NotionPropertySchema[] = Object.entries(properties).map(
-        ([name, spec]) => ({
-          name,
-          type: typeof spec === "object" && spec && "type" in spec ? String((spec as { type?: unknown }).type || "") : "",
-        }),
-      );
-      return { id: database.id, title, properties: propertyList };
-    }),
+    databases.map((database) => loadCompatibleNotionSourceWithSchema(notionClient, database)),
   );
   return results
     .filter((value): value is { id: string; title: string; properties: NotionPropertySchema[] } => Boolean(value))
     .sort((left, right) => left.title.localeCompare(right.title));
+}
+
+async function loadCompatibleNotionSourceWithSchema(
+  notionClient: ReturnType<typeof createNotionClient>,
+  database: { id: string },
+): Promise<{ id: string; title: string; properties: NotionPropertySchema[] } | null> {
+  try {
+    const properties = await getDatabaseProperties(notionClient, database.id);
+    if (!isTaskProperties(properties)) {
+      return null;
+    }
+    const title = await getDatabaseTitle(notionClient, database.id);
+    const propertyList: NotionPropertySchema[] = Object.entries(properties).map(
+      ([name, spec]) => ({
+        name,
+        type: typeof spec === "object" && spec && "type" in spec ? String((spec as { type?: unknown }).type || "") : "",
+      }),
+    );
+    return { id: database.id, title, properties: propertyList };
+  } catch (error) {
+    if (isUnavailableNotionSourceError(error)) {
+      console.warn("[notion] skipping unavailable data source", {
+        sourceId: database.id,
+        error: notionErrorCode(error),
+      });
+      return null;
+    }
+    throw error;
+  }
 }
 
 app.get("/api/data-sources", async (c) => {
@@ -696,27 +727,18 @@ app.post("/apple", async (c) => {
   let fullSyncIntervalMinutes: number | null;
 
   const contentType = c.req.raw.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    const body = (await c.req.raw.json().catch(() => ({}))) as Record<string, unknown>;
-    appleId = normalizeText(body.apple_id);
-    appleAppPassword = normalizeText(body.apple_app_password);
-    calendarName = normalizeText(body.calendar_name);
-    calendarColor = normalizeText(body.calendar_color);
-    calendarTimezone = normalizeText(body.calendar_timezone);
-    dateOnlyTimezone = normalizeText(body.date_only_timezone);
-    pollIntervalMinutes = normalizeNullableInt(body.poll_interval_minutes);
-    fullSyncIntervalMinutes = normalizeNullableInt(body.full_sync_interval_minutes);
-  } else {
-    const formData = await c.req.raw.formData();
-    appleId = normalizeText(formData.get("apple_id"));
-    appleAppPassword = normalizeText(formData.get("apple_app_password"));
-    calendarName = normalizeText(formData.get("calendar_name"));
-    calendarColor = normalizeText(formData.get("calendar_color"));
-    calendarTimezone = normalizeText(formData.get("calendar_timezone"));
-    dateOnlyTimezone = normalizeText(formData.get("date_only_timezone"));
-    pollIntervalMinutes = normalizeNullableInt(formData.get("poll_interval_minutes"));
-    fullSyncIntervalMinutes = normalizeNullableInt(formData.get("full_sync_interval_minutes"));
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return c.json({ ok: false, error: "Expected application/json." }, 415);
   }
+  const body = (await c.req.raw.json().catch(() => ({}))) as Record<string, unknown>;
+  appleId = normalizeText(body.apple_id);
+  appleAppPassword = normalizeText(body.apple_app_password);
+  calendarName = normalizeText(body.calendar_name);
+  calendarColor = normalizeText(body.calendar_color);
+  calendarTimezone = normalizeText(body.calendar_timezone);
+  dateOnlyTimezone = normalizeText(body.date_only_timezone);
+  pollIntervalMinutes = normalizeNullableInt(body.poll_interval_minutes);
+  fullSyncIntervalMinutes = normalizeNullableInt(body.full_sync_interval_minutes);
 
   const existingAppleId = await getTenantSecretByKind(c.env.AUTH_DB, tenantId, "apple_id");
   const existingAppleAppPassword = await getTenantSecretByKind(
@@ -848,8 +870,52 @@ app.get("/webhook/notion", (c) =>
   c.json({ ok: true, message: "Notion webhook endpoint is live. Use POST." }),
 );
 
+app.post("/api/internal/notion-webhook/verification-token", async (c) => {
+  const authResponse = requireInternalServiceToken(c);
+  if (authResponse) {
+    return authResponse;
+  }
+
+  let payload: unknown;
+  try {
+    payload = safeJsonParse(await readRequestTextWithLimit(c.req.raw, MAX_INTERNAL_JSON_BODY_BYTES));
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return c.json({ ok: false, error: "Request body is too large." }, 413);
+    }
+    throw error;
+  }
+  if (!payload || typeof payload !== "object") {
+    return c.json({ ok: false, error: "Invalid JSON." }, 400);
+  }
+
+  const body = payload as Record<string, unknown>;
+  const verificationToken = normalizeText(body.verification_token) || normalizeText(body.verificationToken);
+  if (!verificationToken) {
+    return c.json({ ok: false, error: "Missing verification token." }, 400);
+  }
+
+  const routingIds = normalizeWebhookTokenProvisioningRoutingIds(body);
+  const storageKeys = buildWebhookVerificationTokenStorageKeys(routingIds);
+  await Promise.all(storageKeys.map((key) => setAppState(c.env.AUTH_DB, key, verificationToken)));
+
+  return c.json({
+    ok: true,
+    scope: routingIds.botIds.length > 0 || routingIds.workspaceIds.length > 0 ? "scoped" : "global",
+    storedKeyCount: storageKeys.length,
+  });
+});
+
 app.post("/webhook/notion", async (c) => {
-  const raw = await c.req.text();
+  let raw: string;
+  try {
+    raw = await readRequestTextWithLimit(c.req.raw, MAX_WEBHOOK_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return c.text("Payload too large", 413);
+    }
+    throw error;
+  }
   const payload = safeJsonParse(raw);
   if (!payload || typeof payload !== "object") {
     return c.text("Invalid JSON", 400);
@@ -861,10 +927,12 @@ app.post("/webhook/notion", async (c) => {
     (payload as Record<string, unknown>).verification_token,
   );
   if (verificationToken) {
-    const storageKeys = buildWebhookVerificationTokenStorageKeys(routingIds);
-    await Promise.all(storageKeys.map((key) => setAppState(c.env.AUTH_DB, key, verificationToken)));
-    return c.json({ verification_token: verificationToken });
+    return c.json({ verification_token: verificationToken }, 200, {
+      "cache-control": "no-store",
+    });
   }
+
+  await ensureSchema(c.env);
 
   const storedTokens = await loadWebhookVerificationTokens(c.env.AUTH_DB, routingIds);
   if (storedTokens.length === 0) {
@@ -968,6 +1036,143 @@ app.post("/webhook/notion", async (c) => {
 
 async function serveIndexHtml(env: AppEnv): Promise<Response> {
   return serveAsset(env, "/index.html");
+}
+
+async function enforceCsrfForBrowserWrite(c: {
+  req: { raw: Request };
+  env: AppEnv;
+} & { var: AppVariables }): Promise<Response | null> {
+  if (!isStateChangingMethod(c.req.raw.method)) {
+    return null;
+  }
+  const pathname = new URL(c.req.raw.url).pathname;
+  if (isCsrfExemptPath(pathname)) {
+    return null;
+  }
+
+  const userId = getOptionalUserId(c);
+  if (!userId) {
+    return null;
+  }
+  if (hasHostileBrowserOrigin(c.req.raw)) {
+    return Response.json(
+      { ok: false, error: "Cross-origin writes are not allowed." },
+      { status: 403 },
+    );
+  }
+  const csrfToken = c.req.raw.headers.get(CSRF_HEADER_NAME);
+  if (!(await verifyCsrfToken(c.env.CLERK_SECRET_KEY, userId, csrfToken))) {
+    return Response.json(
+      { ok: false, error: "Invalid or missing CSRF token." },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
+function isStateChangingMethod(method: string): boolean {
+  return method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
+}
+
+function isCsrfExemptPath(pathname: string): boolean {
+  return (
+    pathname === "/webhook/notion"
+    || pathname === "/api/internal/notion-webhook/verification-token"
+  );
+}
+
+function isClerkAuthExemptPath(pathname: string): boolean {
+  return (
+    pathname === "/webhook/notion"
+    || pathname === "/api/internal/notion-webhook/verification-token"
+  );
+}
+
+function isSchemaExemptPath(pathname: string): boolean {
+  return pathname === "/webhook/notion";
+}
+
+function requireInternalServiceToken(c: { req: { raw: Request }; env: AppEnv }): Response | null {
+  const expected = normalizeText(c.env.INTERNAL_SERVICE_TOKEN);
+  if (!expected) {
+    return Response.json(
+      { ok: false, error: "Internal service token is not configured." },
+      { status: 503 },
+    );
+  }
+  const authorization = c.req.raw.headers.get("authorization") || "";
+  const bearerToken = authorization.match(/^Bearer\s+(.+)$/i)?.[1] || "";
+  const headerToken = c.req.raw.headers.get("x-internal-service-token") || "";
+  const actual = normalizeText(bearerToken) || normalizeText(headerToken);
+  if (!actual || !timingSafeEqual(expected, actual)) {
+    return Response.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+  return null;
+}
+
+function normalizeWebhookTokenProvisioningRoutingIds(body: Record<string, unknown>): {
+  botIds: string[];
+  workspaceIds: string[];
+} {
+  const botIds = [
+    normalizeText(body.bot_id),
+    normalizeText(body.botId),
+    ...normalizeStringArray(body.bot_ids),
+    ...normalizeStringArray(body.botIds),
+  ].filter(Boolean);
+  const workspaceIds = [
+    normalizeText(body.workspace_id),
+    normalizeText(body.workspaceId),
+    ...normalizeStringArray(body.workspace_ids),
+    ...normalizeStringArray(body.workspaceIds),
+  ].filter(Boolean);
+  return {
+    botIds: [...new Set(botIds)],
+    workspaceIds: [...new Set(workspaceIds)],
+  };
+}
+
+class RequestBodyTooLargeError extends Error {}
+
+async function readRequestTextWithLimit(request: Request, maxBytes: number): Promise<string> {
+  const contentLength = Number.parseInt(request.headers.get("content-length") || "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new RequestBodyTooLargeError("Request body is too large.");
+  }
+  if (!request.body) {
+    return "";
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new RequestBodyTooLargeError("Request body is too large.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const buffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(buffer);
 }
 
 function requireAuthenticatedUser(
@@ -1332,9 +1537,54 @@ function redirectToHostedSignIn(
   return new Response(null, {
     status: 302,
     headers: {
-      location: buildClerkHostedAuthUrl(CLERK_ACCOUNTS_URL, c.req.raw.url, "sign-in", returnPath),
+      location: buildHostedAuthUrl(c, "sign-in", returnPath),
     },
   });
+}
+
+function buildHostedAuthUrl(
+  c: { var: { serviceBasePath: string }; req: { raw: Request } },
+  route: "sign-in" | "sign-out",
+  returnPath: string,
+): string {
+  return buildClerkHostedAuthUrl(
+    CLERK_ACCOUNTS_URL,
+    c.req.raw.url,
+    route,
+    serviceAuthReturnPath(c, returnPath),
+  );
+}
+
+function buildHostedAccountPortalUrl(
+  c: { var: { serviceBasePath: string }; req: { raw: Request } },
+  portalPath: "/user",
+  returnPath: string,
+): string {
+  return buildClerkAccountPortalUrl(
+    CLERK_ACCOUNTS_URL,
+    c.req.raw.url,
+    portalPath,
+    serviceAuthReturnPath(c, returnPath),
+  );
+}
+
+function serviceAuthReturnPath(
+  c: { var: { serviceBasePath: string }; req: { raw: Request } },
+  returnPath: string,
+): string {
+  const targetUrl = new URL(returnPath, new URL(c.req.raw.url).origin);
+  const next = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+  return servicePath(c, `/auth/return?next=${encodeURIComponent(next)}`);
+}
+
+function resolveAuthReturnTarget(c: { var: { serviceBasePath: string }; req: { raw: Request } }): string {
+  const next = new URL(c.req.raw.url).searchParams.get("next");
+  return resolveRequestedRedirectUrl(
+    c.req.raw.url,
+    c.var.serviceBasePath,
+    servicePath(c, "/dashboard"),
+    next,
+  );
 }
 
 function resolveAuthRedirectTarget(
@@ -1398,6 +1648,10 @@ function isLocalPageRequest(request: Request): boolean {
   const pathname = url.pathname.replace(/^\/caldav-sync(?=\/|$)/, "") || "/";
   return (
     pathname === "/"
+    || pathname === "/auth/return"
+    || pathname.startsWith("/auth/return/")
+    || pathname === "/connect/notion"
+    || pathname.startsWith("/connect/notion/")
     || pathname === "/dashboard"
     || pathname === "/sign-in"
     || pathname.startsWith("/sign-in/")
@@ -1503,19 +1757,25 @@ async function loadCompatibleNotionSources(
   const databases = await listDatabases(notionClient);
   const results = await Promise.all(
     databases.map(async (database) => {
-      const properties = await getDatabaseProperties(notionClient, database.id);
-      if (!isTaskProperties(properties)) {
-        return null;
-      }
-      return {
-        id: database.id,
-        title: await getDatabaseTitle(notionClient, database.id),
-      } satisfies NotionBindableSource;
+      const source = await loadCompatibleNotionSourceWithSchema(notionClient, database);
+      return source ? { id: source.id, title: source.title } satisfies NotionBindableSource : null;
     }),
   );
   return results
     .filter((value): value is NotionBindableSource => Boolean(value))
     .sort((left, right) => left.title.localeCompare(right.title));
+}
+
+function isUnavailableNotionSourceError(error: unknown): boolean {
+  return isNotionClientError(error)
+    && (error.code === APIErrorCode.ObjectNotFound || error.code === APIErrorCode.RestrictedResource);
+}
+
+function notionErrorCode(error: unknown): string {
+  if (isNotionClientError(error)) {
+    return error.code;
+  }
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function parseSelectedNotionSourceIds(value: string | null | undefined): string[] | null {

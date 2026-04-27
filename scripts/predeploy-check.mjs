@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const PORT = Number.parseInt(process.env.PREDEPLOY_PORT || "8891", 10);
 const BASE_PATH = process.env.APP_BASE_PATH || "/caldav-sync";
@@ -10,11 +11,18 @@ const CLERK_SIGN_IN_PREFIXES = [
   "https://accounts.superplanner.ai/sign-in",
   `https://accounts.${new URL(BASE_URL).host}/sign-in`,
 ];
+const CLERK_SIGN_OUT_PREFIXES = [
+  "https://accounts.superplanner.ai/sign-out",
+  `https://accounts.${new URL(BASE_URL).host}/sign-out`,
+];
+const CLERK_USER_PREFIXES = [
+  "https://accounts.superplanner.ai/user",
+  `https://accounts.${new URL(BASE_URL).host}/user`,
+];
 
 loadLocalEnv();
 
-const env = {
-  ...process.env,
+const workerDevVars = {
   APP_BASE_PATH: BASE_PATH,
   CLERK_PUBLISHABLE_KEY:
     process.env.CLERK_PUBLISHABLE_KEY || "pk_test_placeholder",
@@ -22,11 +30,31 @@ const env = {
     process.env.CLERK_SECRET_KEY || "sk_test_placeholder",
   APP_ENCRYPTION_KEY:
     process.env.APP_ENCRYPTION_KEY || randomBytes(32).toString("base64url"),
+  INTERNAL_SERVICE_TOKEN:
+    process.env.INTERNAL_SERVICE_TOKEN || `predeploy-${randomBytes(24).toString("base64url")}`,
 };
+const env = {
+  ...process.env,
+  ...workerDevVars,
+};
+const workerDevEnvDir = mkdtempSync(join(tmpdir(), "caldav-sync-predeploy-"));
+const workerDevEnvFile = resolve(workerDevEnvDir, ".env");
+writeFileSync(workerDevEnvFile, serializeEnvFile(workerDevVars));
 
 const child = spawn(
   "npm",
-  ["exec", "wrangler", "dev", "--", "--config", "wrangler.toml", "--port", String(PORT)],
+  [
+    "exec",
+    "wrangler",
+    "dev",
+    "--",
+    "--config",
+    "wrangler.toml",
+    "--env-file",
+    workerDevEnvFile,
+    "--port",
+    String(PORT),
+  ],
   {
     cwd: process.cwd(),
     env,
@@ -54,6 +82,7 @@ try {
   console.log("Predeploy check passed.");
 } finally {
   child.kill("SIGTERM");
+  rmSync(workerDevEnvDir, { recursive: true, force: true });
 }
 
 async function runChecks() {
@@ -93,8 +122,8 @@ async function runChecks() {
     "GET /sign-in should redirect to the shared Clerk sign-in page",
   );
   assert(
-    getRedirectUrlParam(signInLocation) === `${BASE_URL}/dashboard`,
-    "GET /sign-in should include the dashboard redirect target",
+    getRedirectUrlParam(signInLocation) === authReturnUrl(`${BASE_PATH}/dashboard`),
+    "GET /sign-in should include the product auth return target",
   );
 
   const unsafeSignInResponse = await fetch(
@@ -111,8 +140,8 @@ async function runChecks() {
     "GET /sign-in should keep using the shared Clerk sign-in page",
   );
   assert(
-    getRedirectUrlParam(unsafeSignInLocation) === `${BASE_URL}/dashboard`,
-    "GET /sign-in should sanitize invalid redirect targets back to the dashboard",
+    getRedirectUrlParam(unsafeSignInLocation) === authReturnUrl(`${BASE_PATH}/dashboard`),
+    "GET /sign-in should sanitize invalid redirect targets back to the product auth return",
   );
 
   const signInSlashResponse = await fetch(`${BASE_URL}/sign-in/`, {
@@ -125,6 +154,78 @@ async function runChecks() {
   assert(
     resolveLocation(signInSlashResponse.headers.get("location")) === `${BASE_URL}/sign-in`,
     "GET /sign-in/ should canonicalize to /sign-in",
+  );
+
+  const connectNotionPageResponse = await fetch(`${BASE_URL}/connect/notion`, {
+    redirect: "manual",
+    headers: { accept: "text/html" },
+  });
+  assert(
+    connectNotionPageResponse.status === 200,
+    "GET /connect/notion document navigation should serve the product OAuth bridge",
+  );
+  assert(
+    (connectNotionPageResponse.headers.get("content-type") || "").includes("text/html"),
+    "GET /connect/notion document navigation should return HTML",
+  );
+
+  const connectNotionApiResponse = await fetch(`${BASE_URL}/connect/notion`, {
+    redirect: "manual",
+  });
+  assert(
+    connectNotionApiResponse.status === 302 || connectNotionApiResponse.status === 303,
+    "GET /connect/notion non-document requests should redirect unauthenticated users",
+  );
+  const connectNotionApiLocation = connectNotionApiResponse.headers.get("location") || "";
+  assert(
+    isHostedSignInLocation(connectNotionApiLocation),
+    "GET /connect/notion non-document requests should route through shared Clerk sign-in",
+  );
+  assert(
+    getRedirectUrlParam(connectNotionApiLocation) === authReturnUrl(`${BASE_PATH}/connect/notion`),
+    "GET /connect/notion should return signed-in users to the product Notion reconnect route",
+  );
+
+  const connectNotionCallbackResponse = await fetch(
+    `${BASE_URL}/connect/notion/callback?next=${encodeURIComponent(`${BASE_PATH}/dashboard`)}`,
+    {
+      redirect: "manual",
+      headers: { accept: "text/html" },
+    },
+  );
+  assert(
+    connectNotionCallbackResponse.status === 200,
+    "GET /connect/notion/callback document navigation should serve the product OAuth callback",
+  );
+  assert(
+    (connectNotionCallbackResponse.headers.get("content-type") || "").includes("text/html"),
+    "GET /connect/notion/callback document navigation should return HTML",
+  );
+
+  const authReturnResponse = await fetch(
+    `${BASE_URL}/auth/return?next=${encodeURIComponent(`${BASE_PATH}/dashboard?lang=zh-hans`)}`,
+    { redirect: "manual" },
+  );
+  assert(
+    authReturnResponse.status === 302 || authReturnResponse.status === 303,
+    "GET /auth/return should redirect to a valid product path",
+  );
+  assert(
+    resolveLocation(authReturnResponse.headers.get("location")) === `${BASE_URL}/dashboard?lang=zh-hans`,
+    "GET /auth/return should preserve valid product return paths",
+  );
+
+  const unsafeAuthReturnResponse = await fetch(
+    `${BASE_URL}/auth/return?next=${encodeURIComponent("/other-product")}`,
+    { redirect: "manual" },
+  );
+  assert(
+    unsafeAuthReturnResponse.status === 302 || unsafeAuthReturnResponse.status === 303,
+    "GET /auth/return should redirect when next is invalid",
+  );
+  assert(
+    resolveLocation(unsafeAuthReturnResponse.headers.get("location")) === `${BASE_URL}/dashboard`,
+    "GET /auth/return should fall back to the dashboard for invalid next paths",
   );
 
   // /api/me should report unauthenticated
@@ -159,21 +260,26 @@ async function runChecks() {
     "Dashboard redirect should go to the hosted sign-in route",
   );
   assert(
-    getRedirectUrlParam(dashboardRedirect) === `${BASE_URL}/dashboard`,
-    "Dashboard redirect should return to the dashboard after sign-in",
+    getRedirectUrlParam(dashboardRedirect) === authReturnUrl(`${BASE_PATH}/dashboard`),
+    "Dashboard redirect should return through the product auth return route",
   );
 
-  // /sign-out should redirect unauthenticated users back to the product root
+  // /sign-out should also be product-owned and route through Clerk's hosted sign-out.
   const signOutResponse = await fetch(`${BASE_URL}/sign-out`, {
     redirect: "manual",
   });
   assert(
     signOutResponse.status === 302 || signOutResponse.status === 303,
-    "GET /sign-out should redirect when no session exists",
+    "GET /sign-out should redirect to Clerk sign-out",
+  );
+  const signOutLocation = signOutResponse.headers.get("location") || "";
+  assert(
+    isHostedSignOutLocation(signOutLocation),
+    "GET /sign-out should route through the shared Clerk sign-out page",
   );
   assert(
-    resolveLocation(signOutResponse.headers.get("location")) === `${BASE_URL}/`,
-    "GET /sign-out should redirect back to the product root",
+    getRedirectUrlParam(signOutLocation) === authReturnUrl(`${BASE_PATH}/`),
+    "GET /sign-out should return through the product auth return route",
   );
 
   const signOutSlashResponse = await fetch(`${BASE_URL}/sign-out/`, {
@@ -195,7 +301,21 @@ async function runChecks() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ verification_token: verifyToken }),
   });
-  assert(verificationResponse.ok, "Webhook verification token should be stored");
+  assert(verificationResponse.ok, "Webhook verification token challenge should be acknowledged");
+
+  const provisioningResponse = await fetch(`${BASE_URL}/api/internal/notion-webhook/verification-token`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${workerDevVars.INTERNAL_SERVICE_TOKEN}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ verification_token: verifyToken }),
+  });
+  const provisioningBody = await provisioningResponse.text();
+  assert(
+    provisioningResponse.ok,
+    `Webhook verification token should be stored through the internal API (status=${provisioningResponse.status}, body=${provisioningBody})`,
+  );
 
   // Signed webhook should succeed
   const webhookBody = JSON.stringify({
@@ -264,8 +384,22 @@ function isHostedSignInLocation(locationHeader) {
   return CLERK_SIGN_IN_PREFIXES.some((prefix) => locationHeader.startsWith(`${prefix}?`));
 }
 
+function isHostedSignOutLocation(locationHeader) {
+  return CLERK_SIGN_OUT_PREFIXES.some((prefix) => locationHeader.startsWith(`${prefix}?`));
+}
+
+function isHostedUserLocation(locationHeader) {
+  return CLERK_USER_PREFIXES.some((prefix) => locationHeader.startsWith(`${prefix}?`));
+}
+
 function getRedirectUrlParam(locationHeader) {
   return new URLSearchParams(locationHeader.split("?")[1] || "").get("redirect_url");
+}
+
+function authReturnUrl(next) {
+  const url = new URL(`${BASE_URL}/auth/return`);
+  url.searchParams.set("next", next);
+  return url.toString();
 }
 
 function loadLocalEnv() {
@@ -289,6 +423,12 @@ function loadLocalEnv() {
       process.env[key] = value;
     }
   }
+}
+
+function serializeEnvFile(values) {
+  return `${Object.entries(values)
+    .map(([key, value]) => `${key}=${JSON.stringify(String(value))}`)
+    .join("\n")}\n`;
 }
 
 function assert(condition, message) {

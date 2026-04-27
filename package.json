@@ -12,15 +12,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/backend": "^3.2.8",
-    "@clerk/hono": "^0.1.10",
+    "@clerk/backend": "^3.4.1",
+    "@clerk/hono": "^0.1.19",
     "@notionhq/client": "^5.17.0",
-    "fast-xml-parser": "^5.5.11",
-    "hono": "^4.12.12",
+    "fast-xml-parser": "^5.7.2",
+    "hono": "^4.12.15",
     "ical-generator": "^10.1.0",
     "ical.js": "^2.2.1",
     "tsdav": "^2.1.8",
     "zod": "^4.1.12"
+  },
+  "overrides": {
+    "@clerk/shared": "^4.8.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260404.0",

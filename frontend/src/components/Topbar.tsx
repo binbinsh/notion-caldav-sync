@@ -1,4 +1,4 @@
-import { UserProfile, useClerk } from "@clerk/react";
+import { UserProfile } from "@clerk/react";
 import { useEffect, useState } from "react";
 import { useI18n, type Lang } from "../lib/i18n";
 import { getAppBasePath } from "../lib/auth";
@@ -11,12 +11,11 @@ export function Topbar({
   userName?: string;
 }) {
   const { lang, setLang, t } = useI18n();
-  const { signOut } = useClerk();
   const [accountOpen, setAccountOpen] = useState(false);
 
-  const handleSignOut = async () => {
+  const handleSignOut = () => {
     setAccountOpen(false);
-    await signOut({ redirectUrl: `${window.location.origin}${BASE}/` });
+    window.location.href = `${BASE}/sign-out`;
   };
 
   useEffect(() => {

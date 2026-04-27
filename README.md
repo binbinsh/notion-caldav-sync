@@ -66,7 +66,7 @@ Then write the Worker secrets:
 npm exec wrangler secret put CLERK_PUBLISHABLE_KEY
 npm exec wrangler secret put CLERK_SECRET_KEY
 npm exec wrangler secret put APP_ENCRYPTION_KEY
-# optional
+# required if you configure Notion webhook verification tokens through the internal API
 npm exec wrangler secret put INTERNAL_SERVICE_TOKEN
 ```
 
@@ -85,7 +85,16 @@ Create a webhook subscription in the [Notion integration settings](https://www.n
 
 If you are self-hosting, replace the hostname and base path with your own deployed URL.
 
-After Notion sends the one-time `verification_token`, paste it back into Notion's **Verify subscription** dialog.
+After Notion sends the one-time `verification_token`, paste it back into Notion's **Verify subscription** dialog, then store the same token through the internal provisioning endpoint:
+
+```bash
+curl -X POST "https://superplanner.ai/caldav-sync/api/internal/notion-webhook/verification-token" \
+  -H "Authorization: Bearer $INTERNAL_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"verification_token":"PASTE_NOTION_TOKEN_HERE"}'
+```
+
+Do not store webhook verification tokens by posting them to the public webhook receiver; that endpoint only acknowledges Notion's challenge and verifies signed event deliveries.
 
 For API version `2025-09-03`, subscribe to:
 

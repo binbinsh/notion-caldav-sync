@@ -462,7 +462,7 @@ export class LiveSyncFacade {
     properties: Record<string, Record<string, unknown>>,
     profile: SyncProfile,
   ): NotionTask | null {
-    const parsed = parsePageToTask(page, profile);
+    const parsed = parsePageToTask(page, profile, properties);
     if (!parsed.notionId) {
       return null;
     }

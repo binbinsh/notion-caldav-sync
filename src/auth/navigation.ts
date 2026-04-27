@@ -1,6 +1,13 @@
 export const AUTH_REDIRECT_QUERY_PARAM = "redirect_url";
 
-const CANONICAL_AUTH_PATHS = new Set(["/dashboard", "/sign-in", "/sign-out"]);
+const CANONICAL_AUTH_PATHS = new Set([
+  "/auth/return",
+  "/connect/notion",
+  "/connect/notion/callback",
+  "/dashboard",
+  "/sign-in",
+  "/sign-out",
+]);
 
 export function buildServicePath(serviceBasePath: string, path: string): string {
   const suffix = path.startsWith("/") ? path : `/${path}`;
@@ -15,6 +22,18 @@ export function buildClerkHostedAuthUrl(
 ): string {
   const redirectUrl = new URL(returnPath, new URL(requestUrl).origin);
   const url = new URL(`${accountsUrl.replace(/\/$/, "")}/${route}`);
+  url.searchParams.set(AUTH_REDIRECT_QUERY_PARAM, redirectUrl.toString());
+  return url.toString();
+}
+
+export function buildClerkAccountPortalUrl(
+  accountsUrl: string,
+  requestUrl: string,
+  portalPath: "/user",
+  returnPath: string,
+): string {
+  const redirectUrl = new URL(returnPath, new URL(requestUrl).origin);
+  const url = new URL(portalPath, accountsUrl.replace(/\/$/, ""));
   url.searchParams.set(AUTH_REDIRECT_QUERY_PARAM, redirectUrl.toString());
   return url.toString();
 }

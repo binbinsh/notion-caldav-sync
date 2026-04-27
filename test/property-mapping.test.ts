@@ -51,6 +51,47 @@ function pageProperties(): Record<string, unknown> {
   };
 }
 
+function statusSchema(): Record<string, Record<string, unknown>> {
+  return {
+    "Task name": { type: "title" },
+    Stage: {
+      type: "status",
+      status: {
+        options: [
+          { id: "status-not-started", name: "Not started", color: "default" },
+          { id: "status-doing", name: "Doing", color: "blue" },
+          { id: "status-completed", name: "Completed", color: "green" },
+          { id: "status-cancelled", name: "Cancelled", color: "red" },
+        ],
+        groups: [
+          {
+            id: "group-todo",
+            name: "To-do",
+            color: "gray",
+            option_ids: ["status-not-started"],
+          },
+          {
+            id: "group-progress",
+            name: "In progress",
+            color: "blue",
+            option_ids: ["status-doing"],
+          },
+          {
+            id: "group-complete",
+            name: "Complete",
+            color: "green",
+            option_ids: ["status-completed", "status-cancelled"],
+          },
+        ],
+      },
+    },
+    When: { type: "date" },
+    Ping: { type: "date" },
+    Labels: { type: "multi_select" },
+    Notes: { type: "rich_text" },
+  };
+}
+
 function mappedSchema(): TaskSchema {
   return TaskSchema.fromProperties(pageProperties(), profile());
 }
@@ -87,6 +128,57 @@ describe("property mapping parse path", () => {
     expect(parsed.category).toBe("Work");
     expect(parsed.categoryName).toBe("Labels");
     expect(parsed.description).toBe("Line 1 + more");
+  });
+
+  it("uses Notion status groups for generic status indicators", () => {
+    const props = {
+      ...pageProperties(),
+      Stage: {
+        type: "status",
+        status: { id: "status-not-started", name: "Not started" },
+      },
+    };
+
+    const parsed = parsePageToTask(
+      {
+        id: "page-1",
+        properties: props,
+      },
+      buildSyncProfile(null, {
+        statusProperty: ["Stage"],
+        statusVariants: {
+          Todo: ["Todo"],
+          "In progress": ["Doing"],
+          Completed: ["Done"],
+          Overdue: ["Late"],
+          Cancelled: ["Cancelled"],
+        },
+      }),
+      statusSchema(),
+    );
+
+    expect(parsed.status).toBe("Todo");
+  });
+
+  it("keeps cancelled distinct from completed inside Notion's Complete group", () => {
+    const props = {
+      ...pageProperties(),
+      Stage: {
+        type: "status",
+        status: { id: "status-cancelled", name: "Cancelled" },
+      },
+    };
+
+    const parsed = parsePageToTask(
+      {
+        id: "page-1",
+        properties: props,
+      },
+      profile(),
+      statusSchema(),
+    );
+
+    expect(parsed.status).toBe("Cancelled");
   });
 
   it("uses profile-aware status normalization and multi-select category writes", () => {
