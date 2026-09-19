@@ -101,7 +101,7 @@ uv run -- pywrangler tail
 - The worker stores only calendar metadata (`calendar_href`, `calendar_name`, `calendar_color`, `calendar_timezone`, `date_only_timezone`, `full_sync_interval_minutes`, `event_hashes`, `last_full_sync`, `webhook_verification_token`) in KV.
 - Rename/recolour the iCloud calendar directly—the worker reuses those values from KV.
 - All-day overdue detection uses the calendar's timezone. We auto-detect it from iCloud, but you can override it via `POST /admin/settings` with `{ "date_only_timezone": "<IANA tz>" }`.
-- Cron runs every 5 minutes (see `wrangler.toml-example`). The actual rewrite occurs when `full_sync_interval_minutes` (stored in KV via `/admin/settings`) has elapsed.
+- Cron runs every 30 minutes (see `wrangler.toml-example`). The rewrite occurs when `full_sync_interval_minutes` (stored in KV via `/admin/settings`) has elapsed; webhooks handle near-real-time updates between reconciliations.
 - Status emojis embedded in ICS titles map to the canonical task states (see “Status emoji style”).
 
 ## License

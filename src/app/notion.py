@@ -16,6 +16,8 @@ try:
         DESCRIPTION_PROPERTY,
         NOTION_DB_PAGE_SIZE,
         NOTION_DS_PAGE_SIZE,
+        NOTION_MAX_QUERY_PAGES,
+        NOTION_MAX_SEARCH_PAGES,
     )
     from .task import TaskInfo
     from .http_client import http_json
@@ -29,6 +31,8 @@ except ImportError:  # pragma: no cover
         DESCRIPTION_PROPERTY,
         NOTION_DB_PAGE_SIZE,
         NOTION_DS_PAGE_SIZE,
+        NOTION_MAX_QUERY_PAGES,
+        NOTION_MAX_SEARCH_PAGES,
     )
     from task import TaskInfo  # type: ignore
     from http_client import http_json  # type: ignore
@@ -39,6 +43,18 @@ def _headers(token: str, api_version: str) -> Dict[str, str]:
         "Notion-Version": api_version,
         "Content-Type": "application/json",
     }
+
+
+def _notion_payload(response: Dict[str, Any], context: str) -> Dict[str, Any]:
+    data = response.get("json") or {}
+    status = int(response.get("status") or 0)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{context} returned an invalid JSON response")
+    if status >= 400 or data.get("object") == "error":
+        code = data.get("code") or f"http_{status or 'unknown'}"
+        message = data.get("message") or "unknown Notion API error"
+        raise RuntimeError(f"{context} failed ({code}): {message}")
+    return data
 
 
 def _resolve_data_source_id(meta: Dict[str, Any]) -> Optional[str]:
@@ -119,7 +135,7 @@ async def list_databases(token: str, api_version: str) -> List[Dict[str, str]]:
         "page_size": NOTION_DB_PAGE_SIZE,
     }
     next_cursor: Optional[str] = None
-    while True:
+    for _ in range(NOTION_MAX_SEARCH_PAGES):
         if next_cursor:
             body["start_cursor"] = next_cursor
         response = await http_json(
@@ -128,7 +144,7 @@ async def list_databases(token: str, api_version: str) -> List[Dict[str, str]]:
             headers=_headers(token, api_version),
             body=json.dumps(body),
         )
-        data = response.get("json") or {}
+        data = _notion_payload(response, "Notion search")
         for db in data.get("results", []):
             title = extract_database_title(db)
             db_id = _resolve_data_source_id(db)
@@ -137,21 +153,21 @@ async def list_databases(token: str, api_version: str) -> List[Dict[str, str]]:
                 continue
             results.append({"id": db_id, "title": title or "Untitled"})
         if not data.get("has_more"):
-            break
+            return results
         next_cursor = data.get("next_cursor")
         if not next_cursor:
-            print("[notion] missing next_cursor in search response despite has_more; stopping pagination")
-            break
-    return results
+            raise RuntimeError("Notion search returned has_more without next_cursor")
+    raise RuntimeError(
+        f"Notion search exceeded the safety limit of {NOTION_MAX_SEARCH_PAGES} pages"
+    )
 
 
 async def _fetch_data_source_metadata(token: str, api_version: str, identifier: str) -> Optional[Dict]:
     url = f"https://api.notion.com/v1/data_sources/{identifier}"
     response = await http_json(url, headers=_headers(token, api_version))
-    data = response.get("json") or {}
-    if data.get("object") == "error":
+    if int(response.get("status") or 0) == 404:
         return None
-    return data
+    return _notion_payload(response, f"Retrieve data source {identifier}")
 
 
 async def get_database(token: str, api_version: str, database_id: str) -> Dict:
@@ -187,7 +203,7 @@ async def get_database_properties(token: str, api_version: str, database_id: str
 async def query_database_pages(token: str, api_version: str, database_id: str) -> List[Dict]:
     pages: List[Dict] = []
     next_cursor: Optional[str] = None
-    while True:
+    for _ in range(NOTION_MAX_QUERY_PAGES):
         body = {
             "page_size": NOTION_DS_PAGE_SIZE,
         }
@@ -200,15 +216,16 @@ async def query_database_pages(token: str, api_version: str, database_id: str) -
             headers=_headers(token, api_version),
             body=json.dumps(body),
         )
-        data = response.get("json") or {}
+        data = _notion_payload(response, f"Query data source {database_id}")
         pages.extend(data.get("results", []))
         if not data.get("has_more"):
-            break
+            return pages
         next_cursor = data.get("next_cursor")
         if not next_cursor:
-            print("[notion] missing next_cursor in database query despite has_more; stopping pagination")
-            break
-    return pages
+            raise RuntimeError("Notion data source query returned has_more without next_cursor")
+    raise RuntimeError(
+        f"Notion data source query exceeded the safety limit of {NOTION_MAX_QUERY_PAGES} pages"
+    )
 
 
 async def get_page(token: str, api_version: str, page_id: str) -> Dict:
@@ -216,7 +233,10 @@ async def get_page(token: str, api_version: str, page_id: str) -> Dict:
         f"https://api.notion.com/v1/pages/{page_id}",
         headers=_headers(token, api_version),
     )
-    return response.get("json") or {}
+    data = response.get("json") or {}
+    if int(response.get("status") or 0) == 404:
+        return data if isinstance(data, dict) else {"object": "error", "status": 404}
+    return _notion_payload(response, f"Retrieve page {page_id}")
 
 
 def _extract_title_from_prop(prop: Dict) -> str:
