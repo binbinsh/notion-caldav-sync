@@ -20,8 +20,8 @@ Create a `.env` (used locally and when running `pywrangler secret put`):
 
 | Key | Purpose |
 | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Worker account |
-| `CLOUDFLARE_API_TOKEN` | Token with Workers + KV permissions |
+| `CLOUDFLARE_ACCOUNT_ID` | Optional account selector when you belong to multiple Cloudflare accounts |
+| `CLOUDFLARE_API_TOKEN` | Optional token for headless deployment; interactive deploys can use Wrangler OAuth |
 | `CLOUDFLARE_STATE_NAMESPACE` | KV namespace ID for the `STATE` binding |
 | `NOTION_TOKEN` | Notion integration token |
 | `ADMIN_TOKEN` | Required by `/admin/*` endpoints |
@@ -35,6 +35,9 @@ Generate a strong `ADMIN_TOKEN` locally (e.g. `openssl rand -hex 32`) and keep i
 uv venv --python 3.12
 uv sync
 uv sync --group dev
+
+# authenticate once (skip this when using CLOUDFLARE_API_TOKEN)
+uv run pywrangler login
 
 # deploy to cloudflare
 chmod a+x deploy.sh

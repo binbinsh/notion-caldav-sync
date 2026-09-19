@@ -79,13 +79,9 @@ reuse_namespace_from_config() {
   return 1
 }
 
-if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-  echo "CLOUDFLARE_ACCOUNT_ID is required for Wrangler operations." >&2
-  exit 1
-fi
-
-if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-  echo "CLOUDFLARE_API_TOKEN is required for Wrangler operations." >&2
+if ! uv run -- pywrangler whoami >/dev/null 2>&1; then
+  echo "Cloudflare authentication is required." >&2
+  echo "Run 'uv run pywrangler login' for OAuth, or set CLOUDFLARE_API_TOKEN for headless deployment." >&2
   exit 1
 fi
 
