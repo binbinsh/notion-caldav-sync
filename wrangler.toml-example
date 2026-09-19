@@ -1,6 +1,6 @@
 name = "notion-caldav-sync"
 main = "src/app/worker.py"
-compatibility_date = "2025-11-09"
+compatibility_date = "2026-09-20"
 compatibility_flags = ["python_workers"]
 
 [[kv_namespaces]]

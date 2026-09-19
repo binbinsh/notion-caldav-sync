@@ -8,7 +8,7 @@ except ImportError:  # pragma: no cover - flat module fallback (Workers bundle)
     from constants import resolve_status_emoji_style  # type: ignore
 
 
-NOTION_VERSION = "2025-09-03"
+NOTION_VERSION = "2026-03-11"
 
 
 class Bindings:

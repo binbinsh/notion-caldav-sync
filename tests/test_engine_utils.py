@@ -231,7 +231,7 @@ async def test_handle_webhook_tasks_accepts_data_source_parent(monkeypatch: pyte
         return {
             "id": "abcd1234-abcd-1234-abcd-1234abcd1234",
             "parent": {"data_source_id": "ds1"},
-            "archived": False,
+            "in_trash": False,
         }
 
     async def _fake_get_database_title(*_args, **_kwargs):
@@ -265,3 +265,41 @@ async def test_handle_webhook_tasks_accepts_data_source_parent(monkeypatch: pyte
     await handle_webhook_tasks(bindings, [page_id])
 
     assert writes == ["DS Title"]
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_tasks_deletes_page_in_trash(monkeypatch: pytest.MonkeyPatch):
+    deleted: list[str] = []
+
+    async def _fake_calendar_ensure(_):
+        return {"calendar_href": "https://calendar", "calendar_color": "#fff"}
+
+    async def _fake_get_page(*_args, **_kwargs):
+        return {
+            "id": "abcd1234-abcd-1234-abcd-1234abcd1234",
+            "parent": {"data_source_id": "ds1"},
+            "in_trash": True,
+        }
+
+    def _fake_parse_page(page):
+        return TaskInfo(
+            notion_id=page["id"],
+            title="Trashed task",
+            status="Todo",
+            start_date="2024-01-01T10:00:00Z",
+        )
+
+    async def _fake_delete(_bindings, calendar_href, notion_id):
+        deleted.append(notion_id)
+        assert calendar_href == "https://calendar"
+
+    monkeypatch.setattr("src.app.engine.calendar_ensure", _fake_calendar_ensure)
+    monkeypatch.setattr("src.app.engine.get_page", _fake_get_page)
+    monkeypatch.setattr("src.app.engine.parse_page_to_task", _fake_parse_page)
+    monkeypatch.setattr("src.app.engine._delete_task_event", _fake_delete)
+
+    bindings = _DummyBindings()
+    page_id = "abcd1234-abcd-1234-abcd-1234abcd1234"
+    await handle_webhook_tasks(bindings, [page_id])
+
+    assert deleted == [page_id]

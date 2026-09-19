@@ -378,7 +378,7 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
             log(f"[sync] deleted event for {pid} (missing parent database)")
             continue
         task = parse_page_to_task(page)
-        if page.get("archived") or not task.start_date:
+        if page.get("in_trash") or not task.start_date:
             await _delete_task_event(bindings, calendar_href, task.notion_id)
             log(f"[sync] deleted event for {task.notion_id}")
             continue

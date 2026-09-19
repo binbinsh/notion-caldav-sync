@@ -2,7 +2,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)](pyproject.toml)
 [![Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-F38020?logo=cloudflare)](https://developers.cloudflare.com/workers/)
-[![Notion API](https://img.shields.io/badge/Notion%20API-2025--09--03-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
+[![Notion API](https://img.shields.io/badge/Notion%20API-2026--03--11-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
 [![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/app/calendar.py)
 
 Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker is the simplest way to surface every dated Notion task inside a dedicated iCloud calendar. Webhooks keep updates nearly instant, and a cron-powered rewrite regularly reconciles the two so Apple Calendar always reflects the latest Notion truth.
@@ -72,6 +72,7 @@ STATUS_EMOJI_STYLE=symbol ./deploy.sh
    - Under *Page and database access*, choose the databases that should sync (make sure they’re shared with the integration inside Notion)
 5. **Webhooks**
    - **Webhook URL:** `https://<worker-url>/webhook/notion` (replace with your *.workers.dev domain or custom route)
+   - **API version:** select `2026-03-11`
    - **Subscribed events:** select every **Page**, **Database**, and **Data source** entry; leave **Comment** and **File upload** unchecked
 6. Save the integration and copy the generated secret into `.env` as `NOTION_TOKEN`.
 
@@ -83,8 +84,9 @@ When Notion first performs the webhook verification handshake, the worker automa
 - Debug info: `curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/debug`
 
 ## Testing
-All tests hit live APIs, so use staging credentials.
+The default test suite is offline and uses mocks. Live integration suites require staging credentials.
 ```bash
+uv run pytest -m "not integration"
 uv run -- pywrangler dev --persist-to .wrangler/state
 uv run python -m tests.cli smoke --env-file .env
 uv run python -m tests.cli run --suite all --env-file .env

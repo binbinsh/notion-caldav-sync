@@ -18,7 +18,7 @@ except Exception:
     pass
 
 try:
-    import js  # type: ignore
+    import js  # type: ignore  # noqa: F401
     JS_RUNTIME = True
 except ImportError:
     JS_RUNTIME = False
