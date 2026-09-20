@@ -75,9 +75,10 @@ def test_public_page_has_both_requested_destinations_and_keeps_login_redirect():
     assert "Calendar changes are never written back" in response.body
     assert "white-space:nowrap" in response.body
     assert "© 2026 Grid Heap, Inc." in response.body
-    assert "CalDAV Sync" in response.body
-    assert 'class="brand-attribution"' in response.body
-    assert 'alt="Planner.li"' in response.body
+    assert "<title>Notion CalDAV Sync</title>" in response.body
+    assert '<span class="brand-name">Notion CalDAV Sync</span>' in response.body
+    assert "brand-attribution" not in response.body
+    assert 'alt="Planner.li"' not in response.body
     assert "brand-mark" not in response.body
     assert ">GitHub <" in response.body
     assert "_calendar_preview" not in response.body
