@@ -65,6 +65,7 @@ class Default(WorkerEntrypoint):
             "/api/sync",
             "/admin",
             "/api/admin/action",
+            "/notion/connect",
             "/oauth/notion/start",
             "/notion/callback",
             "/webhook/notion/hosted",
@@ -85,7 +86,7 @@ class Default(WorkerEntrypoint):
                     return await hosted.homepage(request)
                 if path == "/api/status" and method == "GET":
                     return await hosted.status(request)
-                if path == "/oauth/notion/start" and method == "GET":
+                if path in {"/notion/connect", "/oauth/notion/start"} and method == "GET":
                     return await hosted.begin_notion(request)
                 if path == "/notion/callback" and method == "GET":
                     return await hosted.complete_notion(request)

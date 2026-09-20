@@ -49,12 +49,18 @@ def test_dashboard_document_has_one_adobe_embed_and_cjk_fallback():
 
 
 def test_csp_allows_only_required_font_origins_and_nonce_script():
-    csp = _csp("nonce")
+    csp = _csp(
+        "nonce",
+        clerk_frontend_api="https://clerk.planner.li/v1",
+    )
     assert "script-src 'nonce-nonce'" in csp
+    assert "script-src 'nonce-nonce' https://clerk.planner.li" in csp
     assert "style-src 'unsafe-inline' https://use.typekit.net" in csp
     assert "font-src https://use.typekit.net https://p.typekit.net" in csp
     assert "default-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp
+    assert "connect-src 'self' https://clerk.planner.li" in csp
+    assert "worker-src blob:" in csp
     assert "style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net" in csp
 
 
@@ -62,6 +68,8 @@ def test_public_page_has_both_requested_destinations_and_keeps_login_redirect():
     response = signed_out_page(
         base_url="https://calendar.planner.li/",
         sign_in_url="https://accounts.planner.li/sign-in",
+        clerk_publishable_key="pk_live_example",
+        clerk_frontend_api="https://clerk.planner.li",
     )
     elements = Elements(response.body)
     assert elements.matching("a", href=SOURCE_URL, **{"class": "button secondary"})
@@ -72,6 +80,11 @@ def test_public_page_has_both_requested_destinations_and_keeps_login_redirect():
     )
     assert "View source" in response.body
     assert "Use our free managed service" in response.body
+    assert response.body.count("@clerk/clerk-js@6/dist/clerk.browser.js") == 1
+    assert "data-clerk-domain" not in response.body
+    assert 'data-clerk-publishable-key="pk_live_example"' in response.body
+    assert "isSatellite" not in response.body
+    assert "signIn.href=Clerk.buildSignInUrl()" in response.body
     assert "Hosted and managed by Planner.li. No deployment, no charge." in response.body
     assert "Calendar changes are never written back" in response.body
     assert "white-space:nowrap" in response.body
@@ -95,7 +108,7 @@ def test_dashboard_preserves_forms_oauth_and_sync_availability(connected):
         status={"notion": {"status": state}, "apple": {"status": state}, "sync": {"status": state}}
     )
     elements = Elements(response.body)
-    assert elements.matching("a", href="/oauth/notion/start")
+    assert elements.matching("a", href="/notion/connect")
     assert elements.matching("form", method="post", action="/api/apple")
     assert elements.matching("form", method="post", action="/api/sync")
     for name, field_type in [("apple_id", "email"), ("app_password", "password")]:

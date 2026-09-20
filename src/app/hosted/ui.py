@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import json
 from typing import Any, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from workers import Response
 
@@ -18,15 +18,31 @@ def _escape(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
 
 
-def _csp(nonce: str) -> str:
+def _origin(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _csp(
+    nonce: str,
+    *,
+    clerk_frontend_api: str = "",
+) -> str:
+    frontend_origin = _origin(clerk_frontend_api)
+    script_sources = " ".join(source for source in (frontend_origin,) if source)
+    connect_sources = " ".join(source for source in (frontend_origin,) if source)
+    worker_policy = ("worker-src blob:",) if frontend_origin else ()
     return "; ".join(
         (
             "default-src 'none'",
-            f"script-src 'nonce-{nonce}'",
+            f"script-src 'nonce-{nonce}'{(' ' + script_sources) if script_sources else ''}",
             "style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net",
             "font-src https://use.typekit.net https://p.typekit.net",
             "img-src 'self' data:",
-            "connect-src 'self'",
+            f"connect-src 'self'{(' ' + connect_sources) if connect_sources else ''}",
+            *worker_policy,
             "base-uri 'none'",
             "form-action 'self' https://accounts.planner.li https://api.notion.com",
             "frame-ancestors 'none'",
@@ -34,14 +50,23 @@ def _csp(nonce: str) -> str:
     )
 
 
-def html_response(body: str, *, status: int = 200, nonce: Optional[str] = None) -> Response:
+def html_response(
+    body: str,
+    *,
+    status: int = 200,
+    nonce: Optional[str] = None,
+    clerk_frontend_api: str = "",
+) -> Response:
     active_nonce = nonce or random_token(18)
     return Response(
         body,
         status=status,
         headers={
             "Content-Type": "text/html; charset=utf-8",
-            "Content-Security-Policy": _csp(active_nonce),
+            "Content-Security-Policy": _csp(
+                active_nonce,
+                clerk_frontend_api=clerk_frontend_api,
+            ),
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "no-store",
@@ -49,7 +74,14 @@ def html_response(body: str, *, status: int = 200, nonce: Optional[str] = None) 
     )
 
 
-def _document(*, title: str, content: str, nonce: str) -> str:
+def _document(
+    *,
+    title: str,
+    content: str,
+    nonce: str,
+    extra_head: str = "",
+    extra_body: str = "",
+) -> str:
     return f"""<!doctype html>
 <html lang="en" class="wf-loading">
 <head>
@@ -57,6 +89,7 @@ def _document(*, title: str, content: str, nonce: str) -> str:
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="An open-source, one-way sync from Notion to Apple Calendar. Self-host it or use the managed Planner.li service.">
   <title>{_escape(title)}</title>
+  {extra_head}
   <style>
     :root {{
       --app-font-native-sans: system-ui, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", -apple-system, Arial, sans-serif;
@@ -225,7 +258,7 @@ def _document(*, title: str, content: str, nonce: str) -> str:
     }})();
   </script>
 </head>
-<body><main data-font-gated>{content}</main></body>
+<body><main data-font-gated>{content}</main>{extra_body}</body>
 </html>"""
 
 
@@ -261,9 +294,39 @@ def _localized_message(message: str) -> str:
     return translations.get(message, message)
 
 
-def signed_out_page(*, base_url: str, sign_in_url: str) -> Response:
+def signed_out_page(
+    *,
+    base_url: str,
+    sign_in_url: str,
+    clerk_publishable_key: str,
+    clerk_frontend_api: str,
+) -> Response:
     nonce = random_token(18)
     redirect = quote(base_url.rstrip("/") + "/", safe="")
+    fallback_sign_in = f"{sign_in_url}?redirect_url={redirect}"
+    clerk_script = (
+        f'<script defer crossorigin="anonymous" data-clerk-publishable-key="{_escape(clerk_publishable_key)}" '
+        f'src="{_escape(clerk_frontend_api.rstrip("/"))}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>'
+    )
+    clerk_boot = f"""
+      <script nonce="{nonce}">
+        window.addEventListener('load',async()=>{{
+          const signIn=document.getElementById('managed-sign-in');
+          if(!signIn||!window.Clerk)return;
+          try{{
+            await Clerk.load({{
+              signInUrl:{json.dumps(sign_in_url)},
+              signUpUrl:{json.dumps(sign_in_url.replace('/sign-in', '/sign-up'))}
+            }});
+            if(Clerk.session){{
+              const status=await fetch('/api/status',{{credentials:'same-origin'}});
+              if(status.ok){{location.replace('/');return;}}
+            }}
+            signIn.href=Clerk.buildSignInUrl();
+          }}catch(error){{console.warn('Clerk satellite initialization failed',error);}}
+        }},{{once:true}});
+      </script>
+    """
     content = f"""
       {_brand()}
       <section class="intro" aria-labelledby="intro-title">
@@ -272,7 +335,7 @@ def signed_out_page(*, base_url: str, sign_in_url: str) -> Response:
         <p class="intro-copy">An open-source, one-way sync for dated Notion tasks. Self-host it, or use our managed service.</p>
         <div class="actions">
           <a class="button secondary" href="{SOURCE_URL}">View source <span class="arrow" aria-hidden="true">↗</span></a>
-          <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">Use our free managed service <span class="arrow" aria-hidden="true">→</span></a>
+          <a class="button" id="managed-sign-in" href="{_escape(fallback_sign_in)}">Use our free managed service <span class="arrow" aria-hidden="true">→</span></a>
         </div>
         <p class="action-note">Hosted and managed by Planner.li. No deployment, no charge.</p>
       </section>
@@ -284,7 +347,15 @@ def signed_out_page(*, base_url: str, sign_in_url: str) -> Response:
       {_footer()}
     """
     return html_response(
-        _document(title="Notion CalDAV Sync", content=content, nonce=nonce), nonce=nonce
+        _document(
+            title="Notion CalDAV Sync",
+            content=content,
+            nonce=nonce,
+            extra_head=clerk_script,
+            extra_body=clerk_boot,
+        ),
+        nonce=nonce,
+        clerk_frontend_api=clerk_frontend_api,
     )
 
 
@@ -377,7 +448,7 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
           <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">1</span><h2 id="notion-title">Notion</h2></div><span class="status {"ok" if notion_ok else ""}">{"Connected" if notion_ok else "Not connected"}</span></div>
           <div class="connection-content">
             <p class="connection-copy">{('<span class="workspace">' + _escape(workspace_name) + "</span> · Reconnect to change which pages can be read.") if notion_ok else "Choose which Notion pages this service may read. Only task content needed for sync is accessed."}</p>
-            <a class="button {"secondary" if notion_ok else ""}" href="/oauth/notion/start">{"Reconnect Notion" if notion_ok else "Connect Notion"} <span class="arrow" aria-hidden="true">→</span></a>
+            <a class="button {"secondary" if notion_ok else ""}" href="/notion/connect">{"Reconnect Notion" if notion_ok else "Connect Notion"} <span class="arrow" aria-hidden="true">→</span></a>
           </div>
         </section>
         <section class="connection" aria-labelledby="apple-title">

@@ -130,9 +130,14 @@ class HostedService:
         try:
             user = await self.user(request)
         except AuthenticationError:
+            clerk_origin = urlparse(self.config.clerk_jwks_url)
             return signed_out_page(
                 base_url=self.config.public_base_url,
                 sign_in_url=self.config.clerk_sign_in_url,
+                clerk_publishable_key=str(
+                    getattr(self.env, "CLERK_PUBLISHABLE_KEY", "") or ""
+                ),
+                clerk_frontend_api=f"{clerk_origin.scheme}://{clerk_origin.netloc}",
             )
         status = await self.repository.account_status(user["id"])
         query = parse_qs(urlparse(str(request.url)).query)
