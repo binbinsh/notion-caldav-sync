@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from typing import Any, Dict, List, Optional, Sequence
@@ -219,7 +220,10 @@ def _notion_id_from_href(href: Optional[str]) -> Optional[str]:
         return None
     last = href.rstrip("/").split("/")[-1]
     if last.endswith(".ics"):
-        return last[:-4]
+        notion_id = last[:-4]
+        if notion_id.startswith("restored-"):
+            notion_id = notion_id[len("restored-") :]
+        return notion_id
     return None
 
 
@@ -253,14 +257,17 @@ async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_p
     target = calendar_href if calendar_href.endswith("/") else f"{calendar_href}/"
     body = (
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-        "<d:propfind xmlns:d=\"DAV:\">"
-        "<d:prop><d:getetag/></d:prop>"
-        "</d:propfind>"
+        "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">"
+        "<d:prop><d:getetag/><c:calendar-data/></d:prop>"
+        "<c:filter><c:comp-filter name=\"VCALENDAR\">"
+        "<c:comp-filter name=\"VEVENT\"/>"
+        "</c:comp-filter></c:filter>"
+        "</c:calendar-query>"
     )
     headers = {"Depth": "1", "Content-Type": "application/xml; charset=utf-8"}
     try:
         status, _, payload = await http_request(
-            "PROPFIND",
+            "REPORT",
             target,
             apple_id,
             apple_app_password,
@@ -268,7 +275,7 @@ async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_p
             body=body,
         )
     except Exception as exc:
-        print(f"[calendar] PROPFIND failed: {exc}")
+        print(f"[calendar] REPORT failed: {exc}")
         return []
     if status >= 400 or not payload:
         return []
@@ -287,12 +294,21 @@ async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_p
             continue
         etag_node = response.find(".//d:getetag", namespaces=ns)
         etag = etag_node.text if etag_node is not None else None
+        calendar_data_node = response.find(
+            ".//{urn:ietf:params:xml:ns:caldav}calendar-data"
+        )
+        calendar_data = (
+            calendar_data_node.text
+            if calendar_data_node is not None and calendar_data_node.text
+            else ""
+        )
         full_href = href_text if href_text.startswith("http") else urljoin(target, href_text)
         events.append(
             {
                 "href": full_href,
                 "etag": etag,
                 "notion_id": _notion_id_from_href(href_text),
+                "ics": calendar_data,
             }
         )
     return events
@@ -309,16 +325,27 @@ async def list_events(calendar_href: str, apple_id: str, apple_app_password: str
 async def put_event(event_url: str, ics: str, apple_id: str, apple_app_password: str) -> None:
     if HAS_NATIVE_WEBDAV:
         headers = {"Content-Type": 'text/calendar; charset="utf-8"'}
-        await http_request(
-            "PUT",
-            event_url,
-            apple_id,
-            apple_app_password,
-            headers=headers,
-            body=ics,
-            expect_body=False,
-        )
-        return
+        transient_statuses = {429, 500, 502, 503, 504}
+        transient_attempt = 0
+        while True:
+            status, _, _ = await http_request(
+                "PUT",
+                event_url,
+                apple_id,
+                apple_app_password,
+                headers=headers,
+                body=ics,
+                expect_body=False,
+            )
+            if status < 400:
+                return
+            if status == 404 and "If-None-Match" not in headers:
+                headers["If-None-Match"] = "*"
+                continue
+            if status not in transient_statuses or transient_attempt == 3:
+                raise RuntimeError(f"CalDAV PUT failed with status {status}")
+            await asyncio.sleep(0.25 * (2**transient_attempt))
+            transient_attempt += 1
     if not HAS_CALDAV:
         raise RuntimeError("caldav library unavailable; cannot PUT events without WebDAV runtime")
     client = _client_for(event_url, apple_id, apple_app_password)

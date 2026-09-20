@@ -1,9 +1,15 @@
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timedelta, timezone, tzinfo
 import hashlib
+import json
 from typing import Any, Dict, List, Optional
 
 from dateutil import parser as dtparser, tz as datetz
+from icalendar import Calendar as ICalendar
+
+
+_MAX_PARALLEL_CALDAV_WRITES = 2
 
 try:
     from .calendar import (
@@ -166,8 +172,14 @@ def _description_for_task(task: TaskInfo) -> str:
     return "\n".join(parts)
 
 
-def _event_url(calendar_href: str, notion_id: str) -> str:
-    return calendar_href.rstrip("/") + f"/{notion_id}.ics"
+def _event_url(calendar_href: str, notion_id: str, *, restored: bool = False) -> str:
+    filename = f"restored-{notion_id}.ics" if restored else f"{notion_id}.ics"
+    return calendar_href.rstrip("/") + f"/{filename}"
+
+
+def _uid_notion_id(notion_id: str, event_url: str) -> str:
+    filename = event_url.rstrip("/").split("/")[-1]
+    return f"restored-{notion_id}" if filename.startswith("restored-") else notion_id
 
 
 def _build_ics_for_task(
@@ -176,6 +188,7 @@ def _build_ics_for_task(
     *,
     date_only_tz: tzinfo,
     status_emoji_style: str,
+    uid_notion_id: Optional[str] = None,
 ) -> str:
     normalized_status = _status_for_task(task, date_only_tz=date_only_tz)
     emoji = status_to_emoji(normalized_status, style=status_emoji_style) or status_to_emoji(
@@ -183,7 +196,7 @@ def _build_ics_for_task(
         style=status_emoji_style,
     )
     return build_event(
-        task.notion_id,
+        uid_notion_id or task.notion_id,
         task.title or "",
         emoji,
         normalized_status,
@@ -256,7 +269,74 @@ def _parse_iso_datetime(
 
 
 def _hash_ics_payload(ics: str) -> str:
-    return hashlib.sha256(ics.encode("utf-8")).hexdigest()
+    managed_fields = (
+        "UID",
+        "SUMMARY",
+        "COLOR",
+        "CATEGORIES",
+        "DTSTART",
+        "DTEND",
+        "DESCRIPTION",
+        "URL",
+    )
+    alarm_fields = ("ACTION", "TRIGGER", "DESCRIPTION")
+
+    def _property_value(name: str, value: Any) -> Any:
+        if name in {"DTSTART", "DTEND"} and hasattr(value, "dt"):
+            dt_value = value.dt
+            if isinstance(dt_value, datetime):
+                return dt_value.astimezone(timezone.utc).isoformat()
+            if hasattr(dt_value, "isoformat"):
+                return dt_value.isoformat()
+        if name == "CATEGORIES" and hasattr(value, "cats"):
+            return sorted(str(item) for item in value.cats)
+        if name == "TRIGGER" and hasattr(value, "to_ical"):
+            encoded = value.to_ical()
+            return encoded.decode("utf-8") if isinstance(encoded, bytes) else str(encoded)
+        return str(value)
+
+    try:
+        calendar = ICalendar.from_ical(ics)
+        events = []
+        for event in calendar.walk("VEVENT"):
+            document = {
+                name: _property_value(name, event.get(name))
+                for name in managed_fields
+                if event.get(name) is not None
+            }
+            alarms = []
+            for component in event.subcomponents:
+                if getattr(component, "name", "") != "VALARM":
+                    continue
+                alarms.append(
+                    {
+                        name: _property_value(name, component.get(name))
+                        for name in alarm_fields
+                        if component.get(name) is not None
+                    }
+                )
+            document["VALARM"] = sorted(
+                alarms,
+                key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False),
+            )
+            events.append(document)
+        stable_payload = json.dumps(
+            sorted(
+                events,
+                key=lambda item: str(item.get("UID", "")),
+            ),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    except Exception:
+        stable_lines = [
+            line
+            for line in ics.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if not line.upper().startswith(("DTSTAMP:", "LAST-MODIFIED:"))
+        ]
+        stable_payload = "\n".join(stable_lines).strip() + "\n"
+    return hashlib.sha256(stable_payload.encode("utf-8")).hexdigest()
 
 
 async def _write_task_event(
@@ -266,24 +346,50 @@ async def _write_task_event(
     task: TaskInfo,
     *,
     date_only_tz: tzinfo,
+    event_url: Optional[str] = None,
 ) -> None:
     if not task.start_date:
         return
     if not task.notion_id:
         return
+    resolved_event_url = event_url or _event_url(
+        calendar_href,
+        task.notion_id,
+        restored=True,
+    )
     ics = _build_ics_for_task(
         task,
         calendar_color,
         date_only_tz=date_only_tz,
         status_emoji_style=bindings.status_emoji_style,
+        uid_notion_id=_uid_notion_id(task.notion_id, resolved_event_url),
     )
-    event_url = _event_url(calendar_href, task.notion_id)
-    await calendar_put_event(event_url, ics, bindings.apple_id, bindings.apple_app_password)
+    await calendar_put_event(
+        resolved_event_url,
+        ics,
+        bindings.apple_id,
+        bindings.apple_app_password,
+    )
 
 
-async def _delete_task_event(bindings: Bindings, calendar_href: str, notion_id: str) -> None:
-    event_url = _event_url(calendar_href, notion_id)
-    await calendar_delete_event(event_url, bindings.apple_id, bindings.apple_app_password)
+async def _delete_task_event(
+    bindings: Bindings,
+    calendar_href: str,
+    notion_id: str,
+    *,
+    event_url: Optional[str] = None,
+) -> None:
+    targets = [event_url] if event_url else [
+        _event_url(calendar_href, notion_id),
+        _event_url(calendar_href, notion_id, restored=True),
+    ]
+    for target in targets:
+        if target:
+            await calendar_delete_event(
+                target,
+                bindings.apple_id,
+                bindings.apple_app_password,
+            )
 
 
 def full_sync_due(settings: Dict[str, any]) -> bool:
@@ -311,27 +417,77 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
         bindings.apple_id,
         bindings.apple_app_password,
     )
+    previous_hashes = settings.get("event_hashes")
+    if not isinstance(previous_hashes, dict):
+        previous_hashes = {}
+    existing_event_urls = {
+        event["notion_id"]: event["href"]
+        for event in existing_events
+        if isinstance(event.get("notion_id"), str)
+        and event.get("notion_id")
+        and isinstance(event.get("href"), str)
+        and event.get("href")
+    }
+    existing_ids = set(existing_event_urls)
+    existing_content_hashes = {
+        event["notion_id"]: _hash_ics_payload(event["ics"])
+        for event in existing_events
+        if isinstance(event.get("notion_id"), str)
+        and event.get("notion_id")
+        and isinstance(event.get("ics"), str)
+        and event.get("ics")
+    }
     tasks = await _collect_tasks(bindings)
     updated_ids: List[str] = []
     updated_hashes: Dict[str, str] = {}
+    planned_writes: List[tuple[str, str]] = []
     writes = 0
+    unchanged = 0
     for task in tasks:
         if not task.start_date:
             continue
         if not task.notion_id:
             continue
+        event_url = existing_event_urls.get(task.notion_id) or _event_url(
+            calendar_href,
+            task.notion_id,
+            restored=True,
+        )
         ics = _build_ics_for_task(
             task,
             calendar_color,
             date_only_tz=date_only_tz,
             status_emoji_style=bindings.status_emoji_style,
+            uid_notion_id=_uid_notion_id(task.notion_id, event_url),
         )
         payload_hash = _hash_ics_payload(ics)
-        event_url = _event_url(calendar_href, task.notion_id)
-        await calendar_put_event(event_url, ics, bindings.apple_id, bindings.apple_app_password)
-        writes += 1
+        remote_hash = existing_content_hashes.get(task.notion_id)
+        if task.notion_id in existing_ids and (
+            remote_hash == payload_hash
+            or (remote_hash is None and previous_hashes.get(task.notion_id) == payload_hash)
+        ):
+            unchanged += 1
+        else:
+            planned_writes.append((event_url, ics))
         updated_ids.append(task.notion_id)
         updated_hashes[task.notion_id] = payload_hash
+
+    if planned_writes:
+        write_slots = asyncio.Semaphore(_MAX_PARALLEL_CALDAV_WRITES)
+
+        async def _write_event(event_url: str, ics: str) -> None:
+            async with write_slots:
+                await calendar_put_event(
+                    event_url,
+                    ics,
+                    bindings.apple_id,
+                    bindings.apple_app_password,
+                )
+
+        await asyncio.gather(
+            *(_write_event(event_url, ics) for event_url, ics in planned_writes)
+        )
+        writes = len(planned_writes)
     await calendar_remove_missing_events(
         calendar_href,
         updated_ids,
@@ -345,7 +501,10 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
         last_full_sync=now,
         event_hashes=updated_hashes,
     )
-    summary = f"[sync] full rewrite finished (events={len(updated_ids)} writes={writes})"
+    summary = (
+        f"[sync] full rewrite finished "
+        f"(events={len(updated_ids)} writes={writes} unchanged={unchanged})"
+    )
     log(summary)
     return settings
 
@@ -360,6 +519,19 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
         raise RuntimeError("Calendar metadata missing; run /admin/full-sync to rebuild the Notion calendar.")
     calendar_color = settings.get("calendar_color", DEFAULT_CALENDAR_COLOR)
     date_only_tz = _date_only_timezone(settings)
+    existing_events = await calendar_list_events(
+        calendar_href,
+        bindings.apple_id,
+        bindings.apple_app_password,
+    )
+    existing_event_urls = {
+        event["notion_id"]: event["href"]
+        for event in existing_events
+        if isinstance(event.get("notion_id"), str)
+        and event.get("notion_id")
+        and isinstance(event.get("href"), str)
+        and event.get("href")
+    }
     for pid in page_ids:
         log(f"[sync] webhook update for page {pid}")
         try:
@@ -368,18 +540,33 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
             log(f"[sync] failed to fetch page {pid}: {exc}")
             continue
         if not page or page.get("object") == "error":
-            await _delete_task_event(bindings, calendar_href, pid)
+            await _delete_task_event(
+                bindings,
+                calendar_href,
+                pid,
+                event_url=existing_event_urls.get(pid),
+            )
             log(f"[sync] deleted event for {pid} (page missing)")
             continue
         parent = page.get("parent") or {}
         database_id = parent.get("data_source_id") or parent.get("database_id")
         if not database_id:
-            await _delete_task_event(bindings, calendar_href, pid)
+            await _delete_task_event(
+                bindings,
+                calendar_href,
+                pid,
+                event_url=existing_event_urls.get(pid),
+            )
             log(f"[sync] deleted event for {pid} (missing parent database)")
             continue
         task = parse_page_to_task(page)
         if page.get("in_trash") or not task.start_date:
-            await _delete_task_event(bindings, calendar_href, task.notion_id)
+            await _delete_task_event(
+                bindings,
+                calendar_href,
+                task.notion_id,
+                event_url=existing_event_urls.get(task.notion_id),
+            )
             log(f"[sync] deleted event for {task.notion_id}")
             continue
         try:
@@ -395,6 +582,7 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
                 calendar_color,
                 task,
                 date_only_tz=date_only_tz,
+                event_url=existing_event_urls.get(task.notion_id),
             )
             log(f"[sync] wrote event for {task.notion_id}")
         except Exception as exc:

@@ -97,6 +97,7 @@ uv run -- pywrangler tail
 - Rename/recolour the iCloud calendar directly—the worker reuses those values from KV.
 - All-day overdue detection uses the calendar's timezone. We auto-detect it from iCloud, but you can override it via `POST /admin/settings` with `{ "date_only_timezone": "<IANA tz>" }`.
 - Cron runs every 30 minutes (see `wrangler.toml-example`). The rewrite occurs when `full_sync_interval_minutes` (stored in KV via `/admin/settings`) has elapsed; webhooks handle near-real-time updates between reconciliations.
+- Reconciliation compares the managed ICS fields returned by iCloud, skips unchanged events, and limits parallel CalDAV writes. If iCloud has tombstoned a deleted event UID, the worker recreates it with a stable recovery UID and continues to reuse the returned resource path.
 - Status emojis embedded in ICS titles map to the canonical task states (see “Status emoji style”).
 
 ## License
