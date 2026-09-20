@@ -17,4 +17,4 @@ id = "${CLOUDFLARE_STATE_NAMESPACE}"
 STATUS_EMOJI_STYLE = "${STATUS_EMOJI_STYLE}"
 
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/5 * * * *"]

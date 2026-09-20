@@ -46,4 +46,4 @@ HOSTED_CRON_BATCH_LIMIT = "${HOSTED_CRON_BATCH_LIMIT}"
 HOSTED_BETA_USER_LIMIT = "${HOSTED_BETA_USER_LIMIT}"
 
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/5 * * * *"]

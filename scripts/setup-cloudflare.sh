@@ -379,7 +379,14 @@ if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
 else
   step "Create a webhook subscription with this URL: ${WORKER_URL%/}/webhook/notion"
   step "Subscribe to Page, Database, and Data source events."
-  pause "Press Enter after saving and verifying the webhook."
+  pause "Press Enter after Notion sends the verification request."
+  VERIFY_JSON=$(curl --fail --silent --show-error \
+    --header "X-Admin-Token: $ADMIN_TOKEN" \
+    "${WORKER_URL%/}/admin/settings")
+  VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
+  require_value verification_token "$VERIFY_TOKEN"
+  say "Paste this verification token into Notion: $VERIFY_TOKEN"
+  pause "Press Enter after Notion reports the subscription as active."
   if confirm "Run one full sync now?"; then
     curl --fail --silent --show-error \
       --request POST \

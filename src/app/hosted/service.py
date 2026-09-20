@@ -39,6 +39,20 @@ def _managed_event_prefix(calendar_name: str) -> str:
     return "notion-caldav-sync-"
 
 
+def _webhook_bot_ids(payload: dict[str, Any]) -> tuple[str, ...]:
+    bot_ids: list[str] = []
+    for identity in payload.get("accessible_by") or []:
+        if not isinstance(identity, dict) or identity.get("type") != "bot":
+            continue
+        bot_id = str(identity.get("id") or "").strip()
+        if bot_id and bot_id not in bot_ids:
+            bot_ids.append(bot_id)
+    if bot_ids:
+        return tuple(bot_ids)
+    legacy_id = str(payload.get("bot_id") or payload.get("integration_id") or "").strip()
+    return (legacy_id,) if legacy_id else ()
+
+
 @dataclass(frozen=True)
 class HostedConfig:
     public_base_url: str
@@ -671,10 +685,15 @@ class HostedService:
         if not await self.repository.record_webhook(event_id):
             return json_response({"ok": True, "duplicate": True})
         workspace_id = str(payload.get("workspace_id") or "")
-        bot_id = str(payload.get("integration_id") or payload.get("bot_id") or "")
-        if not workspace_id or not bot_id:
+        bot_ids = _webhook_bot_ids(payload)
+        if not workspace_id or not bot_ids:
             return json_response({"ok": True, "queued": 0})
-        connections = await self.repository.connections_for_webhook(workspace_id, bot_id)
+        connections_by_id: dict[str, dict[str, Any]] = {}
+        for bot_id in bot_ids:
+            connections = await self.repository.connections_for_webhook(workspace_id, bot_id)
+            for connection in connections:
+                connections_by_id[str(connection["id"])] = connection
+        connections = list(connections_by_id.values())
         for connection in connections:
             await self.enqueue(connection["id"], "webhook", f"webhook:{event_id}:{connection['id']}")
         return json_response({"ok": True, "queued": len(connections)})

@@ -5,9 +5,9 @@
 [![Notion API](https://img.shields.io/badge/Notion%20API-2026--03--11-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
 [![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/app/calendar.py)
 
-Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker surfaces dated Notion tasks in Apple Calendar. It supports both a private, single-user deployment and an optional hosted multi-user mode. Webhooks keep updates nearly instant, and a cron-powered reconciliation regularly heals drift.
+Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker surfaces dated Notion tasks in Apple Calendar. It supports both a private, single-user deployment and an optional hosted multi-user mode. Verified webhooks request a fast sync after Notion changes, while scheduled reconciliation regularly heals drift.
 
-The design goal is **Reliability first**. every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
+The design goal is **reliability first**. Notion remains the source of truth, calendar changes are never written back, and a full reconciliation repairs missed or out-of-order webhook deliveries.
 
 ## Requirements
 
@@ -15,6 +15,21 @@ The design goal is **Reliability first**. every change pushes instantly via webh
 - Cloudflare account with Workers + KV access.
 - Personal mode: a Notion token shared with your task data sources, plus an Apple Account app-specific password.
 - Hosted mode: one Notion Public Connection, Clerk, D1, Queues, and a credential-vault key.
+
+## Notion data source shape
+
+The managed picker shows data sources that contain at least one date property and one status/select property. Use the supported property names below so the sync can map each field predictably:
+
+| Field | Supported Notion property names | Type | Required |
+| --- | --- | --- | --- |
+| Title | `Title`, otherwise the first title property | Title | Yes |
+| Status | `Status`, `Task Status`, `Progress` | Status or Select | Recommended |
+| Date | `Due date`, `Due`, `Date`, `Deadline` | Date | Yes; pages without a start date are skipped |
+| Reminder | `Reminder`, `Notification` | Date | No |
+| Category | `Category`, `Tags`, `Tag`, `Type`, `Class` | Select | No |
+| Description | `Description` | Rich text | No |
+
+Sync is one-way from Notion to Apple Calendar. Editing an event in Calendar never updates the Notion page.
 
 ## Configuration
 Create a `.env` (used locally and when running `pywrangler secret put`):
@@ -42,7 +57,7 @@ Run the guided one-command setup. It asks whether to deploy personal or hosted m
 
 The wizard remembers credentials and the custom domain in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. The selected hostname must be unused and belong to a zone in the same Cloudflare account; Cloudflare creates its DNS record and TLS certificate during deployment.
 
-Notion connection creation and webhook registration are the remaining dashboard steps because Notion does not expose them through its public API. The English-only wizard opens the correct pages, prints the exact callback and webhook URLs, waits for verification, and retrieves the hosted verification token. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
+Notion connection creation and webhook registration are the remaining dashboard steps because Notion does not expose them through its public API. The English-only wizard opens the correct pages, prints the exact callback and webhook URLs, waits for the verification request, retrieves the verification token, and tells you where to paste it. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
 
 If the Worker is already deployed and only the hosted webhook remains, run:
 
@@ -59,9 +74,9 @@ After signing in, each user:
 1. authorizes Notion through OAuth;
 2. enters an Apple app-specific password, which is validated through live CalDAV discovery before it is saved;
 3. chooses one or more compatible Notion data sources and either an existing Apple calendar or a dedicated `Notion` calendar;
-4. receives an immediate first sync, then automatic reconciliation every 30 minutes.
+4. receives an immediate first sync, then becomes eligible for automatic reconciliation every 30 minutes.
 
-When an existing calendar is selected, only events whose resource names start with `notion-caldav-sync-` are managed. Other events in that calendar are never treated as sync-owned.
+When an existing calendar is selected, only events whose resource names start with `notion-caldav-sync-` are managed. The legacy calendar name `Notion` is the compatibility exception: it reuses the original unprefixed event URLs, but only event IDs recorded by a previous successful sync are eligible for deletion. Unknown calendar events are preserved.
 
 The hosted runtime uses:
 
@@ -70,7 +85,7 @@ The hosted runtime uses:
 - D1 for users, installations, encrypted credentials, jobs, and tenant-scoped sync state.
 - AES-GCM with a Worker secret as the credential vault key.
 - Cloudflare Queues for bounded, retryable sync jobs.
-- Cron as the durable 30-minute reconciliation path; verified Notion webhooks can enqueue faster updates.
+- A five-minute Cron dispatcher that runs connections once their 30-minute reconciliation interval is due; verified Notion webhooks can enqueue faster updates.
 
 Provision Cloudflare resources and deploy with:
 
@@ -90,13 +105,13 @@ Clerk user IDs listed in `HOSTED_ADMIN_USER_IDS` can open `/admin` to inspect ac
 
 For a shared Clerk production instance, enable its allowed-subdomain list and include the hosted calendar hostname. The hosted Worker accepts only JWTs whose authorized party appears in `CLERK_AUTHORIZED_PARTIES`.
 
-The optional hosted webhook endpoint is:
+The optional hosted webhook subscription URL is:
 
 ```text
 https://calendar.example.com/webhook/notion/hosted?setup=<one-time-setup-token>
 ```
 
-The setup token is accepted only for a Notion verification handshake. The returned verification secret is encrypted in D1 and can be rotated only by repeating the handshake with the private setup token. See [the hosted architecture](docs/hosted-service-architecture.md) for the trust boundaries and data model.
+Treat the setup URL as a secret because it contains a one-time setup token. The token is accepted only for Notion's verification handshake. The returned verification secret is encrypted in D1, and every subsequent event must pass Notion's HMAC-SHA256 signature check. Recreate and verify the subscription to rotate the verification secret. See [the hosted architecture](docs/hosted-service-architecture.md) for the trust boundaries and data model.
 
 ## Status emoji style
 The worker supports two status emoji styles for event titles:
@@ -128,10 +143,12 @@ STATUS_EMOJI_STYLE=symbol ./deploy.sh
 5. **Webhooks**
    - **Webhook URL:** `https://<your-custom-domain>/webhook/notion`
    - **API version:** select `2026-03-11`
-   - **Subscribed events:** select every **Page**, **Database**, and **Data source** entry; leave **Comment** and **File upload** unchecked
+   - **Subscribed events:** select every **Page** and **Data source** event plus the non-deprecated **Database** events; leave **View**, **Comment**, and **File upload** unchecked
 6. Save the integration and copy the generated secret into `.env` as `NOTION_TOKEN`.
 
-When Notion first performs the webhook verification handshake, the worker automatically persists the provided verification token into KV and uses it for all future signature checks—no manual secret management required. If you click **Resend token** inside Notion’s webhook UI, you’ll see `(log) [Webhook] Stored verification token from Notion` in the worker logs; fetch the new `webhook_verification_token` at `/admin/settings` to confirm it updated.
+When Notion first performs the webhook verification handshake, the worker stores the provided verification token in KV and uses it for all future signature checks. The setup wizard retrieves that token through the protected `/admin/settings` endpoint so you can paste it into Notion's **Verify subscription** dialog. Re-sending the token replaces the stored value.
+
+Webhook events are signals, not complete page data. The worker verifies the signature, deduplicates the event, and fetches current data from the Notion API before syncing. [Notion documents](https://developers.notion.com/reference/webhooks-events-delivery) that it aggregates some events; delivery is typically within a minute but can take up to five minutes. Scheduled reconciliation remains the correctness fallback.
 
 ## Useful HTTP endpoints
 - Manual sync: `curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/full-sync`
@@ -148,14 +165,16 @@ uv run python -m tests.cli run --suite all --env-file .env
 uv run -- pywrangler tail
 ```
 
-## Notes
+## Data safety and operational notes
 - Only tasks with a start date will sync; undated pages are skipped.
-- The worker stores only calendar metadata (`calendar_href`, `calendar_name`, `calendar_color`, `calendar_timezone`, `date_only_timezone`, `full_sync_interval_minutes`, `event_hashes`, `last_full_sync`, `webhook_verification_token`) in KV.
+- Personal mode stores calendar metadata (`calendar_href`, `calendar_name`, `calendar_color`, `calendar_timezone`, `date_only_timezone`, `full_sync_interval_minutes`, `event_hashes`, `last_full_sync`, `webhook_verification_token`) in KV; provider credentials remain encrypted Worker secrets.
+- Hosted mode stores tenant state in D1. Notion and Apple credentials are encrypted with AES-GCM before storage, and Clerk-authenticated user IDs isolate each tenant.
 - Rename/recolour the iCloud calendar directly—the worker reuses those values from KV.
 - All-day overdue detection uses the calendar's timezone. We auto-detect it from iCloud, but you can override it via `POST /admin/settings` with `{ "date_only_timezone": "<IANA tz>" }`.
-- Cron runs every 30 minutes (see `wrangler.toml-example`). The rewrite occurs when `full_sync_interval_minutes` (stored in KV via `/admin/settings`) has elapsed; webhooks handle near-real-time updates between reconciliations.
+- Cron checks for due work every five minutes. Each connection's default full-sync interval remains 30 minutes, so reconciliation normally starts 30–35 minutes after the previous successful run. [Cloudflare notes](https://developers.cloudflare.com/workers/configuration/cron-triggers/) that Cron Trigger configuration changes can take up to 15 minutes to propagate.
+- Webhooks are optional acceleration, not the source of truth. Notion may aggregate or reorder events, so the full sync always reads the latest API state.
 - Reconciliation compares the managed ICS fields returned by iCloud, skips unchanged events, and limits parallel CalDAV writes. If iCloud has tombstoned a deleted event UID, the worker recreates it with a stable recovery UID and continues to reuse the returned resource path.
 - Status emojis embedded in ICS titles map to the canonical task states (see “Status emoji style”).
 
 ## License
-MIT – see `LICENSE`.
+MIT – see [LICENSE](LICENSE).
