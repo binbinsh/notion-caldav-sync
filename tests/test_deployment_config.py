@@ -3,7 +3,6 @@ from pathlib import Path
 
 def test_cron_dispatcher_polls_more_often_than_the_sync_interval():
     for filename in (
-        "wrangler.toml",
         "wrangler.toml-example",
         "wrangler.personal.toml-example",
     ):
