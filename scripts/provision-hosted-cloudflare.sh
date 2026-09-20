@@ -5,8 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 D1_NAME="notion-caldav-sync"
-QUEUE_NAME="notion-caldav-sync-jobs"
-DLQ_NAME="notion-caldav-sync-jobs-dlq"
+HELPERS_PATH="$ROOT_DIR/scripts/deploy_helpers.py"
 
 cd "$ROOT_DIR"
 
@@ -24,12 +23,12 @@ if ! command -v npx >/dev/null 2>&1; then
   fi
 fi
 
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-fi
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load-env.sh"
+load_env_file "$ENV_FILE"
+
+QUEUE_NAME="${CLOUDFLARE_SYNC_QUEUE:-notion-caldav-sync-jobs}"
+DLQ_NAME="${CLOUDFLARE_SYNC_DLQ:-notion-caldav-sync-jobs-dlq}"
 
 upsert_env() {
   local key="$1" value="$2" tmp
@@ -78,6 +77,23 @@ for row in json.load(sys.stdin):
   upsert_env CLOUDFLARE_D1_DATABASE_ID "$CLOUDFLARE_D1_DATABASE_ID"
 fi
 
+REMOTE_SECRETS=$(npx --yes wrangler secret list --name notion-caldav-sync --format json 2>/dev/null || printf '[]')
+remote_secret_exists() {
+  local key="$1"
+  printf '%s' "$REMOTE_SECRETS" | uv run python "$HELPERS_PATH" secret-exists "$key" >/dev/null
+}
+
+# Persist newly generated trust roots before queue creation or validation can
+# fail, so rerunning an interrupted first deployment reuses the same values.
+if [ -z "${CREDENTIAL_VAULT_KEY:-}" ] && ! remote_secret_exists CREDENTIAL_VAULT_KEY; then
+  CREDENTIAL_VAULT_KEY=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
+  upsert_env CREDENTIAL_VAULT_KEY "$CREDENTIAL_VAULT_KEY"
+fi
+if [ -z "${HOSTED_WEBHOOK_SETUP_TOKEN:-}" ] && ! remote_secret_exists HOSTED_WEBHOOK_SETUP_TOKEN; then
+  HOSTED_WEBHOOK_SETUP_TOKEN=$(openssl rand -hex 32)
+  upsert_env HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
+fi
+
 if ! npx --yes wrangler queues info "$QUEUE_NAME" >/dev/null 2>&1; then
   npx --yes wrangler queues create "$QUEUE_NAME"
 fi
@@ -97,21 +113,13 @@ for key in PUBLIC_BASE_URL NOTION_CLIENT_ID CLERK_PUBLISHABLE_KEY CLERK_JWKS_URL
     exit 1
   fi
 done
-
-if [ -z "${CREDENTIAL_VAULT_KEY:-}" ]; then
-  CREDENTIAL_VAULT_KEY=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
-  upsert_env CREDENTIAL_VAULT_KEY "$CREDENTIAL_VAULT_KEY"
-fi
-if [ -z "${HOSTED_WEBHOOK_SETUP_TOKEN:-}" ]; then
-  HOSTED_WEBHOOK_SETUP_TOKEN=$(openssl rand -hex 32)
-  upsert_env HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
-fi
 if [ -z "${NOTION_CLIENT_SECRET:-}" ]; then
   echo "NOTION_CLIENT_SECRET is not local; deploy.sh will reuse the existing encrypted Worker secret."
 fi
 
+upsert_env DEPLOYMENT_MODE hosted
 export DEPLOYMENT_MODE=hosted
-"$ROOT_DIR/deploy.sh"
+ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy.sh"
 
 echo "Hosted service deployed at ${PUBLIC_BASE_URL}"
 echo "Notion OAuth callback: ${PUBLIC_BASE_URL}/notion/callback"

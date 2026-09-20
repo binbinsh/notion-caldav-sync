@@ -22,6 +22,7 @@ class Bindings:
         apple_app_password: str,
         notion_token: str,
         admin_token: str = "",
+        webhook_setup_token: str = "",
         status_emoji_style: str,
         notion_source_ids: tuple[str, ...] | None = None,
         managed_event_prefix: str = "",
@@ -31,6 +32,7 @@ class Bindings:
         self.apple_app_password = apple_app_password
         self.notion_token = notion_token
         self.admin_token = admin_token
+        self.webhook_setup_token = webhook_setup_token
         self.status_emoji_style = status_emoji_style
         self.notion_source_ids = notion_source_ids
         self.managed_event_prefix = managed_event_prefix
@@ -52,6 +54,7 @@ class Bindings:
             apple_app_password=getattr(env, "APPLE_APP_PASSWORD", "") or "",
             notion_token=getattr(env, "NOTION_TOKEN", "") or "",
             admin_token=getattr(env, "ADMIN_TOKEN", "") or "",
+            webhook_setup_token=getattr(env, "WEBHOOK_SETUP_TOKEN", "") or "",
             status_emoji_style=status_emoji_style,
             notion_source_ids=source_ids or None,
             managed_event_prefix=str(getattr(env, "MANAGED_EVENT_PREFIX", "") or ""),

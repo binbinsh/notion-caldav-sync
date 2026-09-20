@@ -141,6 +141,19 @@ def cmd_namespace_exists(namespace_id: str, stdin_blob: str) -> int:
     return 1
 
 
+def cmd_secret_exists(secret_name: str, stdin_blob: str) -> int:
+    try:
+        payload = _extract_json(stdin_blob)
+    except ValueError:
+        return 1
+
+    entries = payload if isinstance(payload, list) else payload.get("result", [])
+    for entry in entries:
+        if entry.get("name") == secret_name:
+            return 0
+    return 1
+
+
 def cmd_render_template(path: Path) -> int:
     """Render a Wrangler template without requiring the envsubst binary."""
     try:
@@ -167,6 +180,9 @@ def main(argv: list[str]) -> int:
     exists_parser = subparsers.add_parser("namespace-exists", help="check if a namespace id exists in list output")
     exists_parser.add_argument("namespace_id")
 
+    secret_parser = subparsers.add_parser("secret-exists", help="check if a Worker secret exists")
+    secret_parser.add_argument("secret_name")
+
     render_parser = subparsers.add_parser(
         "render-template", help="render a template from environment variables"
     )
@@ -184,6 +200,9 @@ def main(argv: list[str]) -> int:
     if args.command == "namespace-exists":
         blob = sys.stdin.read()
         return cmd_namespace_exists(args.namespace_id, blob)
+    if args.command == "secret-exists":
+        blob = sys.stdin.read()
+        return cmd_secret_exists(args.secret_name, blob)
     if args.command == "render-template":
         return cmd_render_template(args.path)
     parser.error("Unknown subcommand")

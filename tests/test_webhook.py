@@ -33,9 +33,15 @@ class FakeState:
 
 
 class FakeRequest:
-    def __init__(self, body: str, headers: Optional[Dict[str, str]] = None) -> None:
+    def __init__(
+        self,
+        body: str,
+        headers: Optional[Dict[str, str]] = None,
+        url: str = "https://worker.example/webhook/notion",
+    ) -> None:
         self._body = body
         self.headers = headers or {}
+        self.url = url
 
     async def text(self) -> str:
         return self._body
@@ -48,6 +54,7 @@ class FakeEnv:
         self.APPLE_APP_PASSWORD = "app-password"
         self.NOTION_TOKEN = "notion-token"
         self.ADMIN_TOKEN = "admin"
+        self.WEBHOOK_SETUP_TOKEN = "setup-secret"
         self.STATUS_EMOJI_STYLE = "emoji"
 
 
@@ -75,7 +82,7 @@ async def test_verification_token_persisted_to_kv():
     state = FakeState()
     env = FakeEnv(state)
     body = json.dumps({"verification_token": "secret_token"})
-    request = FakeRequest(body)
+    request = FakeRequest(body, url="https://worker.example/webhook/notion?setup=setup-secret")
 
     resp = await webhook.handle(request, env)
 
@@ -84,6 +91,18 @@ async def test_verification_token_persisted_to_kv():
     assert payload["verification_token"] == "secret_token"
     token_raw = json.loads(state.storage["settings:value:webhook_verification_token"])
     assert token_raw == "secret_token"
+
+
+@pytest.mark.asyncio
+async def test_verification_token_rejects_missing_setup_authorization():
+    state = FakeState()
+    env = FakeEnv(state)
+    body = json.dumps({"verification_token": "attacker-controlled"})
+
+    resp = await webhook.handle(FakeRequest(body), env)
+
+    assert resp.status == 401
+    assert "settings:value:webhook_verification_token" not in state.storage
 
 
 @pytest.mark.asyncio

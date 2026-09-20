@@ -10,10 +10,9 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/load-env.sh"
+load_env_file "$ENV_FILE"
 
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
 HOSTED_WEBHOOK_SETUP_TOKEN=${HOSTED_WEBHOOK_SETUP_TOKEN:-}

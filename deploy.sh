@@ -7,16 +7,15 @@ CONFIG_PATH="$ROOT_DIR/wrangler.toml"
 HOSTED_TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
 PERSONAL_TEMPLATE_PATH="$ROOT_DIR/wrangler.personal.toml-example"
 HELPERS_PATH="$ROOT_DIR/scripts/deploy_helpers.py"
+ENV_LOADER_PATH="$ROOT_DIR/scripts/load-env.sh"
 STATE_NAMESPACE_NAME="notion-caldav-sync-STATE"  # Change if you prefer a different namespace title.
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 
 cd "$ROOT_DIR"
 
-if [ -f "$ROOT_DIR/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/.env"
-  set +a
-fi
+# shellcheck disable=SC1090
+source "$ENV_LOADER_PATH"
+load_env_file "$ENV_FILE"
 
 if ! command -v npx >/dev/null 2>&1; then
   if command -v mise >/dev/null 2>&1; then
@@ -85,7 +84,7 @@ choose_worker_endpoint() {
   local domain=${WORKER_CUSTOM_DOMAIN:-}
   domain=$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | xargs)
 
-  if [ -z "$domain" ] && [ -t 0 ]; then
+  if [ -z "$domain" ] && [ -t 0 ] && [ "${WORKER_ENDPOINT_CONFIGURED:-}" != "1" ]; then
     read -r -p "Worker custom domain (optional; press Enter for workers.dev): " domain
     domain=$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | xargs)
   fi
@@ -240,7 +239,7 @@ fi
 case "$DEPLOYMENT_MODE" in
   personal)
     TEMPLATE_PATH="$PERSONAL_TEMPLATE_PATH"
-    for key in NOTION_TOKEN APPLE_ID APPLE_APP_PASSWORD ADMIN_TOKEN; do
+    for key in NOTION_TOKEN APPLE_ID APPLE_APP_PASSWORD ADMIN_TOKEN WEBHOOK_SETUP_TOKEN; do
       if [ -z "${!key:-}" ]; then
         echo "$key is required for personal deployment." >&2
         exit 1
@@ -277,12 +276,22 @@ echo "STATE namespace title: $STATE_NAMESPACE_NAME"
 echo "STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
 
 echo "Setting up secrets..."
+REMOTE_SECRETS=$(uv run -- pywrangler secret list --name notion-caldav-sync --format json 2>/dev/null || printf '[]')
+
+remote_secret_exists() {
+  local key="$1"
+  printf '%s' "$REMOTE_SECRETS" | uv run python "$HELPERS_PATH" secret-exists "$key" >/dev/null
+}
+
 put_secret_if_present() {
   local key="$1"
   if [ -n "${!key:-}" ]; then
     printf "%s" "${!key}" | uv run -- pywrangler secret put "$key"
-  else
+  elif remote_secret_exists "$key"; then
     echo "Reusing existing Worker secret: $key"
+  else
+    echo "$key is not set locally and does not exist on the Worker." >&2
+    exit 1
   fi
 }
 
@@ -291,10 +300,11 @@ if [ "$DEPLOYMENT_MODE" = "personal" ]; then
   put_secret_if_present APPLE_APP_PASSWORD
   put_secret_if_present NOTION_TOKEN
   put_secret_if_present ADMIN_TOKEN
+  put_secret_if_present WEBHOOK_SETUP_TOKEN
 else
   put_secret_if_present NOTION_CLIENT_SECRET
-  printf "%s" "${CREDENTIAL_VAULT_KEY:?CREDENTIAL_VAULT_KEY must be set}" | uv run -- pywrangler secret put CREDENTIAL_VAULT_KEY
-  printf "%s" "${HOSTED_WEBHOOK_SETUP_TOKEN:?HOSTED_WEBHOOK_SETUP_TOKEN must be set}" | uv run -- pywrangler secret put HOSTED_WEBHOOK_SETUP_TOKEN
+  put_secret_if_present CREDENTIAL_VAULT_KEY
+  put_secret_if_present HOSTED_WEBHOOK_SETUP_TOKEN
   npx --yes wrangler d1 migrations apply notion-caldav-sync --remote --config "$CONFIG_PATH"
 fi
 
@@ -317,7 +327,11 @@ echo "Deployment complete."
 echo "Deployment mode: $DEPLOYMENT_MODE"
 if [ -n "$WORKER_URL" ]; then
   echo "Worker URL: $WORKER_URL"
-  echo "Webhook URL: ${WORKER_URL%/}/webhook/notion"
+  if [ "$DEPLOYMENT_MODE" = "hosted" ]; then
+    echo "Webhook URL: ${WORKER_URL%/}/webhook/notion/hosted?setup=<HOSTED_WEBHOOK_SETUP_TOKEN>"
+  else
+    echo "Webhook URL: ${WORKER_URL%/}/webhook/notion"
+  fi
 else
   echo "Worker URL: check the deploy output above or Cloudflare Workers & Pages."
 fi

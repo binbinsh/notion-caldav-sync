@@ -18,6 +18,7 @@ Use this guide when you need to extend or operate the worker. For user-facing in
   - `APPLE_ID`, `APPLE_APP_PASSWORD`
   - `NOTION_TOKEN`
   - `ADMIN_TOKEN` (protects `/admin/*`)
+  - `WEBHOOK_SETUP_TOKEN` (protects the Notion verification handshake)
 - Cloudflare OAuth is the default. `CLOUDFLARE_ACCOUNT_ID` is only needed to select among multiple accounts, `CLOUDFLARE_API_TOKEN` is only needed for headless deployment, and the setup creates `CLOUDFLARE_STATE_NAMESPACE` automatically.
 - A custom domain is optional; leaving `WORKER_CUSTOM_DOMAIN` blank enables the account's free `workers.dev` hostname.
 

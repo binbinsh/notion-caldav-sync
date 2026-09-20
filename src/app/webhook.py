@@ -4,6 +4,7 @@ import hmac
 import json
 import uuid
 from typing import Any, Iterable, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 from workers import Response
 
@@ -205,6 +206,13 @@ async def handle(request, env, ctx=None):
             verification_token = data.get("verification_token")
 
         if verification_token:
+            query = parse_qs(urlparse(str(request.url)).query)
+            supplied_setup = str((query.get("setup") or [""])[0])
+            if not bindings.webhook_setup_token or not hmac.compare_digest(
+                supplied_setup, bindings.webhook_setup_token
+            ):
+                log("[Webhook] rejected unauthorized verification request")
+                return Response("Unauthorized", status=401)
             verification_token = str(verification_token).strip()
             if not verification_token:
                 log("[Webhook] invalid verification_token in payload")
