@@ -11,6 +11,7 @@ from .util import random_token
 
 
 ADOBE_FONT_KIT = "ggy5hcn"
+SOURCE_URL = "https://github.com/binbinsh/notion-caldav-sync"
 
 
 def _escape(value: Any) -> str:
@@ -22,7 +23,7 @@ def _csp(nonce: str) -> str:
         (
             "default-src 'none'",
             f"script-src 'nonce-{nonce}'",
-            "style-src 'unsafe-inline' https://use.typekit.net",
+            "style-src 'unsafe-inline' https://use.typekit.net https://p.typekit.net",
             "font-src https://use.typekit.net https://p.typekit.net",
             "img-src 'self' data:",
             "connect-src 'self'",
@@ -54,203 +55,176 @@ def _document(*, title: str, content: str, nonce: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="将 Notion 中的任务单向同步到 Apple Calendar。查看开源代码，或直接使用 Planner.li 托管服务。">
   <title>{_escape(title)}</title>
   <style>
     :root {{
-      --app-font-native-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, Ubuntu, Cantarell, "Noto Sans", Arial, sans-serif;
+      --app-font-native-sans: system-ui, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", -apple-system, Arial, sans-serif;
       --app-font-native-mono: "SF Mono", "SFMono-Regular", "Cascadia Code", ui-monospace, Menlo, Consolas, monospace;
       --app-font-text: "proxima-nova", var(--app-font-native-sans);
       --font-sans: var(--app-font-text);
       --font-mono: var(--app-font-native-mono);
-      --ink:#17171a;
-      --muted:#686870;
-      --soft:#8b8b94;
-      --line:rgba(24,24,27,.10);
-      --line-strong:rgba(24,24,27,.16);
-      --paper:rgba(255,255,255,.86);
-      --wash:#f6f5f1;
-      --accent:#5b57e8;
-      --accent-deep:#4742d2;
-      --accent-soft:#eeedff;
-      --success:#157347;
-      --success-soft:#e9f8ef;
-      --warning:#9a6516;
-      --warning-soft:#fff5de;
-      --ease-out:cubic-bezier(.16,1,.3,1);
-      color-scheme:light;
-      font-family:var(--font-sans);
-      font-synthesis-weight:none;
+      --ink:#252724; --muted:#686b65; --line:#dedfd9; --paper:#fafaf7;
+      --accent:#315849; --accent-hover:#264638; --soft:#f0f1eb;
+      --ease-out:cubic-bezier(.23,1,.32,1);
+      color-scheme:light; font-family:var(--font-sans); font-synthesis-weight:none;
     }}
+    html.wf-inactive {{ --font-sans:var(--app-font-native-sans); --font-mono:var(--app-font-native-mono); }}
     html.wf-loading [data-font-gated] {{ visibility:hidden; }}
-    html.wf-active [data-font-gated], html.wf-inactive [data-font-gated] {{ visibility:visible; }}
-    .font-probe {{ position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; font:400 14px "proxima-nova", sans-serif; }}
+    html.wf-active [data-font-gated],html.wf-inactive [data-font-gated] {{ visibility:visible; }}
     * {{ box-sizing:border-box; }}
-    html {{ min-height:100%; background:var(--wash); }}
-    body {{
-      min-height:100vh; margin:0; color:var(--ink);
-      background:
-        radial-gradient(circle at 12% 0%,rgba(129,124,255,.16),transparent 34rem),
-        radial-gradient(circle at 92% 12%,rgba(101,209,179,.12),transparent 30rem),
-        var(--wash);
-      -webkit-font-smoothing:antialiased;
-    }}
-    body::before {{
-      content:""; position:fixed; inset:0; pointer-events:none; opacity:.3;
-      background-image:linear-gradient(rgba(20,20,24,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(20,20,24,.025) 1px,transparent 1px);
-      background-size:32px 32px; mask-image:linear-gradient(to bottom,black,transparent 72%);
-    }}
-    a {{ color:inherit; }}
-    main {{ position:relative; width:min(1080px,calc(100% - 40px)); margin:0 auto; padding:26px 0 64px; }}
-    .topbar {{ display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:64px; }}
-    .brand {{ display:inline-flex; align-items:center; gap:11px; text-decoration:none; font-weight:700; letter-spacing:-.015em; }}
-    .brand-mark {{ display:grid; place-items:center; width:34px; height:34px; border-radius:11px; color:#fff; background:#1d1d21; box-shadow:0 8px 20px rgba(23,23,26,.15); }}
-    .brand-mark svg {{ width:18px; height:18px; }}
-    .brand-product {{ color:var(--soft); font-weight:500; }}
-    .top-note {{ color:var(--muted); font-size:13px; }}
-    h1,h2,h3,p {{ margin-top:0; }}
-    h1 {{ max-width:800px; margin-bottom:20px; font-size:clamp(42px,7vw,76px); line-height:.98; letter-spacing:-.052em; font-weight:700; }}
-    h2 {{ margin-bottom:8px; font-size:20px; line-height:1.2; letter-spacing:-.02em; }}
-    h3 {{ margin-bottom:6px; font-size:16px; line-height:1.25; }}
-    p {{ color:var(--muted); line-height:1.62; }}
-    .eyebrow {{ display:flex; align-items:center; gap:8px; margin-bottom:20px; color:var(--accent-deep); font-size:13px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }}
-    .eyebrow::before {{ content:""; width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 5px rgba(91,87,232,.10); }}
-    .hero {{ display:grid; grid-template-columns:minmax(0,1.2fr) minmax(330px,.8fr); align-items:center; gap:72px; min-height:590px; padding-bottom:72px; }}
-    .hero-copy>p {{ max-width:620px; margin-bottom:30px; font-size:18px; }}
-    .hero-actions {{ display:flex; align-items:center; flex-wrap:wrap; gap:14px; }}
-    .microcopy {{ color:var(--soft); font-size:13px; }}
-    .button,button {{
-      display:inline-flex; min-height:46px; align-items:center; justify-content:center; gap:9px;
-      border:1px solid transparent; border-radius:13px; padding:0 18px; background:var(--accent); color:#fff;
-      box-shadow:0 8px 22px rgba(71,66,210,.20); text-decoration:none; font:650 14px/1 var(--font-sans); cursor:pointer;
-      transition:transform 180ms var(--ease-out),background-color 180ms var(--ease-out),box-shadow 180ms var(--ease-out),border-color 180ms var(--ease-out);
-    }}
-    .button svg,button svg {{ width:17px; height:17px; flex:none; }}
-    .button:active,button:active {{ transform:scale(.97); }}
-    .button:focus-visible,button:focus-visible,input:focus-visible,a:focus-visible {{ outline:3px solid rgba(91,87,232,.28); outline-offset:3px; }}
-    button:disabled {{ cursor:not-allowed; opacity:.48; box-shadow:none; }}
-    .secondary {{ color:var(--ink); background:#fff; border-color:var(--line-strong); box-shadow:0 5px 16px rgba(24,24,27,.06); }}
-    .trust-row {{ display:flex; flex-wrap:wrap; gap:10px; margin-top:34px; }}
-    .trust-item {{ display:flex; align-items:center; gap:7px; color:var(--muted); font-size:13px; }}
-    .trust-item+.trust-item::before {{ content:""; width:3px; height:3px; margin-right:3px; border-radius:50%; background:#b5b4ba; }}
-    .preview {{ position:relative; padding:8px; border:1px solid rgba(255,255,255,.74); border-radius:27px; background:rgba(255,255,255,.40); box-shadow:0 32px 70px rgba(33,31,72,.14); backdrop-filter:blur(18px); }}
-    .preview-inner {{ overflow:hidden; border:1px solid var(--line); border-radius:20px; background:rgba(255,255,255,.94); }}
-    .preview-head {{ display:flex; align-items:center; justify-content:space-between; padding:17px 18px; border-bottom:1px solid var(--line); }}
-    .preview-title {{ font-size:13px; font-weight:700; }}
-    .live-dot {{ display:flex; align-items:center; gap:6px; color:var(--success); font-size:11px; font-weight:650; }}
-    .live-dot::before {{ content:""; width:7px; height:7px; border-radius:50%; background:#35b778; box-shadow:0 0 0 4px rgba(53,183,120,.12); }}
-    .event-list {{ display:grid; gap:10px; padding:18px; }}
-    .event {{ display:grid; grid-template-columns:38px 1fr auto; align-items:center; gap:12px; padding:13px; border:1px solid var(--line); border-radius:14px; background:#fff; }}
-    .event-date {{ display:grid; place-items:center; width:38px; height:42px; border-radius:10px; background:var(--accent-soft); color:var(--accent-deep); font-size:11px; font-weight:700; line-height:1.05; text-align:center; }}
-    .event-date strong {{ display:block; font-size:17px; }}
-    .event-name {{ font-size:13px; font-weight:650; }}
-    .event-meta {{ margin-top:3px; color:var(--soft); font-size:11px; }}
-    .source-mark {{ display:grid; place-items:center; width:26px; height:26px; border-radius:8px; background:#f1f1f2; font-size:11px; font-weight:800; }}
-    .sync-line {{ display:flex; align-items:center; gap:8px; padding:4px 20px 20px; color:var(--soft); font-size:11px; }}
-    .sync-line svg {{ width:14px; height:14px; color:var(--success); }}
-    .dashboard-header {{ display:grid; grid-template-columns:1fr auto; align-items:end; gap:24px; margin:78px 0 34px; }}
-    .dashboard-header h1 {{ max-width:none; margin-bottom:10px; font-size:clamp(38px,6vw,64px); }}
-    .dashboard-header p {{ margin-bottom:0; }}
-    .completion {{ min-width:210px; padding:16px 18px; border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,.58); }}
-    .completion-label {{ display:flex; justify-content:space-between; margin-bottom:11px; color:var(--muted); font-size:12px; font-weight:650; }}
-    .progress {{ height:7px; overflow:hidden; border-radius:999px; background:rgba(24,24,27,.08); }}
-    .progress span {{ display:block; width:var(--progress); height:100%; border-radius:inherit; background:var(--accent); }}
-    .notice {{ display:flex; align-items:center; gap:10px; margin:0 0 18px; padding:13px 15px; border:1px solid rgba(91,87,232,.16); border-radius:13px; background:var(--accent-soft); color:var(--accent-deep); font-size:14px; }}
-    .notice::before {{ content:"✓"; display:grid; place-items:center; width:20px; height:20px; flex:none; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; font-weight:800; }}
-    .grid {{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:16px; }}
-    .card {{ grid-column:span 6; padding:24px; border:1px solid var(--line); border-radius:20px; background:var(--paper); box-shadow:0 14px 42px rgba(24,24,27,.055); backdrop-filter:blur(16px); }}
-    .card.wide {{ grid-column:1/-1; }}
-    .card-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:20px; }}
-    .card-title {{ display:flex; align-items:flex-start; gap:13px; }}
-    .service-icon {{ display:grid; place-items:center; width:42px; height:42px; flex:none; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 6px 16px rgba(24,24,27,.06); }}
-    .service-icon svg {{ width:20px; height:20px; }}
-    .card-title p {{ margin-bottom:0; font-size:13px; }}
-    .status {{ display:inline-flex; align-items:center; gap:6px; flex:none; padding:7px 9px; border-radius:999px; background:var(--warning-soft); color:var(--warning); font:650 11px/1 var(--font-sans); }}
-    .status::before {{ content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }}
-    .status.ok {{ background:var(--success-soft); color:var(--success); }}
-    .card-body-copy {{ min-height:48px; margin-bottom:18px; font-size:14px; }}
+    body {{ margin:0; background:var(--paper); color:var(--ink); font:400 15px/1.6 var(--font-sans); -webkit-font-smoothing:antialiased; }}
+    a {{ color:inherit; text-underline-offset:4px; }}
+    h1,h2,h3,p {{ margin:0; }}
+    h1,h2,h3,strong {{ font-weight:600; }}
+    h1 {{ font-size:34px; line-height:1.45; letter-spacing:-.035em; text-wrap:balance; }}
+    h2 {{ font-size:17px; line-height:1.4; letter-spacing:-.015em; }}
+    p {{ color:var(--muted); }}
+    main {{ width:min(880px,calc(100% - 64px)); min-height:100svh; margin:auto; display:flex; flex-direction:column; }}
+    .topbar {{ display:flex; align-items:center; justify-content:space-between; gap:24px; padding:30px 0 24px; border-bottom:1px solid var(--line); }}
+    .brand {{ display:inline-flex; align-items:center; gap:10px; text-decoration:none; font-size:17px; font-weight:600; white-space:nowrap; }}
+    .brand-mark {{ display:grid; place-items:center; width:26px; height:26px; color:var(--accent); }}
+    .brand-mark svg {{ width:24px; height:24px; }}
+    .brand-product {{ padding-left:10px; border-left:1px solid #c9ccc4; color:var(--muted); font-size:14px; font-weight:400; }}
+    .top-link {{ font-size:13px; color:var(--muted); text-decoration:none; }}
+    .intro {{ padding:78px 0 50px; max-width:690px; }}
+    .eyebrow {{ margin-bottom:16px; color:var(--accent); font-size:13px; font-weight:600; letter-spacing:.025em; }}
+    .intro h1 {{ margin-bottom:18px; }}
+    .intro-copy {{ max-width:580px; font-size:16px; line-height:1.9; }}
+    .actions {{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:28px; }}
+    .button,button {{ display:inline-flex; align-items:center; justify-content:center; gap:9px; min-height:42px; padding:10px 16px; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:#fff; font:600 14px/1.4 var(--font-sans); text-decoration:none; cursor:pointer; transition:transform 140ms var(--ease-out),background-color 140ms var(--ease-out),border-color 140ms var(--ease-out); }}
+    .button:active,button:active {{ transform:scale(.98); }}
+    .button:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible {{ outline:2px solid var(--accent); outline-offset:4px; }}
+    .button:focus-visible,button:focus-visible {{ transition:none; }}
+    .secondary {{ border-color:#cbd0c6; background:transparent; color:var(--ink); }}
+    button:disabled {{ color:#7a7e75; background:#e8eae3; border-color:#e0e3da; cursor:not-allowed; transform:none; }}
+    .arrow {{ font-size:17px; font-weight:400; line-height:1; }}
+    .action-note {{ margin-top:13px; font-size:12px; color:var(--muted); }}
+    .overview {{ margin:0 0 58px; border-top:1px solid var(--line); }}
+    .overview-row {{ display:grid; grid-template-columns:160px 1fr; gap:28px; padding:21px 0; border-bottom:1px solid var(--line); }}
+    .overview-row h2 {{ font-size:14px; line-height:1.8; }}
+    .overview-row p {{ max-width:570px; font-size:14px; line-height:1.8; }}
+    .footer {{ margin-top:auto; padding:22px 0 28px; display:flex; justify-content:space-between; gap:16px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); }}
+    .footer a {{ text-decoration:none; }}
+    .dashboard-header {{ display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:45px 0 28px; }}
+    .dashboard-header h1 {{ font-size:28px; margin-bottom:8px; }}
+    .dashboard-header p {{ font-size:14px; }}
+    .setup-count {{ flex:none; color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums; }}
+    .setup-count strong {{ color:var(--ink); }}
+    .notice {{ margin:0 0 20px; padding:12px 16px; border-left:2px solid var(--accent); background:var(--soft); color:var(--ink); font-size:14px; overflow-wrap:anywhere; }}
+    .connection-list {{ border:1px solid var(--line); border-radius:8px; background:#fff; overflow:hidden; margin-bottom:24px; }}
+    .connection {{ padding:26px 28px; }}
+    .connection+.connection {{ border-top:1px solid var(--line); }}
+    .section-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:18px; }}
+    .section-name {{ display:flex; align-items:center; gap:12px; min-width:0; }}
+    .step {{ display:grid; place-items:center; width:24px; height:24px; flex:none; border:1px solid var(--line); border-radius:50%; color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }}
+    .status {{ display:inline-flex; align-items:center; gap:6px; color:var(--muted); white-space:nowrap; font-size:12px; line-height:24px; }}
+    .status::before {{ content:""; width:6px; height:6px; border-radius:50%; background:#959a8f; }}
+    .status.ok {{ color:var(--accent); }}
+    .status.ok::before {{ background:var(--accent); }}
+    .status.error-status {{ color:#a04930; }}
+    .status.error-status::before {{ background:currentColor; }}
+    .connection-content {{ margin-left:36px; }}
+    .connection-copy {{ max-width:630px; font-size:14px; margin-bottom:18px; overflow-wrap:anywhere; }}
+    .workspace {{ color:var(--ink); }}
+    .field-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:14px; }}
+    label {{ display:block; font-size:13px; margin-bottom:7px; }}
+    input {{ width:100%; min-height:44px; padding:10px 12px; border:1px solid #cbd0c6; border-radius:5px; background:#fff; color:var(--ink); font:400 15px/1.4 var(--font-sans); }}
+    input::placeholder {{ color:#858980; }}
+    .form-help {{ font-size:12px; line-height:1.8; margin-bottom:18px; max-width:570px; }}
+    .form-help a {{ color:var(--accent); }}
     form {{ margin:0; }}
-    .field-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }}
-    label {{ display:block; margin:0 0 7px; color:#3e3e44; font-size:12px; font-weight:650; }}
-    input {{ width:100%; min-height:45px; padding:0 13px; border:1px solid var(--line-strong); border-radius:11px; background:rgba(255,255,255,.78); color:var(--ink); font:400 14px/1 var(--font-sans); transition:border-color 160ms var(--ease-out),box-shadow 160ms var(--ease-out); }}
-    input::placeholder {{ color:#a0a0a7; }}
-    input:focus {{ border-color:rgba(91,87,232,.58); box-shadow:0 0 0 3px rgba(91,87,232,.09); }}
-    .form-footer {{ display:flex; align-items:center; justify-content:space-between; gap:16px; }}
-    .form-help {{ max-width:430px; margin:0; color:var(--soft); font-size:12px; line-height:1.5; }}
-    .form-help a {{ color:var(--accent-deep); text-underline-offset:3px; }}
-    .sync-layout {{ display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:24px; }}
-    .sync-facts {{ display:flex; flex-wrap:wrap; gap:28px; margin-top:18px; }}
-    .fact-label {{ display:block; margin-bottom:4px; color:var(--soft); font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.05em; }}
-    .fact-value {{ font-size:13px; font-weight:600; }}
-    .error {{ margin:16px 0 0; padding:12px 13px; border-radius:11px; background:#fff0f0; color:#a12c2c; font-size:13px; }}
-    .footer {{ display:flex; justify-content:space-between; gap:20px; margin-top:26px; color:var(--soft); font-size:12px; }}
-    .footer p {{ margin:0; color:inherit; }}
+    details summary {{ width:fit-content; cursor:pointer; color:var(--accent); font-size:13px; text-underline-offset:4px; }}
+    details[open] summary {{ margin-bottom:20px; }}
+    .sync-section {{ padding:24px 0 32px; margin-bottom:28px; }}
+    .sync-section .section-head {{ margin-bottom:10px; }}
+    .sync-description {{ font-size:14px; margin-bottom:22px; }}
+    .sync-bottom {{ display:flex; align-items:center; justify-content:space-between; gap:24px; }}
+    .sync-facts {{ display:grid; grid-template-columns:1fr 1fr; gap:36px; margin:0; }}
+    .sync-facts dt {{ color:var(--muted); font-size:12px; margin-bottom:5px; }}
+    .sync-facts dd {{ margin:0; font-size:14px; font-variant-numeric:tabular-nums; }}
+    .error {{ margin-top:18px; padding:12px 14px; border-left:2px solid #b56547; background:#fbf2ed; color:#8e402a; font-size:13px; overflow-wrap:anywhere; }}
     @media (hover:hover) and (pointer:fine) {{
-      .button:hover,button:hover {{ background:var(--accent-deep); box-shadow:0 10px 28px rgba(71,66,210,.26); }}
-      .secondary:hover {{ background:#f8f8fa; border-color:rgba(24,24,27,.24); box-shadow:0 7px 20px rgba(24,24,27,.09); }}
+      .button:hover,button:enabled:hover {{ background:var(--accent-hover); border-color:var(--accent-hover); }}
+      .secondary:hover,button.secondary:enabled:hover {{ background:var(--soft); border-color:#b9bfb2; }}
+      .top-link:hover,.footer a:hover {{ color:var(--ink); text-decoration:underline; }}
+      summary:hover {{ text-decoration:underline; }}
     }}
-    @media(max-width:820px) {{
-      .topbar {{ margin-bottom:44px; }} .hero {{ grid-template-columns:1fr; gap:38px; min-height:auto; }}
-      .preview {{ max-width:520px; }} .dashboard-header {{ grid-template-columns:1fr; margin-top:50px; }}
-      .completion {{ min-width:0; }} .card {{ grid-column:1/-1; }}
+    @media(max-width:600px) {{
+      main {{ width:calc(100% - 40px); }}
+      .topbar {{ padding:23px 0 20px; gap:12px; }}
+      .top-link {{ font-size:12px; }}
+      .brand {{ font-size:16px; gap:7px; }}
+      .brand-product {{ font-size:12px; padding-left:7px; }}
+      .intro {{ padding:48px 0 38px; }}
+      h1 {{ font-size:28px; }}
+      .intro-copy {{ font-size:15px; }}
+      .actions {{ align-items:stretch; flex-direction:column; }}
+      .overview {{ margin-bottom:40px; }}
+      .overview-row {{ grid-template-columns:1fr; gap:6px; padding:18px 0; }}
+      .dashboard-header {{ align-items:flex-start; flex-direction:column; gap:14px; padding-top:32px; }}
+      .dashboard-header h1 {{ font-size:25px; }}
+      .connection {{ padding:22px 18px; }}
+      .connection-content {{ margin-left:0; }}
+      .field-grid {{ grid-template-columns:1fr; }}
+      input {{ font-size:16px; }}
+      .sync-bottom {{ align-items:stretch; flex-direction:column; }}
+      .sync-facts {{ gap:18px; }}
+      .sync-bottom button {{ width:100%; }}
+      .footer {{ flex-wrap:wrap; gap:8px 18px; }}
     }}
-    @media(max-width:560px) {{
-      main {{ width:min(100% - 28px,1080px); padding-top:18px; }} .topbar {{ margin-bottom:38px; }} .top-note {{ display:none; }}
-      h1 {{ font-size:42px; }} .hero {{ padding-bottom:42px; }} .hero-copy>p {{ font-size:16px; }}
-      .hero-actions,.form-footer,.sync-layout {{ align-items:stretch; flex-direction:column; }} .hero-actions .button {{ width:100%; }}
-      .preview {{ padding:6px; border-radius:22px; }} .event {{ grid-template-columns:38px 1fr; }} .source-mark {{ display:none; }}
-      .dashboard-header {{ margin-top:44px; }} .field-grid {{ grid-template-columns:1fr; }} .form-footer {{ display:flex; }}
-      .form-footer button {{ width:100%; }} .card {{ padding:19px; border-radius:17px; }} .card-head {{ flex-direction:column; }}
-      .status {{ margin-left:55px; }} .sync-layout {{ display:flex; }} .sync-layout form button {{ width:100%; }} .footer {{ flex-direction:column; }}
-    }}
-    @media(prefers-reduced-motion:reduce) {{ *,*::before,*::after {{ scroll-behavior:auto!important; transition-duration:.01ms!important; }} }}
+    @media(prefers-reduced-motion:reduce) {{ .button,button {{ transition:none; }} .button:active,button:active {{ transform:none; }} }}
   </style>
+  <noscript><style>html.wf-loading {{ --font-sans:var(--app-font-native-sans); }} html.wf-loading [data-font-gated] {{ visibility:visible; }}</style></noscript>
   <script nonce="{nonce}">
     (()=>{{
       const root=document.documentElement,link=document.createElement('link');
-      link.id='planner-adobe-fonts';link.rel='stylesheet';link.href='https://use.typekit.net/{ADOBE_FONT_KIT}.css';link.media='all';
-      let locked=false,started=false,stageTimer;
-      const finish=(ok)=>{{if(locked)return;locked=true;clearTimeout(stageTimer);root.classList.remove('wf-loading');root.classList.add(ok?'wf-active':'wf-inactive');}};
-      const verify=(remaining)=>{{document.fonts.load('400 14px "proxima-nova"','Workspace pulse').then(()=>document.fonts.ready).then(()=>{{if(document.fonts.check('400 14px "proxima-nova"','Workspace pulse')){{finish(true);}}else if(remaining>0){{setTimeout(()=>verify(remaining-1),120);}}else{{finish(false);}}}}).catch(()=>finish(false));}};
-      const stage2=()=>{{if(started)return;started=true;clearTimeout(stageTimer);stageTimer=setTimeout(()=>finish(false),2800);if(!document.fonts){{finish(false);return;}}requestAnimationFrame(()=>requestAnimationFrame(()=>verify(20)));}};
-      stageTimer=setTimeout(()=>finish(false),2800);link.addEventListener('load',()=>{{clearTimeout(stageTimer);stage2();}},{{once:true}});link.addEventListener('error',()=>finish(false),{{once:true}});
-      document.head.appendChild(link);requestAnimationFrame(()=>stage2());
-      document.querySelectorAll('time[data-local-time]').forEach((item)=>{{
-        const value=item.getAttribute('datetime');if(!value)return;
-        const date=new Date(value);if(!Number.isNaN(date.getTime()))item.textContent=new Intl.DateTimeFormat('zh-CN',{{dateStyle:'medium',timeStyle:'short'}}).format(date);
-      }});
+      link.id='planner-adobe-fonts';link.rel='stylesheet';link.href='https://use.typekit.net/{ADOBE_FONT_KIT}.css';
+      let locked=false,stageTimer;
+      const finish=(ok)=>{{
+        if(locked)return;locked=true;clearTimeout(stageTimer);
+        if(!ok){{link.disabled=true;link.remove();}}
+        root.classList.remove('wf-loading');root.classList.add(ok?'wf-active':'wf-inactive');
+      }};
+      stageTimer=setTimeout(()=>finish(false),2800);
+      link.addEventListener('load',()=>{{
+        if(locked)return;clearTimeout(stageTimer);
+        stageTimer=setTimeout(()=>finish(false),2800);
+        if(!document.fonts){{finish(false);return;}}
+        const faces=['400 14px "proxima-nova"','600 14px "proxima-nova"'];
+        Promise.all(faces.map(face=>document.fonts.load(face,'Workspace pulse')))
+          .then(results=>finish(results.every(fonts=>fonts.length>0)&&faces.every(face=>document.fonts.check(face,'Workspace pulse'))))
+          .catch(()=>finish(false));
+      }},{{once:true}});
+      link.addEventListener('error',()=>finish(false),{{once:true}});
+      document.head.appendChild(link);
+      document.addEventListener('DOMContentLoaded',()=>{{
+        document.querySelectorAll('time[data-local-time]').forEach(item=>{{
+          const date=new Date(item.getAttribute('datetime'));
+          if(!Number.isNaN(date.getTime()))item.textContent=new Intl.DateTimeFormat('zh-CN',{{dateStyle:'medium',timeStyle:'short'}}).format(date);
+        }});
+      }},{{once:true}});
     }})();
   </script>
 </head>
-<body><span class="font-probe" aria-hidden="true">Workspace pulse 收件箱</span><main data-font-gated>{content}</main></body>
+<body><main data-font-gated>{content}</main></body>
 </html>"""
 
 
 def _brand() -> str:
-    return """
-      <div class="topbar">
+    return f"""
+      <nav class="topbar" aria-label="主导航">
         <a class="brand" href="/" aria-label="Planner.li Calendar 首页">
-          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M6.5 3.5v3M17.5 3.5v3M4 9h16M6.5 14l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span>Planner.li <span class="brand-product">/ Calendar</span></span>
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="16" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 3v4M16.5 3v4M4 10h16M8 15l2.5 2.5L16 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span>Planner.li</span><span class="brand-product">Calendar</span>
         </a>
-        <span class="top-note">开源的 Notion 日历桥接服务</span>
-      </div>
+        <a class="top-link" href="{SOURCE_URL}">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
     """
 
 
-def _calendar_preview() -> str:
-    return """
-      <div class="preview" aria-label="同步后的日历预览">
-        <div class="preview-inner">
-          <div class="preview-head"><span class="preview-title">接下来</span><span class="live-dot">自动同步</span></div>
-          <div class="event-list">
-            <div class="event"><span class="event-date">九月<strong>21</strong></span><span><span class="event-name">产品回顾与下周计划</span><span class="event-meta">10:00 – 10:45</span></span><span class="source-mark">N</span></div>
-            <div class="event"><span class="event-date">九月<strong>22</strong></span><span><span class="event-name">发布 Calendar Sync</span><span class="event-meta">全天 · 工作日历</span></span><span class="source-mark">N</span></div>
-            <div class="event"><span class="event-date">九月<strong>24</strong></span><span><span class="event-name">设计评审</span><span class="event-meta">14:30 – 15:30</span></span><span class="source-mark">N</span></div>
-          </div>
-          <div class="sync-line"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 7h-6V1M4 17h6v6M5.1 9A8 8 0 0118 5l2 2M18.9 15A8 8 0 016 19l-2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Notion 更新会安全地出现在 Apple Calendar</div>
-        </div>
-      </div>
-    """
+def _footer() -> str:
+    return f"""<footer class="footer"><p>Notion → Apple Calendar</p><a href="{SOURCE_URL}">notion-caldav-sync <span aria-hidden="true">↗</span></a></footer>"""
 
 
 def _local_time(value: Any, empty: str) -> str:
@@ -275,20 +249,22 @@ def signed_out_page(*, base_url: str, sign_in_url: str) -> Response:
     redirect = quote(base_url.rstrip("/") + "/", safe="")
     content = f"""
       {_brand()}
-      <section class="hero">
-        <div class="hero-copy">
-          <div class="eyebrow">Notion × Apple Calendar</div>
-          <h1>写在 Notion，<br>出现在日历。</h1>
-          <p>把 Notion 中的计划自动同步到 Apple Calendar。一次连接，之后的更新交给我们。</p>
-          <div class="hero-actions">
-            <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">使用 Planner.li 登录 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-            <span class="microcopy">无需单独部署 Worker</span>
-          </div>
-          <div class="trust-row" aria-label="服务特点"><span class="trust-item">凭据加密存储</span><span class="trust-item">每 30 分钟同步</span><span class="trust-item">开源可审计</span></div>
+      <section class="intro" aria-labelledby="intro-title">
+        <p class="eyebrow">Notion → Apple Calendar</p>
+        <h1 id="intro-title">计划留在 Notion，<br>日程带在身边。</h1>
+        <p class="intro-copy">一个开源的日历同步工具。将 Notion 中带日期的任务同步到 Apple Calendar，在熟悉的日历里查看安排。</p>
+        <div class="actions">
+          <a class="button secondary" href="{SOURCE_URL}">查看开源代码 <span class="arrow" aria-hidden="true">↗</span></a>
+          <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">直接使用托管服务 <span class="arrow" aria-hidden="true">→</span></a>
         </div>
-        {_calendar_preview()}
+        <p class="action-note">通过 Planner.li 登录，无需自行部署。</p>
       </section>
-      <footer class="footer"><p>由 Planner.li 提供</p><p>你的数据与其他账户严格隔离</p></footer>
+      <section class="overview" aria-label="使用说明">
+        <div class="overview-row"><h2>单向同步</h2><p>在 Notion 中维护任务，更新会同步到 Apple Calendar。日历里的修改不会写回 Notion。</p></div>
+        <div class="overview-row"><h2>连接后自动运行</h2><p>授权 Notion 页面，并提供 Apple 账户的 App 专用密码。连接完成后，每 30 分钟自动同步，也可手动触发。</p></div>
+        <div class="overview-row"><h2>开源，也可自部署</h2><p>代码与部署说明公开在 GitHub。使用托管服务时，连接凭据会加密保存。</p></div>
+      </section>
+      {_footer()}
     """
     return html_response(
         _document(title="Calendar · Planner.li", content=content, nonce=nonce), nonce=nonce
@@ -304,39 +280,70 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
     apple_ok = apple.get("status") == "active"
     sync_ok = sync.get("status") == "active"
     completed = int(notion_ok) + int(apple_ok)
-    progress = completed * 50
-    notice = f'<p class="notice">{_escape(_localized_message(message))}</p>' if message else ""
-    workspace_name = notion.get("workspace_name") or "选择允许读取的 Notion 页面"
+    notice = (
+        f'<p class="notice" role="status">{_escape(_localized_message(message))}</p>'
+        if message
+        else ""
+    )
+    workspace_name = notion.get("workspace_name") or "Notion 工作区"
     last_finished = _local_time(sync.get("last_finished_at"), "尚未同步")
     next_due = _local_time(sync.get("next_due_at"), "连接完成后安排")
+    apple_form = f"""
+      <form method="post" action="/api/apple">
+        <div class="field-grid">
+          <div><label for="apple_id">Apple 账户</label><input id="apple_id" name="apple_id" type="email" autocomplete="username" placeholder="name@icloud.com" aria-describedby="apple-help" required></div>
+          <div><label for="app_password">App 专用密码</label><input id="app_password" name="app_password" type="password" autocomplete="new-password" placeholder="xxxx-xxxx-xxxx-xxxx" aria-describedby="apple-help" required></div>
+        </div>
+        <p class="form-help" id="apple-help">在 <a href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">Apple 账户 <span aria-hidden="true">↗</span></a> 的「登录和安全」中创建名为 notion-caldav-sync 的 App 专用密码。请勿使用账户登录密码。凭据会加密保存。</p>
+        <button type="submit">{"更新连接" if apple_ok else "保存并连接"}</button>
+      </form>
+    """
+    apple_content = (
+        '<p class="connection-copy">已保存连接凭据。如需更换账户或专用密码，可在下方更新。</p>'
+        "<details><summary>更新 Apple 连接</summary>" + apple_form + "</details>"
+        if apple_ok
+        else '<p class="connection-copy">连接用于接收 Notion 任务的 Apple Calendar。</p>'
+        + apple_form
+    )
+    if sync.get("last_error"):
+        sync_label, sync_class = "上次运行失败", "error-status"
+    elif sync_ok:
+        sync_label, sync_class = "已启用", "ok"
+    else:
+        sync_label, sync_class = "尚未启用", ""
     content = f"""
       {_brand()}
       <header class="dashboard-header">
-        <div><div class="eyebrow">同步控制台</div><h1>让两个日历，<br>保持同一步调。</h1><p>连接 Notion 与 Apple Calendar，之后每 30 分钟自动同步一次。</p></div>
-        <div class="completion" aria-label="设置进度"><div class="completion-label"><span>设置进度</span><strong>{completed} / 2</strong></div><div class="progress"><span style="--progress:{progress}%"></span></div></div>
+        <div><h1>连接与同步</h1><p>将 Notion 任务单向同步到 Apple Calendar。</p></div>
+        <span class="setup-count">已连接 <strong>{completed} / 2</strong></span>
       </header>
       {notice}
-      <div class="grid">
-        <section class="card">
-          <div class="card-head"><div class="card-title"><span class="service-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 4.5l10-1.5 4 3v13.5l-10 1.5-4-3V4.5z" stroke="currentColor" stroke-width="1.7"/><path d="M9 8v8M9 8l6 8V6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div><h2>Notion</h2><p>{_escape(workspace_name)}</p></div></div><span class="status {"ok" if notion_ok else ""}">{"已连接" if notion_ok else "等待连接"}</span></div>
-          <p class="card-body-copy">通过 OAuth 授权指定页面。我们只读取同步所需的内容，不需要复制或粘贴 API Key。</p>
-          <a class="button" href="/oauth/notion/start">{"重新连接 Notion" if notion_ok else "连接 Notion"} <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <div class="connection-list">
+        <section class="connection" aria-labelledby="notion-title">
+          <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">1</span><h2 id="notion-title">Notion</h2></div><span class="status {"ok" if notion_ok else ""}">{"已连接" if notion_ok else "未连接"}</span></div>
+          <div class="connection-content">
+            <p class="connection-copy">{('<span class="workspace">' + _escape(workspace_name) + "</span> · 可重新授权以调整允许读取的页面。") if notion_ok else "选择允许读取的 Notion 页面。授权后，我们会读取其中符合任务格式的内容。"}</p>
+            <a class="button {"secondary" if notion_ok else ""}" href="/oauth/notion/start">{"重新连接 Notion" if notion_ok else "连接 Notion"} <span class="arrow" aria-hidden="true">→</span></a>
+          </div>
         </section>
-        <section class="card">
-          <div class="card-head"><div class="card-title"><span class="service-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M16.8 12.5c0-2.5 2.1-3.7 2.2-3.8a4.8 4.8 0 00-3.8-2c-1.6-.2-3.1 1-3.9 1s-2-1-3.3-1c-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.5 1.3-.1 1.8-.8 3.4-.8s2 .8 3.4.8c1.4 0 2.3-1.2 3.1-2.5a11 11 0 001.4-2.9c-.1 0-2.8-1.1-2.8-4zM14.2 5c.7-.9 1.2-2.1 1.1-3.3-1.1 0-2.4.7-3.2 1.6-.7.8-1.3 2-1.1 3.1 1.2.1 2.4-.6 3.2-1.4z" fill="currentColor"/></svg></span><div><h2>Apple Calendar</h2><p>使用专用密码安全连接</p></div></div><span class="status {"ok" if apple_ok else ""}">{"已连接" if apple_ok else "等待连接"}</span></div>
-          <form method="post" action="/api/apple">
-            <div class="field-grid"><div><label for="apple_id">Apple 账户</label><input id="apple_id" name="apple_id" type="email" autocomplete="username" placeholder="name@icloud.com" required></div><div><label for="app_password">App 专用密码</label><input id="app_password" name="app_password" type="password" autocomplete="new-password" placeholder="xxxx-xxxx-xxxx-xxxx" required></div></div>
-            <div class="form-footer"><p class="form-help">请在 Apple 账户中创建名为 <strong>notion-caldav-sync</strong> 的专用密码。凭据会在进入数据库前加密。</p><button type="submit">{"更新连接" if apple_ok else "保存并连接"}</button></div>
-          </form>
-        </section>
-        <section class="card wide">
-          <div class="sync-layout"><div><div class="card-title"><span class="service-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M20 7h-6V1M4 17h6v6M5.1 9A8 8 0 0118 5l2 2M18.9 15A8 8 0 016 19l-2-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div><h2>自动同步</h2><p>{"服务运行正常，你也可以随时手动同步。" if sync_ok else "完成上面的两个连接后，自动同步会立即启用。"}</p></div></div><div class="sync-facts"><div><span class="fact-label">上次完成</span><span class="fact-value">{last_finished}</span></div><div><span class="fact-label">下次运行</span><span class="fact-value">{next_due}</span></div></div>{('<p class="error">上次同步错误：' + _escape(sync.get("last_error")) + "</p>") if sync.get("last_error") else ""}</div><form method="post" action="/api/sync"><button class="secondary" type="submit" {"disabled" if not sync_ok else ""}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 7h-6V1M4 17h6v6M5.1 9A8 8 0 0118 5l2 2M18.9 15A8 8 0 016 19l-2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>立即同步</button></form></div>
+        <section class="connection" aria-labelledby="apple-title">
+          <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">2</span><h2 id="apple-title">Apple Calendar</h2></div><span class="status {"ok" if apple_ok else ""}">{"已连接" if apple_ok else "未连接"}</span></div>
+          <div class="connection-content">{apple_content}</div>
         </section>
       </div>
-      <footer class="footer"><p>凭据使用 AES-GCM 加密存储</p><p>Calendar Sync · Planner.li</p></footer>
+      <section class="sync-section" aria-labelledby="sync-title">
+        <div class="section-head"><h2 id="sync-title">自动同步</h2><span class="status {sync_class}">{sync_label}</span></div>
+        <p class="sync-description">{"每 30 分钟运行一次，也可以手动发起同步。" if sync_ok else "完成两个连接后，首次同步会自动进入队列。"}</p>
+        <div class="sync-bottom">
+          <dl class="sync-facts"><div><dt>上次完成</dt><dd>{last_finished}</dd></div><div><dt>下次运行</dt><dd>{next_due}</dd></div></dl>
+          <form method="post" action="/api/sync"><button class="secondary" type="submit" {"disabled" if not sync_ok else ""}>立即同步</button></form>
+        </div>
+        {('<p class="error" role="alert">上次同步错误：' + _escape(sync.get("last_error")) + "</p>") if sync.get("last_error") else ""}
+      </section>
+      {_footer()}
     """
     return html_response(
-        _document(title="Calendar Sync · Planner.li", content=content, nonce=nonce), nonce=nonce
+        _document(title="连接与同步 · Planner.li", content=content, nonce=nonce), nonce=nonce
     )
 
 
