@@ -1,6 +1,7 @@
 # Notion CalDAV Sync
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)](pyproject.toml)
+[![CI](https://github.com/binbinsh/notion-caldav-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/binbinsh/notion-caldav-sync/actions/workflows/ci.yml)
 [![Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-F38020?logo=cloudflare)](https://developers.cloudflare.com/workers/)
 [![Notion API](https://img.shields.io/badge/Notion%20API-2026--03--11-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
 [![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/app/calendar.py)
@@ -164,6 +165,10 @@ uv run python -m tests.cli smoke --env-file .env
 uv run python -m tests.cli run --suite all --env-file .env
 uv run -- pywrangler tail
 ```
+
+## Contributing and security
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and pull-request expectations. Please report security vulnerabilities privately according to [SECURITY.md](SECURITY.md), not through a public issue.
 
 ## Data safety and operational notes
 - Only tasks with a start date will sync; undated pages are skipped.

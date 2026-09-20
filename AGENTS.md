@@ -4,12 +4,16 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 
 ## Purpose
 - One-way sync from Notion → iCloud Calendar.
-- Every dated task across all shared databases lands in a single “Notion” calendar.
-- Webhooks push fast updates; a cron-triggered full rewrite guarantees consistency.
+- Personal mode syncs every dated task from shared data sources into one calendar.
+- Hosted mode gives each Clerk-authenticated user an isolated Notion OAuth installation, Apple connection, preferences, and job history.
+- Verified webhooks request fast updates; scheduled full reconciliation guarantees consistency.
 
 ## Runtime & Secrets
 - Worker bindings:
   - `STATE` – Cloudflare KV namespace storing calendar metadata (`settings` doc).
+- Hosted bindings:
+  - `HOSTED_DB` – D1 database storing tenant state and encrypted credentials.
+  - `SYNC_QUEUE` – Cloudflare Queue for bounded sync jobs.
 - Required secrets/env vars:
   - `APPLE_ID`, `APPLE_APP_PASSWORD`
   - `NOTION_TOKEN`
@@ -59,6 +63,6 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 ## Coding Tips
 - The runtime is Pedantic: use the `webdav` helpers inside Workers, and the `caldav` library locally.
 - ICS descriptions combine datasource, category, and Notion description; keep `_description_for_task` as the single source of truth.
-- Cron now always calls `run_full_sync`, but it skips runs until `full_sync_interval_minutes` (KV) elapses; tune the cron schedule or that interval as needed (default 30 min).
+- Cron polls every five minutes. Personal mode checks its KV interval, while hosted mode dispatches connections whose 30-minute `next_due_at` has elapsed.
 - Webhooks batch page IDs; the engine handles deduplication and deletion of archived/undated tasks.
-- No legacy code, no backward compatibility.
+- Preserve the legacy `Notion` calendar compatibility path and its recorded-event safety boundary.
