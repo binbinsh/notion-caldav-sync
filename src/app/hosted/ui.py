@@ -83,11 +83,11 @@ def _document(*, title: str, content: str, nonce: str) -> str:
     p {{ color:var(--muted); }}
     main {{ width:min(880px,calc(100% - 64px)); min-height:100svh; margin:auto; display:flex; flex-direction:column; }}
     .topbar {{ display:flex; align-items:center; justify-content:space-between; gap:24px; padding:30px 0 24px; border-bottom:1px solid var(--line); }}
-    .brand {{ display:inline-flex; align-items:flex-start; flex-direction:column; gap:3px; text-decoration:none; white-space:nowrap; }}
+    .brand {{ display:inline-flex; align-items:center; gap:8px; text-decoration:none; white-space:nowrap; }}
     .brand-name {{ font-size:22px; font-weight:600; line-height:1; letter-spacing:-.025em; }}
-    .brand-attribution {{ display:inline-flex; align-items:center; gap:5px; min-height:17px; }}
-    .brand-by {{ color:var(--muted); font-size:12px; font-weight:400; line-height:1; }}
-    .brand-wordmark {{ display:block; width:76px; height:auto; }}
+    .brand-attribution {{ display:inline-flex; align-items:center; gap:4px; opacity:.55; }}
+    .brand-by {{ font-size:11px; font-weight:400; line-height:1; }}
+    .brand-wordmark {{ display:block; width:64px; height:auto; }}
     .top-link {{ font-size:13px; color:var(--muted); text-decoration:none; }}
     .intro {{ padding:78px 0 50px; max-width:690px; }}
     .eyebrow {{ margin-bottom:16px; color:var(--accent); font-size:13px; font-weight:600; letter-spacing:.025em; }}
@@ -156,10 +156,10 @@ def _document(*, title: str, content: str, nonce: str) -> str:
       main {{ width:calc(100% - 40px); }}
       .topbar {{ padding:23px 0 20px; gap:12px; }}
       .top-link {{ font-size:12px; }}
-      .brand {{ gap:2px; }}
+      .brand {{ gap:7px; }}
       .brand-name {{ font-size:20px; }}
-      .brand-by {{ font-size:11px; }}
-      .brand-wordmark {{ width:70px; }}
+      .brand-by {{ font-size:10px; }}
+      .brand-wordmark {{ width:58px; }}
       .intro {{ padding:48px 0 38px; }}
       h1 {{ font-size:28px; }}
       .intro-copy {{ font-size:15px; }}
