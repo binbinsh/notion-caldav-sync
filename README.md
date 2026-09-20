@@ -58,7 +58,7 @@ Run the guided one-command setup. It asks whether to deploy personal or hosted m
 
 The wizard remembers credentials and deployment settings in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. Press Enter at the custom-domain prompt to use `https://notion-caldav-sync.<your-account-subdomain>.workers.dev`; if you choose a custom hostname instead, it must be unused and belong to a zone in the same Cloudflare account.
 
-Notion connection creation is the remaining dashboard step because Notion does not expose it through its public API. Webhooks are optional: the Worker still reconciles changes on schedule without one. If you enable a webhook, the English-only wizard prints the exact URL, waits for verification, retrieves the token, and tells you where to paste it. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
+Notion connection creation is the remaining dashboard step because Notion does not expose it through its public API. Webhook registration is required for real-time sync: the English-only wizard prints the exact URL, waits for verification, retrieves the token, and tells you where to paste it. Scheduled reconciliation remains the fallback for missed or delayed deliveries. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
 
 If the Worker is already deployed and only the hosted webhook remains, run:
 
@@ -86,7 +86,7 @@ The hosted runtime uses:
 - D1 for users, installations, encrypted credentials, jobs, and tenant-scoped sync state.
 - AES-GCM with a Worker secret as the credential vault key.
 - Cloudflare Queues for bounded, retryable sync jobs.
-- A five-minute Cron dispatcher that runs connections once their 30-minute reconciliation interval is due; verified Notion webhooks can enqueue faster updates.
+- A five-minute Cron dispatcher that runs connections once their 30-minute reconciliation interval is due; verified Notion webhooks enqueue immediate updates.
 
 Provision Cloudflare resources and deploy with:
 
@@ -106,7 +106,7 @@ Clerk user IDs listed in `HOSTED_ADMIN_USER_IDS` can open `/admin` to inspect ac
 
 For a shared Clerk production instance, enable its allowed-subdomain list and include the hosted calendar hostname. The hosted Worker accepts only JWTs whose authorized party appears in `CLERK_AUTHORIZED_PARTIES`.
 
-The optional hosted webhook subscription URL is:
+The hosted webhook subscription URL is:
 
 ```text
 https://<worker-url>/webhook/notion/hosted?setup=<one-time-setup-token>
@@ -141,7 +141,7 @@ STATUS_EMOJI_STYLE=symbol ./deploy.sh
    - **User information:** select *No user information*
 4. **Access**
    - Under *Page and database access*, choose the databases that should sync (make sure they’re shared with the integration inside Notion)
-5. **Webhooks (optional)**
+5. **Webhooks**
    - **Webhook URL:** `https://<worker-url>/webhook/notion`
    - **API version:** select `2026-03-11`
    - **Subscribed events:** select every **Page** and **Data source** event plus the non-deprecated **Database** events; leave **View**, **Comment**, and **File upload** unchecked
@@ -177,7 +177,7 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the develo
 - Rename/recolour the iCloud calendar directly—the worker reuses those values from KV.
 - All-day overdue detection uses the calendar's timezone. We auto-detect it from iCloud, but you can override it via `POST /admin/settings` with `{ "date_only_timezone": "<IANA tz>" }`.
 - Cron checks for due work every five minutes. Each connection's default full-sync interval remains 30 minutes, so reconciliation normally starts 30–35 minutes after the previous successful run. [Cloudflare notes](https://developers.cloudflare.com/workers/configuration/cron-triggers/) that Cron Trigger configuration changes can take up to 15 minutes to propagate.
-- Webhooks are optional acceleration, not the source of truth. Notion may aggregate or reorder events, so the full sync always reads the latest API state.
+- Webhooks drive real-time updates, while scheduled full reconciliation remains the correctness fallback. Notion may aggregate or reorder events, so every sync reads the latest API state.
 - Reconciliation compares the managed ICS fields returned by iCloud, skips unchanged events, and limits parallel CalDAV writes. If iCloud has tombstoned a deleted event UID, the worker recreates it with a stable recovery UID and continues to reuse the returned resource path.
 - Status emojis embedded in ICS titles map to the canonical task states (see “Status emoji style”).
 

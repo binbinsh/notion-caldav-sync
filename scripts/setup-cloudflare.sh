@@ -384,39 +384,31 @@ fi
 require_value worker_url "$WORKER_URL"
 
 stage "Finish the Notion webhook"
-say "Webhooks make updates arrive faster, but they are optional; scheduled reconciliation still runs without them."
-if confirm "Configure the optional Notion webhook now?"; then
-  open_url "https://www.notion.so/profile/integrations"
-  if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
-    HOSTED_WEBHOOK_SETUP_TOKEN=$(_existing HOSTED_WEBHOOK_SETUP_TOKEN || true)
-    require_value HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
-    WEBHOOK_URL="${WORKER_URL%/}/webhook/notion/hosted?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}"
-    step "Create a webhook subscription with this URL: $WEBHOOK_URL"
-    step "Subscribe to Page, Database, and Data source events."
-    pause "Press Enter after Notion sends the verification request."
-    VERIFY_JSON=$(curl --fail --silent --show-error "${WORKER_URL%/}/api/webhook/setup?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}")
-    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | uv run python -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
-    require_value verification_token "$VERIFY_TOKEN"
-    say "Paste this verification token into Notion: $VERIFY_TOKEN"
-    pause "Press Enter after Notion reports the subscription as active."
-  else
-    step "Create a webhook subscription with this URL: ${WORKER_URL%/}/webhook/notion"
-    step "Subscribe to Page, Database, and Data source events."
-    pause "Press Enter after Notion sends the verification request."
-    VERIFY_JSON=$(curl --fail --silent --show-error \
-      --header "X-Admin-Token: $ADMIN_TOKEN" \
-      "${WORKER_URL%/}/admin/settings")
-    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | uv run python -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
-    require_value verification_token "$VERIFY_TOKEN"
-    say "Paste this verification token into Notion: $VERIFY_TOKEN"
-    pause "Press Enter after Notion reports the subscription as active."
-  fi
+say "Notion webhook setup is required for real-time sync. Scheduled reconciliation remains the fallback for missed or delayed deliveries."
+open_url "https://www.notion.so/profile/integrations"
+if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+  HOSTED_WEBHOOK_SETUP_TOKEN=$(_existing HOSTED_WEBHOOK_SETUP_TOKEN || true)
+  require_value HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
+  WEBHOOK_URL="${WORKER_URL%/}/webhook/notion/hosted?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}"
+  step "Create a webhook subscription with this URL: $WEBHOOK_URL"
+  step "Subscribe to Page, Database, and Data source events."
+  pause "Press Enter after Notion sends the verification request."
+  VERIFY_JSON=$(curl --fail --silent --show-error "${WORKER_URL%/}/api/webhook/setup?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}")
+  VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | uv run python -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
+  require_value verification_token "$VERIFY_TOKEN"
+  say "Paste this verification token into Notion: $VERIFY_TOKEN"
+  pause "Press Enter after Notion reports the subscription as active."
 else
-  if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
-    say "Skipping webhook setup. You can run scripts/configure-notion-webhook.sh later."
-  else
-    say "Skipping webhook setup. Scheduled reconciliation remains active; re-run this wizard whenever you want to add the webhook."
-  fi
+  step "Create a webhook subscription with this URL: ${WORKER_URL%/}/webhook/notion"
+  step "Subscribe to Page, Database, and Data source events."
+  pause "Press Enter after Notion sends the verification request."
+  VERIFY_JSON=$(curl --fail --silent --show-error \
+    --header "X-Admin-Token: $ADMIN_TOKEN" \
+    "${WORKER_URL%/}/admin/settings")
+  VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | uv run python -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
+  require_value verification_token "$VERIFY_TOKEN"
+  say "Paste this verification token into Notion: $VERIFY_TOKEN"
+  pause "Press Enter after Notion reports the subscription as active."
 fi
 if [[ "$DEPLOYMENT_MODE" == "personal" ]] && confirm "Run one full sync now?"; then
   curl --fail --silent --show-error \

@@ -28,10 +28,15 @@ def test_templates_allow_workers_dev_without_a_custom_route():
         assert "WORKER_CUSTOM_DOMAIN" not in document
 
 
-def test_setup_makes_custom_domain_and_webhook_optional():
+def test_setup_makes_custom_domain_optional_but_requires_webhook():
     document = Path("scripts/setup-cloudflare.sh").read_text()
     assert "press Enter to use Cloudflare's free workers.dev URL" in document
-    assert 'confirm "Configure the optional Notion webhook now?"' in document
+    assert 'confirm "Configure the optional Notion webhook now?"' not in document
+    assert "Notion webhook setup is required for real-time sync" in document
+
+    readme = Path("README.md").read_text()
+    assert "Webhooks are optional" not in readme
+    assert "**Webhooks (optional)**" not in readme
 
 
 def test_noninteractive_deploy_defaults_status_style():
