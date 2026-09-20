@@ -289,6 +289,17 @@ export ADMIN_TOKEN
 chmod 600 "$ENV_FILE"
 
 stage "Create and deploy the Worker"
+ask WORKER_CUSTOM_DOMAIN "Custom domain in your Cloudflare account (for example calendar.example.com):"
+WORKER_CUSTOM_DOMAIN=$(printf "%s" "$WORKER_CUSTOM_DOMAIN" | tr '[:upper:]' '[:lower:]' | xargs)
+require_value WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
+if [[ ! "$WORKER_CUSTOM_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+  warn "Enter a hostname without https:// or a path."
+  exit 1
+fi
+write_env WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
+export WORKER_CUSTOM_DOMAIN
+WORKER_URL="https://$WORKER_CUSTOM_DOMAIN"
+
 ask STATUS_EMOJI_STYLE "Status style (emoji or symbol) [emoji]:"
 STATUS_EMOJI_STYLE=${STATUS_EMOJI_STYLE:-emoji}
 case "$STATUS_EMOJI_STYLE" in
@@ -302,24 +313,14 @@ export STATUS_EMOJI_STYLE
 say "Creating or reusing KV, uploading secrets, configuring cron, and deploying the Worker."
 DEPLOY_LOG=$(mktemp)
 "$ROOT_DIR/deploy.sh" | tee "$DEPLOY_LOG"
-WORKER_URL=$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n1 || true)
-
-if [[ -z "$WORKER_URL" ]]; then
-  warn "The deploy succeeded, but its public URL was not present in the CLI output."
-  ask WORKER_URL "Paste the Worker base URL from Cloudflare (or leave blank):"
-fi
 
 say "One Notion-side step remains because Notion does not expose webhook creation through its public API."
 open_url "https://www.notion.so/my-integrations"
-if [[ -n "$WORKER_URL" ]]; then
-  step "Set the webhook URL to: ${WORKER_URL%/}/webhook/notion"
-else
-  step "Copy the Worker URL from Cloudflare and append /webhook/notion."
-fi
+step "Set the webhook URL to: ${WORKER_URL%/}/webhook/notion"
 step "Choose API version 2026-03-11 and subscribe to Page, Database, and Data source events."
 pause "Press Enter after saving the webhook."
 
-if [[ -n "$WORKER_URL" ]] && confirm "Run one full sync now?"; then
+if confirm "Run one full sync now?"; then
   curl --fail --silent --show-error \
     --request POST \
     --header "X-Admin-Token: $ADMIN_TOKEN" \
@@ -329,7 +330,5 @@ fi
 # ──────────────────────────────────────────────────────────────────────────
 
 finish
-if [[ -n "$WORKER_URL" ]]; then
-  say "Worker: $WORKER_URL"
-  say "Webhook: ${WORKER_URL%/}/webhook/notion"
-fi
+say "Worker: $WORKER_URL"
+say "Webhook: ${WORKER_URL%/}/webhook/notion"

@@ -23,6 +23,7 @@ Create a `.env` (used locally and when running `pywrangler secret put`):
 | `CLOUDFLARE_ACCOUNT_ID` | Optional account selector when you belong to multiple Cloudflare accounts |
 | `CLOUDFLARE_API_TOKEN` | Optional token for headless deployment; interactive deploys can use Wrangler OAuth |
 | `CLOUDFLARE_STATE_NAMESPACE` | KV namespace ID for the `STATE` binding |
+| `WORKER_CUSTOM_DOMAIN` | Required production hostname in a Cloudflare-managed zone; `workers.dev` and preview URLs remain disabled |
 | `NOTION_TOKEN` | Notion integration token |
 | `ADMIN_TOKEN` | Required by `/admin/*` endpoints |
 | `APPLE_ID` / `APPLE_APP_PASSWORD` | iCloud Calendar credentials |
@@ -37,7 +38,7 @@ Run the guided one-command setup. It signs in to Cloudflare with OAuth, creates 
 ./scripts/setup-cloudflare.sh
 ```
 
-The wizard remembers credentials in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. You only need to approve Cloudflare OAuth and provide the Notion token and Apple app-specific password on the first run.
+The wizard remembers credentials and the custom domain in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. You only need to approve Cloudflare OAuth and provide the Notion token and Apple app-specific password on the first run. The selected hostname must be unused and belong to a zone in the same Cloudflare account; Cloudflare creates its DNS record and TLS certificate during deployment.
 
 Notion webhook registration is the one remaining dashboard step because Notion does not expose webhook creation through its public API. The wizard opens the correct page and prints the exact production webhook URL. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
 
@@ -69,7 +70,7 @@ STATUS_EMOJI_STYLE=symbol ./deploy.sh
 4. **Access**
    - Under *Page and database access*, choose the databases that should sync (make sure they’re shared with the integration inside Notion)
 5. **Webhooks**
-   - **Webhook URL:** `https://<worker-url>/webhook/notion` (replace with your *.workers.dev domain or custom route)
+   - **Webhook URL:** `https://<your-custom-domain>/webhook/notion`
    - **API version:** select `2026-03-11`
    - **Subscribed events:** select every **Page**, **Database**, and **Data source** entry; leave **Comment** and **File upload** unchecked
 6. Save the integration and copy the generated secret into `.env` as `NOTION_TOKEN`.

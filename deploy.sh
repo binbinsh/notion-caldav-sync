@@ -57,6 +57,29 @@ choose_status_emoji_style() {
   echo "Using STATUS_EMOJI_STYLE=$STATUS_EMOJI_STYLE"
 }
 
+choose_worker_custom_domain() {
+  local domain=${WORKER_CUSTOM_DOMAIN:-}
+  domain=$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | xargs)
+
+  if [ -z "$domain" ] && [ -t 0 ]; then
+    read -r -p "Worker custom domain (for example calendar.example.com): " domain
+    domain=$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | xargs)
+  fi
+
+  if [ -z "$domain" ]; then
+    echo "WORKER_CUSTOM_DOMAIN is required because workers.dev is disabled." >&2
+    exit 1
+  fi
+  if [[ ! "$domain" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+    echo "Invalid WORKER_CUSTOM_DOMAIN=$domain (expected a hostname without scheme or path)." >&2
+    exit 1
+  fi
+
+  WORKER_CUSTOM_DOMAIN="$domain"
+  export WORKER_CUSTOM_DOMAIN
+  echo "Using custom domain: $WORKER_CUSTOM_DOMAIN"
+}
+
 reuse_namespace_from_config() {
   if [ -n "${CLOUDFLARE_STATE_NAMESPACE:-}" ]; then
     return 1
@@ -161,17 +184,19 @@ ensure_namespace() {
 
 ensure_namespace
 choose_status_emoji_style
+choose_worker_custom_domain
 if [ ! -f "$TEMPLATE_PATH" ]; then
   echo "Missing wrangler template at $TEMPLATE_PATH" >&2
   exit 1
 fi
 
 if command -v envsubst >/dev/null 2>&1; then
-  CLOUDFLARE_STATE_NAMESPACE="$CLOUDFLARE_STATE_NAMESPACE" STATUS_EMOJI_STYLE="$STATUS_EMOJI_STYLE" envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
+  CLOUDFLARE_STATE_NAMESPACE="$CLOUDFLARE_STATE_NAMESPACE" STATUS_EMOJI_STYLE="$STATUS_EMOJI_STYLE" WORKER_CUSTOM_DOMAIN="$WORKER_CUSTOM_DOMAIN" envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
 else
   sed \
     -e "s/\${CLOUDFLARE_STATE_NAMESPACE}/$CLOUDFLARE_STATE_NAMESPACE/g" \
     -e "s/\${STATUS_EMOJI_STYLE}/$STATUS_EMOJI_STYLE/g" \
+    -e "s/\${WORKER_CUSTOM_DOMAIN}/$WORKER_CUSTOM_DOMAIN/g" \
     "$TEMPLATE_PATH" > "$CONFIG_PATH"
 fi
 echo "Generated wrangler.toml with STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
@@ -190,4 +215,5 @@ printf "%s" "${ADMIN_TOKEN:?ADMIN_TOKEN must be set}" | uv run -- pywrangler sec
 uv run -- pywrangler deploy --name notion-caldav-sync
 
 echo "Deployment complete."
-echo "Visit your worker URL and trigger /webhook/notion or wait for cron to initialize calendars."
+echo "Worker URL: https://$WORKER_CUSTOM_DOMAIN"
+echo "Webhook URL: https://$WORKER_CUSTOM_DOMAIN/webhook/notion"
