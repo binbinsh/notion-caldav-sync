@@ -83,9 +83,11 @@ def _document(*, title: str, content: str, nonce: str) -> str:
     p {{ color:var(--muted); }}
     main {{ width:min(880px,calc(100% - 64px)); min-height:100svh; margin:auto; display:flex; flex-direction:column; }}
     .topbar {{ display:flex; align-items:center; justify-content:space-between; gap:24px; padding:30px 0 24px; border-bottom:1px solid var(--line); }}
-    .brand {{ display:inline-flex; align-items:center; gap:7px; text-decoration:none; font-size:16px; font-weight:600; white-space:nowrap; }}
-    .brand-by {{ color:var(--muted); font-size:13px; font-weight:400; }}
-    .brand-wordmark {{ display:block; width:92px; height:auto; }}
+    .brand {{ display:inline-flex; align-items:flex-start; flex-direction:column; gap:3px; text-decoration:none; white-space:nowrap; }}
+    .brand-name {{ font-size:22px; font-weight:600; line-height:1; letter-spacing:-.025em; }}
+    .brand-attribution {{ display:inline-flex; align-items:center; gap:5px; min-height:17px; }}
+    .brand-by {{ color:var(--muted); font-size:12px; font-weight:400; line-height:1; }}
+    .brand-wordmark {{ display:block; width:76px; height:auto; }}
     .top-link {{ font-size:13px; color:var(--muted); text-decoration:none; }}
     .intro {{ padding:78px 0 50px; max-width:690px; }}
     .eyebrow {{ margin-bottom:16px; color:var(--accent); font-size:13px; font-weight:600; letter-spacing:.025em; }}
@@ -154,9 +156,10 @@ def _document(*, title: str, content: str, nonce: str) -> str:
       main {{ width:calc(100% - 40px); }}
       .topbar {{ padding:23px 0 20px; gap:12px; }}
       .top-link {{ font-size:12px; }}
-      .brand {{ font-size:14px; gap:5px; }}
-      .brand-by {{ font-size:12px; }}
-      .brand-wordmark {{ width:78px; }}
+      .brand {{ gap:2px; }}
+      .brand-name {{ font-size:20px; }}
+      .brand-by {{ font-size:11px; }}
+      .brand-wordmark {{ width:70px; }}
       .intro {{ padding:48px 0 38px; }}
       h1 {{ font-size:28px; }}
       .intro-copy {{ font-size:15px; }}
@@ -217,8 +220,8 @@ def _brand() -> str:
     return f"""
       <nav class="topbar" aria-label="Main navigation">
         <a class="brand" href="/" aria-label="CalDAV Sync by Planner.li home">
-          <span>CalDAV Sync</span><span class="brand-by">by</span>
-          <img class="brand-wordmark" src="{PLANNER_WORDMARK_DATA}" alt="Planner.li" width="320" height="68">
+          <span class="brand-name">CalDAV Sync</span>
+          <span class="brand-attribution"><span class="brand-by">by</span><img class="brand-wordmark" src="{PLANNER_WORDMARK_DATA}" alt="Planner.li" width="320" height="68"></span>
         </a>
         <a class="top-link" href="{SOURCE_URL}">GitHub <span aria-hidden="true">↗</span></a>
       </nav>
@@ -257,9 +260,9 @@ def signed_out_page(*, base_url: str, sign_in_url: str) -> Response:
         <p class="intro-copy">An open-source, one-way sync for dated Notion tasks. Self-host it, or use our managed service.</p>
         <div class="actions">
           <a class="button secondary" href="{SOURCE_URL}">View source <span class="arrow" aria-hidden="true">↗</span></a>
-          <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">Try it free <span class="arrow" aria-hidden="true">→</span></a>
+          <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">Use our free managed service <span class="arrow" aria-hidden="true">→</span></a>
         </div>
-        <p class="action-note">Sign in with Planner.li. No deployment required.</p>
+        <p class="action-note">Hosted and managed by Planner.li. No deployment, no charge.</p>
       </section>
       <section class="overview" aria-label="How it works">
         <div class="overview-row"><h2>One-way by design</h2><p>Notion stays the source of truth; Calendar changes are never written back.</p></div>
