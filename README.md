@@ -30,21 +30,16 @@ Create a `.env` (used locally and when running `pywrangler secret put`):
 Generate a strong `ADMIN_TOKEN` locally (e.g. `openssl rand -hex 32`) and keep it handy for the protected admin endpoints. You don’t need to pre-populate `CLOUDFLARE_STATE_NAMESPACE`; running `./deploy.sh` prints the namespace ID it discovers or creates and writes the same value into `wrangler.toml`, so you can copy it into `.env` afterward.
 
 ## Deployment
+
+Run the guided one-command setup. It signs in to Cloudflare with OAuth, creates or reuses KV, stores Worker secrets, configures cron, and deploys the Worker:
+
 ```bash
-# setup venv
-uv venv --python 3.12
-uv sync
-uv sync --group dev
-
-# authenticate once (skip this when using CLOUDFLARE_API_TOKEN)
-uv run pywrangler login
-
-# deploy to cloudflare
-chmod a+x deploy.sh
-./deploy.sh
+./scripts/setup-cloudflare.sh
 ```
 
-The script ensures `wrangler.toml` matches your KV namespace, prompts for secrets via `pywrangler`, and deploys the Worker. Update your Notion webhook URL to the production Worker afterwards.
+The wizard remembers credentials in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. You only need to approve Cloudflare OAuth and provide the Notion token and Apple app-specific password on the first run.
+
+Notion webhook registration is the one remaining dashboard step because Notion does not expose webhook creation through its public API. The wizard opens the correct page and prints the exact production webhook URL. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
 
 ## Status emoji style
 The worker supports two status emoji styles for event titles:
