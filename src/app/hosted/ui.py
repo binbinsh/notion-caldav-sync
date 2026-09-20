@@ -51,11 +51,11 @@ def html_response(body: str, *, status: int = 200, nonce: Optional[str] = None) 
 
 def _document(*, title: str, content: str, nonce: str) -> str:
     return f"""<!doctype html>
-<html lang="zh-Hans" class="wf-loading">
+<html lang="en" class="wf-loading">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="将 Notion 中的任务单向同步到 Apple Calendar。查看开源代码，或直接使用 Planner.li 托管服务。">
+  <meta name="description" content="An open-source, one-way sync from Notion to Apple Calendar. Self-host it or use the managed Planner.li service.">
   <title>{_escape(title)}</title>
   <style>
     :root {{
@@ -101,9 +101,9 @@ def _document(*, title: str, content: str, nonce: str) -> str:
     .arrow {{ font-size:17px; font-weight:400; line-height:1; }}
     .action-note {{ margin-top:13px; font-size:12px; color:var(--muted); }}
     .overview {{ margin:0 0 58px; border-top:1px solid var(--line); }}
-    .overview-row {{ display:grid; grid-template-columns:160px 1fr; gap:28px; padding:21px 0; border-bottom:1px solid var(--line); }}
+    .overview-row {{ display:grid; grid-template-columns:148px 1fr; gap:24px; padding:21px 0; border-bottom:1px solid var(--line); }}
     .overview-row h2 {{ font-size:14px; line-height:1.8; }}
-    .overview-row p {{ max-width:570px; font-size:14px; line-height:1.8; }}
+    .overview-row p {{ font-size:14px; line-height:1.8; white-space:nowrap; }}
     .footer {{ margin-top:auto; padding:22px 0 28px; display:flex; justify-content:space-between; gap:16px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); }}
     .footer a {{ text-decoration:none; }}
     .dashboard-header {{ display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:45px 0 28px; }}
@@ -162,6 +162,7 @@ def _document(*, title: str, content: str, nonce: str) -> str:
       .actions {{ align-items:stretch; flex-direction:column; }}
       .overview {{ margin-bottom:40px; }}
       .overview-row {{ grid-template-columns:1fr; gap:6px; padding:18px 0; }}
+      .overview-row p {{ white-space:normal; }}
       .dashboard-header {{ align-items:flex-start; flex-direction:column; gap:14px; padding-top:32px; }}
       .dashboard-header h1 {{ font-size:25px; }}
       .connection {{ padding:22px 18px; }}
@@ -201,7 +202,7 @@ def _document(*, title: str, content: str, nonce: str) -> str:
       document.addEventListener('DOMContentLoaded',()=>{{
         document.querySelectorAll('time[data-local-time]').forEach(item=>{{
           const date=new Date(item.getAttribute('datetime'));
-          if(!Number.isNaN(date.getTime()))item.textContent=new Intl.DateTimeFormat('zh-CN',{{dateStyle:'medium',timeStyle:'short'}}).format(date);
+          if(!Number.isNaN(date.getTime()))item.textContent=new Intl.DateTimeFormat('en-US',{{dateStyle:'medium',timeStyle:'short'}}).format(date);
         }});
       }},{{once:true}});
     }})();
@@ -213,8 +214,8 @@ def _document(*, title: str, content: str, nonce: str) -> str:
 
 def _brand() -> str:
     return f"""
-      <nav class="topbar" aria-label="主导航">
-        <a class="brand" href="/" aria-label="Planner.li Calendar 首页">
+      <nav class="topbar" aria-label="Main navigation">
+        <a class="brand" href="/" aria-label="Planner.li Calendar home">
           <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="16" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 3v4M16.5 3v4M4 10h16M8 15l2.5 2.5L16 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           <span>Planner.li</span><span class="brand-product">Calendar</span>
         </a>
@@ -224,7 +225,7 @@ def _brand() -> str:
 
 
 def _footer() -> str:
-    return f"""<footer class="footer"><p>Notion → Apple Calendar</p><a href="{SOURCE_URL}">notion-caldav-sync <span aria-hidden="true">↗</span></a></footer>"""
+    return f"""<footer class="footer"><p>© 2026 Grid Heap. Open source under the MIT License.</p><a href="{SOURCE_URL}">GitHub <span aria-hidden="true">↗</span></a></footer>"""
 
 
 def _local_time(value: Any, empty: str) -> str:
@@ -236,10 +237,10 @@ def _local_time(value: Any, empty: str) -> str:
 
 def _localized_message(message: str) -> str:
     translations = {
-        "Notion authorization was cancelled.": "Notion 授权已取消。",
-        "Notion connected successfully.": "Notion 已连接成功。",
-        "Apple connection saved. The first sync is queued.": "Apple Calendar 已连接，首次同步已进入队列。",
-        "Sync queued.": "同步任务已进入队列。",
+        "Notion authorization was cancelled.": "Notion authorization was cancelled.",
+        "Notion connected successfully.": "Notion connected successfully.",
+        "Apple connection saved. The first sync is queued.": "Apple Calendar is connected. The first sync is queued.",
+        "Sync queued.": "Sync queued.",
     }
     return translations.get(message, message)
 
@@ -251,18 +252,18 @@ def signed_out_page(*, base_url: str, sign_in_url: str) -> Response:
       {_brand()}
       <section class="intro" aria-labelledby="intro-title">
         <p class="eyebrow">Notion → Apple Calendar</p>
-        <h1 id="intro-title">计划留在 Notion，<br>日程带在身边。</h1>
-        <p class="intro-copy">一个开源的日历同步工具。将 Notion 中带日期的任务同步到 Apple Calendar，在熟悉的日历里查看安排。</p>
+        <h1 id="intro-title">Plan in Notion. See it in Calendar.</h1>
+        <p class="intro-copy">An open-source, one-way sync for dated Notion tasks. Self-host it, or use our managed service.</p>
         <div class="actions">
-          <a class="button secondary" href="{SOURCE_URL}">查看开源代码 <span class="arrow" aria-hidden="true">↗</span></a>
-          <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">直接使用托管服务 <span class="arrow" aria-hidden="true">→</span></a>
+          <a class="button secondary" href="{SOURCE_URL}">View source <span class="arrow" aria-hidden="true">↗</span></a>
+          <a class="button" href="{_escape(sign_in_url)}?redirect_url={redirect}">Use managed service <span class="arrow" aria-hidden="true">→</span></a>
         </div>
-        <p class="action-note">通过 Planner.li 登录，无需自行部署。</p>
+        <p class="action-note">Sign in with Planner.li. No deployment required.</p>
       </section>
-      <section class="overview" aria-label="使用说明">
-        <div class="overview-row"><h2>单向同步</h2><p>在 Notion 中维护任务，更新会同步到 Apple Calendar。日历里的修改不会写回 Notion。</p></div>
-        <div class="overview-row"><h2>连接后自动运行</h2><p>授权 Notion 页面，并提供 Apple 账户的 App 专用密码。连接完成后，每 30 分钟自动同步，也可手动触发。</p></div>
-        <div class="overview-row"><h2>开源，也可自部署</h2><p>代码与部署说明公开在 GitHub。使用托管服务时，连接凭据会加密保存。</p></div>
+      <section class="overview" aria-label="How it works">
+        <div class="overview-row"><h2>One-way by design</h2><p>Notion stays the source of truth; Calendar changes are never written back.</p></div>
+        <div class="overview-row"><h2>Runs automatically</h2><p>Connect Notion and Apple Calendar once, then sync every 30 minutes.</p></div>
+        <div class="overview-row"><h2>Open source</h2><p>Audit the code, self-host it, or use encrypted credential storage here.</p></div>
       </section>
       {_footer()}
     """
@@ -285,65 +286,66 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
         if message
         else ""
     )
-    workspace_name = notion.get("workspace_name") or "Notion 工作区"
-    last_finished = _local_time(sync.get("last_finished_at"), "尚未同步")
-    next_due = _local_time(sync.get("next_due_at"), "连接完成后安排")
+    workspace_name = notion.get("workspace_name") or "Notion workspace"
+    last_finished = _local_time(sync.get("last_finished_at"), "Not yet")
+    next_due = _local_time(sync.get("next_due_at"), "After setup")
     apple_form = f"""
       <form method="post" action="/api/apple">
         <div class="field-grid">
-          <div><label for="apple_id">Apple 账户</label><input id="apple_id" name="apple_id" type="email" autocomplete="username" placeholder="name@icloud.com" aria-describedby="apple-help" required></div>
-          <div><label for="app_password">App 专用密码</label><input id="app_password" name="app_password" type="password" autocomplete="new-password" placeholder="xxxx-xxxx-xxxx-xxxx" aria-describedby="apple-help" required></div>
+          <div><label for="apple_id">Apple Account</label><input id="apple_id" name="apple_id" type="email" autocomplete="username" placeholder="name@icloud.com" aria-describedby="apple-help" required></div>
+          <div><label for="app_password">App-specific password</label><input id="app_password" name="app_password" type="password" autocomplete="new-password" placeholder="xxxx-xxxx-xxxx-xxxx" aria-describedby="apple-help" required></div>
         </div>
-        <p class="form-help" id="apple-help">在 <a href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">Apple 账户 <span aria-hidden="true">↗</span></a> 的「登录和安全」中创建名为 notion-caldav-sync 的 App 专用密码。请勿使用账户登录密码。凭据会加密保存。</p>
-        <button type="submit">{"更新连接" if apple_ok else "保存并连接"}</button>
+        <p class="form-help" id="apple-help">Create an app-specific password named notion-caldav-sync under Sign-In and Security in your <a href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">Apple Account <span aria-hidden="true">↗</span></a>. Do not use your account password. Credentials are encrypted at rest.</p>
+        <button type="submit">{"Update connection" if apple_ok else "Save and connect"}</button>
       </form>
     """
     apple_content = (
-        '<p class="connection-copy">已保存连接凭据。如需更换账户或专用密码，可在下方更新。</p>'
-        "<details><summary>更新 Apple 连接</summary>" + apple_form + "</details>"
+        '<p class="connection-copy">Your connection is saved. Update it below if you change accounts or passwords.</p>'
+        "<details><summary>Update Apple connection</summary>" + apple_form + "</details>"
         if apple_ok
-        else '<p class="connection-copy">连接用于接收 Notion 任务的 Apple Calendar。</p>'
+        else '<p class="connection-copy">Connect the Apple Calendar that should receive your Notion tasks.</p>'
         + apple_form
     )
     if sync.get("last_error"):
-        sync_label, sync_class = "上次运行失败", "error-status"
+        sync_label, sync_class = "Last run failed", "error-status"
     elif sync_ok:
-        sync_label, sync_class = "已启用", "ok"
+        sync_label, sync_class = "Active", "ok"
     else:
-        sync_label, sync_class = "尚未启用", ""
+        sync_label, sync_class = "Not active", ""
     content = f"""
       {_brand()}
       <header class="dashboard-header">
-        <div><h1>连接与同步</h1><p>将 Notion 任务单向同步到 Apple Calendar。</p></div>
-        <span class="setup-count">已连接 <strong>{completed} / 2</strong></span>
+        <div><h1>Connections and sync</h1><p>Send Notion tasks to Apple Calendar, one way.</p></div>
+        <span class="setup-count">Connected <strong>{completed} / 2</strong></span>
       </header>
       {notice}
       <div class="connection-list">
         <section class="connection" aria-labelledby="notion-title">
-          <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">1</span><h2 id="notion-title">Notion</h2></div><span class="status {"ok" if notion_ok else ""}">{"已连接" if notion_ok else "未连接"}</span></div>
+          <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">1</span><h2 id="notion-title">Notion</h2></div><span class="status {"ok" if notion_ok else ""}">{"Connected" if notion_ok else "Not connected"}</span></div>
           <div class="connection-content">
-            <p class="connection-copy">{('<span class="workspace">' + _escape(workspace_name) + "</span> · 可重新授权以调整允许读取的页面。") if notion_ok else "选择允许读取的 Notion 页面。授权后，我们会读取其中符合任务格式的内容。"}</p>
-            <a class="button {"secondary" if notion_ok else ""}" href="/oauth/notion/start">{"重新连接 Notion" if notion_ok else "连接 Notion"} <span class="arrow" aria-hidden="true">→</span></a>
+            <p class="connection-copy">{('<span class="workspace">' + _escape(workspace_name) + "</span> · Reconnect to change which pages can be read.") if notion_ok else "Choose which Notion pages this service may read. Only task content needed for sync is accessed."}</p>
+            <a class="button {"secondary" if notion_ok else ""}" href="/oauth/notion/start">{"Reconnect Notion" if notion_ok else "Connect Notion"} <span class="arrow" aria-hidden="true">→</span></a>
           </div>
         </section>
         <section class="connection" aria-labelledby="apple-title">
-          <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">2</span><h2 id="apple-title">Apple Calendar</h2></div><span class="status {"ok" if apple_ok else ""}">{"已连接" if apple_ok else "未连接"}</span></div>
+          <div class="section-head"><div class="section-name"><span class="step" aria-hidden="true">2</span><h2 id="apple-title">Apple Calendar</h2></div><span class="status {"ok" if apple_ok else ""}">{"Connected" if apple_ok else "Not connected"}</span></div>
           <div class="connection-content">{apple_content}</div>
         </section>
       </div>
       <section class="sync-section" aria-labelledby="sync-title">
-        <div class="section-head"><h2 id="sync-title">自动同步</h2><span class="status {sync_class}">{sync_label}</span></div>
-        <p class="sync-description">{"每 30 分钟运行一次，也可以手动发起同步。" if sync_ok else "完成两个连接后，首次同步会自动进入队列。"}</p>
+        <div class="section-head"><h2 id="sync-title">Automatic sync</h2><span class="status {sync_class}">{sync_label}</span></div>
+        <p class="sync-description">{"Runs every 30 minutes. You can also start a sync manually." if sync_ok else "Complete both connections and the first sync will be queued automatically."}</p>
         <div class="sync-bottom">
-          <dl class="sync-facts"><div><dt>上次完成</dt><dd>{last_finished}</dd></div><div><dt>下次运行</dt><dd>{next_due}</dd></div></dl>
-          <form method="post" action="/api/sync"><button class="secondary" type="submit" {"disabled" if not sync_ok else ""}>立即同步</button></form>
+          <dl class="sync-facts"><div><dt>Last completed</dt><dd>{last_finished}</dd></div><div><dt>Next run</dt><dd>{next_due}</dd></div></dl>
+          <form method="post" action="/api/sync"><button class="secondary" type="submit" {"disabled" if not sync_ok else ""}>Sync now</button></form>
         </div>
-        {('<p class="error" role="alert">上次同步错误：' + _escape(sync.get("last_error")) + "</p>") if sync.get("last_error") else ""}
+        {('<p class="error" role="alert">Last sync error: ' + _escape(sync.get("last_error")) + "</p>") if sync.get("last_error") else ""}
       </section>
       {_footer()}
     """
     return html_response(
-        _document(title="连接与同步 · Planner.li", content=content, nonce=nonce), nonce=nonce
+        _document(title="Connections and sync · Planner.li", content=content, nonce=nonce),
+        nonce=nonce,
     )
 
 

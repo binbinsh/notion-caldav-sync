@@ -42,7 +42,7 @@ def test_dashboard_document_has_one_adobe_embed_and_cjk_fallback():
     assert "requestAnimationFrame(()=>stage2())" not in document
     assert document.count("stageTimer=setTimeout(()=>finish(false),2800)") == 2
     assert "<noscript>" in document
-    assert 'lang="zh-Hans"' in document
+    assert 'lang="en"' in document
     assert "@media (hover:hover) and (pointer:fine)" in document
     assert "prefers-reduced-motion:reduce" in document
 
@@ -69,9 +69,12 @@ def test_public_page_has_both_requested_destinations_and_keeps_login_redirect():
         href="https://accounts.planner.li/sign-in?redirect_url=https%3A%2F%2Fcalendar.planner.li%2F",
         **{"class": "button"},
     )
-    assert "查看开源代码" in response.body
-    assert "直接使用托管服务" in response.body
-    assert "日历里的修改不会写回 Notion" in response.body
+    assert "View source" in response.body
+    assert "Use managed service" in response.body
+    assert "Calendar changes are never written back" in response.body
+    assert "white-space:nowrap" in response.body
+    assert "© 2026 Grid Heap" in response.body
+    assert ">GitHub <" in response.body
     assert "_calendar_preview" not in response.body
     assert "backdrop-filter" not in response.body
     assert "gradient(" not in response.body
@@ -108,9 +111,8 @@ def test_dashboard_escapes_remote_content_and_does_not_label_errors_as_healthy()
     )
     assert "&lt;script&gt;workspace&lt;/script&gt;" in response.body
     assert "&lt;img src=x onerror=alert(1)&gt;" in response.body
-    assert "上次运行失败" in response.body
-    assert "服务运行正常" not in response.body
-    assert "Notion 授权已取消。" in response.body
+    assert "Last run failed" in response.body
+    assert "Notion authorization was cancelled." in response.body
     assert Elements(response.body).matching("p", role="alert")
     assert Elements(response.body).matching("p", role="status")
 
