@@ -10,6 +10,13 @@ STATE_NAMESPACE_NAME="notion-caldav-sync-STATE"  # Change if you prefer a differ
 
 cd "$ROOT_DIR"
 
+if ! command -v mise >/dev/null 2>&1; then
+  echo "mise is required so the pinned Node.js runtime is used." >&2
+  exit 1
+fi
+NODE_RUNTIME_DIR="$(mise where node@24.21.0)/bin"
+export PATH="$NODE_RUNTIME_DIR:$PATH"
+
 resolve_status_emoji_style() {
   local style=${1:-}
   style=$(printf "%s" "$style" | tr '[:upper:]' '[:lower:]' | xargs)
@@ -78,6 +85,22 @@ choose_worker_custom_domain() {
   WORKER_CUSTOM_DOMAIN="$domain"
   export WORKER_CUSTOM_DOMAIN
   echo "Using custom domain: $WORKER_CUSTOM_DOMAIN"
+}
+
+require_hosted_config() {
+  local required=(
+    CLOUDFLARE_D1_DATABASE_ID CLOUDFLARE_SYNC_QUEUE CLOUDFLARE_SYNC_DLQ
+    PUBLIC_BASE_URL NOTION_CLIENT_ID CLERK_PUBLISHABLE_KEY CLERK_JWKS_URL
+    CLERK_SIGN_IN_URL CLERK_AUTHORIZED_PARTIES HOSTED_SYNC_INTERVAL_MINUTES
+    HOSTED_CRON_BATCH_LIMIT HOSTED_BETA_USER_LIMIT
+  )
+  local key
+  for key in "${required[@]}"; do
+    if [ -z "${!key:-}" ]; then
+      echo "$key is required for hosted multi-user deployment." >&2
+      exit 1
+    fi
+  done
 }
 
 reuse_namespace_from_config() {
@@ -185,19 +208,17 @@ ensure_namespace() {
 ensure_namespace
 choose_status_emoji_style
 choose_worker_custom_domain
+require_hosted_config
 if [ ! -f "$TEMPLATE_PATH" ]; then
   echo "Missing wrangler template at $TEMPLATE_PATH" >&2
   exit 1
 fi
 
 if command -v envsubst >/dev/null 2>&1; then
-  CLOUDFLARE_STATE_NAMESPACE="$CLOUDFLARE_STATE_NAMESPACE" STATUS_EMOJI_STYLE="$STATUS_EMOJI_STYLE" WORKER_CUSTOM_DOMAIN="$WORKER_CUSTOM_DOMAIN" envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
+  envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
 else
-  sed \
-    -e "s/\${CLOUDFLARE_STATE_NAMESPACE}/$CLOUDFLARE_STATE_NAMESPACE/g" \
-    -e "s/\${STATUS_EMOJI_STYLE}/$STATUS_EMOJI_STYLE/g" \
-    -e "s/\${WORKER_CUSTOM_DOMAIN}/$WORKER_CUSTOM_DOMAIN/g" \
-    "$TEMPLATE_PATH" > "$CONFIG_PATH"
+  echo "envsubst is required for hosted deployment." >&2
+  exit 1
 fi
 echo "Generated wrangler.toml with STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
 
@@ -206,10 +227,26 @@ echo "STATE namespace title: $STATE_NAMESPACE_NAME"
 echo "STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
 
 echo "Setting up secrets..."
-printf "%s" "${APPLE_ID:?APPLE_ID must be set}" | uv run -- pywrangler secret put APPLE_ID
-printf "%s" "${APPLE_APP_PASSWORD:?APPLE_APP_PASSWORD must be set}" | uv run -- pywrangler secret put APPLE_APP_PASSWORD
-printf "%s" "${NOTION_TOKEN:?NOTION_TOKEN must be set}" | uv run -- pywrangler secret put NOTION_TOKEN
-printf "%s" "${ADMIN_TOKEN:?ADMIN_TOKEN must be set}" | uv run -- pywrangler secret put ADMIN_TOKEN
+put_secret_if_present() {
+  local key="$1"
+  if [ -n "${!key:-}" ]; then
+    printf "%s" "${!key}" | uv run -- pywrangler secret put "$key"
+  else
+    echo "Reusing existing Worker secret: $key"
+  fi
+}
+
+# Personal-mode secrets remain optional for a hosted-only deployment. Existing
+# remote values are preserved when they are intentionally absent from .env.
+put_secret_if_present APPLE_ID
+put_secret_if_present APPLE_APP_PASSWORD
+put_secret_if_present NOTION_TOKEN
+put_secret_if_present ADMIN_TOKEN
+put_secret_if_present NOTION_CLIENT_SECRET
+printf "%s" "${CREDENTIAL_VAULT_KEY:?CREDENTIAL_VAULT_KEY must be set}" | uv run -- pywrangler secret put CREDENTIAL_VAULT_KEY
+printf "%s" "${HOSTED_WEBHOOK_SETUP_TOKEN:?HOSTED_WEBHOOK_SETUP_TOKEN must be set}" | uv run -- pywrangler secret put HOSTED_WEBHOOK_SETUP_TOKEN
+
+npx --yes wrangler d1 migrations apply notion-caldav-sync --remote --config "$CONFIG_PATH"
 
 # Deploy the Worker (creates notion-caldav-sync if missing)
 uv run -- pywrangler deploy --name notion-caldav-sync

@@ -56,6 +56,53 @@ class Default(WorkerEntrypoint):
         path = parsed.path
         query = parse_qs(parsed.query)
 
+        hosted_paths = {
+            "/",
+            "/api/status",
+            "/api/apple",
+            "/api/sync",
+            "/oauth/notion/start",
+            "/notion/callback",
+            "/webhook/notion/hosted",
+        }
+        if path in hosted_paths and getattr(self.env, "HOSTED_DB", None) is not None:
+            try:
+                from app.hosted import HostedService  # type: ignore
+                from app.hosted.identity import AuthenticationError  # type: ignore
+                from app.hosted.ui import json_response  # type: ignore
+            except ImportError:
+                from hosted import HostedService  # type: ignore
+                from hosted.identity import AuthenticationError  # type: ignore
+                from hosted.ui import json_response  # type: ignore
+            hosted = HostedService(self.env)
+            try:
+                if path == "/" and method == "GET":
+                    return await hosted.homepage(request)
+                if path == "/api/status" and method == "GET":
+                    return await hosted.status(request)
+                if path == "/oauth/notion/start" and method == "GET":
+                    return await hosted.begin_notion(request)
+                if path == "/notion/callback" and method == "GET":
+                    return await hosted.complete_notion(request)
+                if path == "/api/apple" and method == "POST":
+                    return await hosted.connect_apple(request)
+                if path == "/api/sync" and method == "POST":
+                    return await hosted.manual_sync(request)
+                if path == "/webhook/notion/hosted" and method == "POST":
+                    return await hosted.webhook(request)
+                return Response("Method Not Allowed", status=405)
+            except AuthenticationError as exc:
+                return json_response({"error": str(exc)}, status=401)
+            except Exception as exc:
+                print(f"[hosted] request failed: {exc}")
+                return json_response({"error": "Service unavailable"}, status=503)
+
+        if path == "/health" and method == "GET":
+            return Response(
+                json.dumps({"ok": True}),
+                headers={"Content-Type": "application/json", "Cache-Control": "no-store"},
+            )
+
         if path.endswith("/webhook/notion") and method == "POST":
             return await webhook_handle(request, self.env)
         
@@ -184,9 +231,44 @@ class Default(WorkerEntrypoint):
             from stores import load_settings  # type: ignore
 
         ensure_http_patched()
+        if getattr(self.env, "HOSTED_DB", None) is not None:
+            try:
+                from app.hosted import HostedService  # type: ignore
+            except ImportError:
+                from hosted import HostedService  # type: ignore
+            dispatched = await HostedService(self.env).dispatch_due()
+            print(f"[hosted] scheduled {dispatched} connection(s)")
+
         bindings = get_bindings(self.env)
-        settings = await load_settings(bindings.state)
-        if not settings or full_sync_due(settings):
-            await run_full_sync(bindings)
-        else:
-            print("[sync] scheduled run skipped (full sync interval not reached)")
+        if bindings.apple_id and bindings.apple_app_password and bindings.notion_token:
+            settings = await load_settings(bindings.state)
+            if not settings or full_sync_due(settings):
+                await run_full_sync(bindings)
+            else:
+                print("[sync] scheduled run skipped (full sync interval not reached)")
+
+    async def queue(self, batch):
+        try:
+            from app.hosted import HostedService  # type: ignore
+            from app.hosted.util import to_python  # type: ignore
+        except ImportError:
+            from hosted import HostedService  # type: ignore
+            from hosted.util import to_python  # type: ignore
+
+        service = HostedService(self.env)
+        for message in batch.messages:
+            body = to_python(message.body)
+            if isinstance(body, str):
+                try:
+                    body = json.loads(body)
+                except json.JSONDecodeError:
+                    body = {}
+            job_id = str((body or {}).get("job_id") or "") if isinstance(body, dict) else ""
+            if not job_id:
+                message.ack()
+                continue
+            complete = await service.execute_job(job_id)
+            if complete:
+                message.ack()
+            else:
+                message.retry({"delaySeconds": 60})

@@ -5,7 +5,7 @@
 [![Notion API](https://img.shields.io/badge/Notion%20API-2026--03--11-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
 [![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/app/calendar.py)
 
-Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker is the simplest way to surface every dated Notion task inside a dedicated iCloud calendar. Webhooks keep updates nearly instant, and a cron-powered rewrite regularly reconciles the two so Apple Calendar always reflects the latest Notion truth.
+Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker surfaces every dated Notion task inside a dedicated iCloud calendar. It supports both a private, single-user deployment and an optional hosted multi-user mode. Webhooks keep updates nearly instant, and a cron-powered reconciliation regularly heals drift.
 
 The design goal is **Reliability first**. every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
 
@@ -41,6 +41,43 @@ Run the guided one-command setup. It signs in to Cloudflare with OAuth, creates 
 The wizard remembers credentials and the custom domain in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. You only need to approve Cloudflare OAuth and provide the Notion token and Apple app-specific password on the first run. The selected hostname must be unused and belong to a zone in the same Cloudflare account; Cloudflare creates its DNS record and TLS certificate during deployment.
 
 Notion webhook registration is the one remaining dashboard step because Notion does not expose webhook creation through its public API. The wizard opens the correct page and prints the exact production webhook URL. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
+
+## Hosted multi-user mode
+
+Hosted mode lets people connect their own Notion workspace through OAuth and their own Apple Calendar without deploying a Worker. It reuses the public sync engine in this repository; it does not contain Planner.li product code.
+
+The hosted runtime uses:
+
+- Clerk for user identity and tenant isolation.
+- One Notion Public Connection for every user's OAuth installation.
+- D1 for users, installations, encrypted credentials, jobs, and tenant-scoped sync state.
+- AES-GCM with a Worker secret as the credential vault key.
+- Cloudflare Queues for bounded, retryable sync jobs.
+- Cron as the durable 30-minute reconciliation path; verified Notion webhooks can enqueue faster updates.
+
+Provision Cloudflare resources and deploy with:
+
+```bash
+./scripts/provision-hosted-cloudflare.sh
+```
+
+Before the first hosted deployment, configure a Notion Public Connection with the exact OAuth callback:
+
+```text
+https://calendar.example.com/notion/callback
+```
+
+The deployment requires `PUBLIC_BASE_URL`, `NOTION_CLIENT_ID`, Clerk's publishable key/JWKS/sign-in settings, a D1 database, and the queue names shown in `.env-example`. Store `NOTION_CLIENT_SECRET`, `CREDENTIAL_VAULT_KEY`, and `HOSTED_WEBHOOK_SETUP_TOKEN` as encrypted Worker secrets. If the Notion client secret already exists remotely, deployment deliberately reuses it instead of requiring a plaintext local copy.
+
+For a shared Clerk production instance, enable its allowed-subdomain list and include the hosted calendar hostname. The hosted Worker accepts only JWTs whose authorized party appears in `CLERK_AUTHORIZED_PARTIES`.
+
+The optional hosted webhook endpoint is:
+
+```text
+https://calendar.example.com/webhook/notion/hosted?setup=<one-time-setup-token>
+```
+
+The setup token is accepted only for the initial Notion verification handshake. The returned verification secret is encrypted in D1 and cannot be replaced by later unsigned requests. See [the hosted architecture](docs/hosted-service-architecture.md) for the trust boundaries and data model.
 
 ## Status emoji style
 The worker supports two status emoji styles for event titles:

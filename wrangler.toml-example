@@ -13,8 +13,36 @@ custom_domain = true
 binding = "STATE"
 id = "${CLOUDFLARE_STATE_NAMESPACE}"
 
+[[d1_databases]]
+binding = "HOSTED_DB"
+database_name = "notion-caldav-sync"
+database_id = "${CLOUDFLARE_D1_DATABASE_ID}"
+migrations_dir = "migrations"
+
+[[queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "${CLOUDFLARE_SYNC_QUEUE}"
+
+[[queues.consumers]]
+queue = "${CLOUDFLARE_SYNC_QUEUE}"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "${CLOUDFLARE_SYNC_DLQ}"
+max_concurrency = 2
+retry_delay = 60
+
 [vars]
 STATUS_EMOJI_STYLE = "${STATUS_EMOJI_STYLE}"
+PUBLIC_BASE_URL = "${PUBLIC_BASE_URL}"
+NOTION_CLIENT_ID = "${NOTION_CLIENT_ID}"
+CLERK_PUBLISHABLE_KEY = "${CLERK_PUBLISHABLE_KEY}"
+CLERK_JWKS_URL = "${CLERK_JWKS_URL}"
+CLERK_SIGN_IN_URL = "${CLERK_SIGN_IN_URL}"
+CLERK_AUTHORIZED_PARTIES = "${CLERK_AUTHORIZED_PARTIES}"
+HOSTED_SYNC_INTERVAL_MINUTES = "${HOSTED_SYNC_INTERVAL_MINUTES}"
+HOSTED_CRON_BATCH_LIMIT = "${HOSTED_CRON_BATCH_LIMIT}"
+HOSTED_BETA_USER_LIMIT = "${HOSTED_BETA_USER_LIMIT}"
 
 [triggers]
 crons = ["*/30 * * * *"]

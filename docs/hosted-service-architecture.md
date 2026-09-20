@@ -11,10 +11,12 @@ Worker. The default onboarding path is:
 3. Enter an Apple Account and an app-specific password.
 4. Watch the first sync complete.
 
-For the first hosted release, the verified Notion OAuth response establishes
-the product session. Do not add a separate customer-facing "Cloud login" yet.
-Cloudflare Access may protect operator/admin routes, but it is not the tenant
-identity model.
+The hosted release reuses Planner.li's Clerk application for sign-in. Clerk is
+the tenant identity authority; Notion OAuth authorizes workspace access but does
+not establish the product identity. The `calendar.planner.li` hostname is an
+explicitly allowed subdomain, and the Worker verifies Clerk's RS256 JWT against
+its JWKS plus an authorized-party allowlist. No Planner.li product code is
+included in this repository.
 
 The existing self-hosted deployment remains useful. Its static Notion token is
 the simplest authentication mode for one person's private Worker. A Notion
@@ -56,7 +58,7 @@ Browser / Notion webhook / Cron
                v
         Public Worker ingress
                |
-        D1 job + outbox
+          D1 job
                |
                v
         Cloudflare Queue
@@ -71,8 +73,8 @@ Browser / Notion webhook / Cron
   Apple credential submission, status endpoints, and webhook ingress.
 - **Python sync worker:** reuses the task parsing, ICS, and CalDAV logic already
   in this repository.
-- **D1:** tenant identity, installations, encrypted credentials, configuration,
-  durable jobs, webhook receipts, run history, and event ownership.
+- **D1:** Clerk user mapping, installations, encrypted credentials,
+  tenant-scoped sync state, durable jobs, webhook receipts, and configuration.
 - **Queues:** bounded asynchronous delivery. Messages contain internal IDs, not
   credentials.
 - **Cron:** dispatches a finite batch of connections whose reconciliation is due.
@@ -83,9 +85,10 @@ Browser / Notion webhook / Cron
 
 ## Tenant identity
 
-Notion OAuth is an authorization protocol, not OIDC. The product trusts user
-identity only after its server exchanges the authorization code with Notion.
-The conservative identity key is:
+Notion OAuth is an authorization protocol, not OIDC. The product identity key is
+the verified Clerk `sub`. The Notion installation is attached only after a
+short-lived, one-time OAuth state record that already belongs to that Clerk user
+is consumed. The conservative Notion installation key remains:
 
 ```text
 (provider="notion", workspace_id, owner.user.id)
@@ -95,45 +98,38 @@ The conservative identity key is:
 not stable identity keys. The same workspace may contain multiple separately
 authorized users, so `workspace_id` alone must never identify a tenant.
 
-OAuth `state` must be random, short-lived, one-time, and bound to the browser
-session and a fixed callback URI. Access and refresh tokens are stored as a
-versioned pair and replaced atomically because a refresh rotates both values.
+OAuth `state` is random, short-lived, one-time, tenant-bound, and uses a fixed
+callback URI. The callback does not depend on a cross-site cookie; the consumed
+state identifies the initiating Clerk user. Access and refresh tokens are
+encrypted independently and replaced together when refresh rotates them.
 
 ## Data model
 
-The minimum relational model is:
+The implemented closed-beta relational model is:
 
 ```text
-users(id, status)
-identities(user_id, provider, workspace_id, subject_id)
-sessions(token_hash, user_id, expires_at, revoked_at)
-oauth_attempts(state_hash, browser_hash, expires_at, consumed_at)
+hosted_users(id, clerk_user_id, created_at, updated_at)
+oauth_attempts(state_hash, user_id, redirect_uri, expires_at, consumed_at)
 
 notion_installations(
   id, user_id, workspace_id, owner_user_id, bot_id,
-  token_secret_id, token_generation, status
+  access_token_ciphertext, refresh_token_ciphertext,
+  token_expires_at, status
 )
-apple_connections(id, user_id, credential_secret_id, status)
+apple_connections(
+  id, user_id, apple_id_ciphertext, app_password_ciphertext, status
+)
 sync_connections(
   id, user_id, notion_installation_id, apple_connection_id,
-  calendar_href, config_json, generation, next_due_at, status
+  next_due_at, last_started_at, last_finished_at, last_error, status
 )
-source_selections(connection_id, data_source_id, property_mapping_json)
 
-credential_secrets(
-  id, user_id, provider, ciphertext, nonce, key_version
-)
+connection_state(connection_id, key, value, updated_at)
 sync_jobs(
-  id, connection_id, reason, cursor, status,
-  attempt, next_attempt_at, config_generation
+  id, connection_id, reason, idempotency_key, status, attempt
 )
-outbox(id, job_id, sent_at)
-webhook_receipts(subscription_id, event_id, received_at)
-sync_runs(id, connection_id, complete_snapshot, started_at, finished_at)
-event_mappings(
-  connection_id, page_id, href, uid, etag,
-  content_hash, last_seen_run, ownership_version
-)
+webhook_receipts(event_id, received_at)
+hosted_config(key, value, created_at, updated_at)
 ```
 
 All important relations include tenant ownership constraints. Authorization
@@ -147,16 +143,16 @@ is insufficient.
 - Encrypt credential fields with AEAD such as AES-GCM. Use a new nonce per
   encryption and bind AAD to tenant, credential, provider, and schema version.
   Store the root key as a Worker secret and the versioned ciphertext in D1.
-- Product sessions use random opaque cookies with `HttpOnly`, `Secure`, and
-  `SameSite=Lax`; store only a token hash and validate CSRF/Origin on mutations.
+- Clerk issues the browser session. The Worker validates signature, expiry,
+  subject, session ID, and authorized party. State-changing form requests also
+  require the exact public Origin.
 - CalDAV discovery and credential-bearing redirects must remain on trusted HTTPS
   iCloud hosts. Never forward Basic credentials to an arbitrary discovered host.
 - Accepted work is persisted before returning success. Queue delivery is at
   least once, so sync writes and receipts are idempotent.
-- A partial Notion scan never authorizes deletion. Only a complete snapshot of
-  every selected source may mark owned events as missing.
-- The service edits only events recorded in its ownership ledger. It does not
-  delete user-created events or events owned by another sync connection.
+- Each tenant receives its own dedicated `Notion` calendar and D1 state
+  namespace. An explicit event ownership ledger and incomplete-snapshot guard
+  remain required before opening the beta without an account cap.
 - Notion webhooks are verified before routing. Route using the verified
   `subscription_id`, `integration_id`, `workspace_id`, and `accessible_by` bot
   identity; `authors` describes the actor and is not a tenant key.
@@ -172,7 +168,7 @@ cross-provider exactly-once delivery.
 webhook / cron / manual request
               |
               v
-       persist job + outbox
+          persist job
               |
               v
        publish job ID
@@ -191,25 +187,21 @@ Retry only bounded, transient failures and honor `Retry-After`. A `401` pauses
 the affected connection for reconnection. A `403`/`404` or interrupted page of
 results is not proof that a Notion task was deleted.
 
-## Existing code that must change before public hosting
+## Closed-beta limitations
 
-The current code is appropriate for one trusted user but is not safe to expose
-as a multi-tenant service without these changes:
+The tenant boundary, encrypted credential storage, bounded queue consumer, and
+durable cron path are implemented. Before an unrestricted public launch, the
+remaining hardening work is:
 
-1. `src/app/config.py` loads global Apple and Notion credentials. Hosted
-   execution must resolve a tenant connection and SecretRefs for every job.
-2. `src/app/stores.py` uses global KV keys and suppresses storage failures.
-   Identity, credentials, and accepted jobs must fail closed in D1.
-3. `src/app/webhook.py` can persist a supplied verification token before an
-   authenticated trust relationship exists. Public hosting requires controlled
-   initialization and a locked verification secret.
-4. The process-global `_FULL_SYNC_TASK` is neither durable nor tenant-scoped.
-5. A failed or incomplete Notion scan can currently flow into missing-event
-   cleanup. Snapshot completeness must be explicit.
-6. Calendar cleanup infers ownership from remote paths. Hosted operation needs
-   an explicit event ownership ledger.
-7. Full sync computes hashes but still rewrites events. The hosted service must
-   skip unchanged events to bound cost and reduce conflict risk.
+1. Add an explicit event ownership ledger instead of relying on the dedicated
+   per-user `Notion` calendar plus stable managed paths.
+2. Record complete/incomplete snapshot state so a partial source scan can never
+   authorize cleanup.
+3. Add per-user quotas, provider-call telemetry, and operator controls before
+   raising the closed-beta limit.
+4. Add recovery/revocation UI for Notion and Apple connections.
+5. Exercise OAuth refresh rotation, Queue retries, and two users in the same
+   Notion workspace in live integration tests.
 
 ## Delivery phases
 
