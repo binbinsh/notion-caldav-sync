@@ -33,6 +33,12 @@ from .util import iso_now, random_token, token_hash, utc_now
 from .vault import CredentialVault
 
 
+def _managed_event_prefix(calendar_name: str) -> str:
+    if calendar_name.strip().casefold() == "notion":
+        return ""
+    return "notion-caldav-sync-"
+
+
 @dataclass(frozen=True)
 class HostedConfig:
     public_base_url: str
@@ -395,7 +401,7 @@ class HostedService:
             await update_settings(
                 state,
                 calendar_href=None,
-                calendar_name="Notion CalDAV Sync",
+                calendar_name="Notion",
             )
             settings = await ensure_calendar(
                 Bindings(
@@ -408,7 +414,7 @@ class HostedService:
                 )
             )
             calendar_href = str(settings.get("calendar_href") or "")
-            calendar_name = str(settings.get("calendar_name") or "Notion CalDAV Sync")
+            calendar_name = str(settings.get("calendar_name") or "Notion")
         else:
             chosen = next(
                 (item for item in available_calendars if str(item.get("href") or "") == calendar_value),
@@ -604,7 +610,9 @@ class HostedService:
                 notion_token=await self._notion_access_token(context),
                 status_emoji_style=self.config.status_emoji_style,
                 notion_source_ids=tuple(str(item) for item in notion_source_ids if item),
-                managed_event_prefix="notion-caldav-sync-",
+                managed_event_prefix=_managed_event_prefix(
+                    str(context.get("apple_calendar_name") or "Apple Calendar")
+                ),
             )
             await run_full_sync(bindings)
             await self.repository.finish_job(

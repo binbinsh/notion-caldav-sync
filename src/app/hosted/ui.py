@@ -440,7 +440,7 @@ def dashboard_page(
     selected_calendar = str(preferences.get("apple_calendar_href") or "")
     calendar_choices = (
         f'<option value="__create__" {"selected" if not selected_calendar else ""}>'
-        "Create a dedicated “Notion CalDAV Sync” calendar</option>"
+        "Use or create the dedicated “Notion” calendar</option>"
         + "".join(
             f'<option value="{_escape(calendar.get("href"))}" {"selected" if str(calendar.get("href")) == selected_calendar else ""}>{_escape(calendar.get("name") or "Untitled")}</option>'
             for calendar in apple_calendars

@@ -527,13 +527,22 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
             *(_write_event(event_url, ics) for event_url, ics in planned_writes)
         )
         writes = len(planned_writes)
+    managed_event_prefix = getattr(bindings, "managed_event_prefix", "")
+    removal_candidates = existing_events
+    if not managed_event_prefix:
+        previously_managed_ids = set(previous_hashes)
+        removal_candidates = [
+            event
+            for event in existing_events
+            if event.get("notion_id") in previously_managed_ids
+        ]
     await calendar_remove_missing_events(
         calendar_href,
         updated_ids,
         bindings.apple_id,
         bindings.apple_app_password,
-        existing_events=existing_events,
-        managed_event_prefix=getattr(bindings, "managed_event_prefix", ""),
+        existing_events=removal_candidates,
+        managed_event_prefix=managed_event_prefix,
     )
     now = datetime.now(timezone.utc).isoformat()
     settings = await update_settings(

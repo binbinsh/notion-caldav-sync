@@ -1,6 +1,6 @@
 import pytest
 
-from app.hosted.service import HostedService
+from app.hosted.service import HostedService, _managed_event_prefix
 
 
 class Request:
@@ -18,3 +18,8 @@ async def test_worker_form_parser_preserves_repeated_values():
     }
     assert HostedService._first_form_value(values, "apple_calendar") == "/calendar/"
     assert HostedService._first_form_value(values, "missing") == ""
+
+
+def test_existing_legacy_notion_calendar_reuses_unprefixed_events():
+    assert _managed_event_prefix("Notion") == ""
+    assert _managed_event_prefix("Notion CalDAV Sync") == "notion-caldav-sync-"

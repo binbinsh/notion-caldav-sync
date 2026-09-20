@@ -415,6 +415,52 @@ async def test_full_sync_reuses_actual_existing_event_href(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
+async def test_full_sync_prunes_only_previously_managed_events(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bindings = _DummyBindings()
+    removed_candidates: list[dict[str, str]] = []
+
+    async def _fake_calendar_ensure(_bindings):
+        return {
+            "calendar_href": "https://calendar/",
+            "calendar_color": "#fff",
+            "event_hashes": {"managed-page": "old-hash"},
+        }
+
+    async def _fake_list_events(*_args, **_kwargs):
+        return [
+            {
+                "href": "https://calendar/managed-page.ics",
+                "notion_id": "managed-page",
+            },
+            {
+                "href": "https://calendar/unknown-legacy-page.ics",
+                "notion_id": "unknown-legacy-page",
+            },
+        ]
+
+    async def _fake_collect_tasks(_bindings):
+        return []
+
+    async def _fake_remove_missing(*_args, **kwargs):
+        removed_candidates.extend(kwargs["existing_events"])
+
+    async def _fake_update_settings(_state, **updates):
+        return updates
+
+    monkeypatch.setattr("src.app.engine.calendar_ensure", _fake_calendar_ensure)
+    monkeypatch.setattr("src.app.engine.calendar_list_events", _fake_list_events)
+    monkeypatch.setattr("src.app.engine._collect_tasks", _fake_collect_tasks)
+    monkeypatch.setattr("src.app.engine.calendar_remove_missing_events", _fake_remove_missing)
+    monkeypatch.setattr("src.app.engine.update_settings", _fake_update_settings)
+
+    await run_full_sync(bindings)
+
+    assert [event["notion_id"] for event in removed_candidates] == ["managed-page"]
+
+
+@pytest.mark.asyncio
 async def test_collect_tasks_uses_database_title(monkeypatch: pytest.MonkeyPatch):
     bindings = _DummyBindings()
 
