@@ -56,7 +56,7 @@ if [ "$status" != "200" ]; then
   exit 1
 fi
 
-verification_token=$(python3 - "$response_file" <<'PY'
+verification_token=$(uv run python - "$response_file" <<'PY'
 import json
 import sys
 

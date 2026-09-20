@@ -132,7 +132,7 @@ reuse_namespace_from_config() {
     return 1
   fi
   existing_id=$(
-    python3 "$HELPERS_PATH" wrangler-toml "$CONFIG_PATH" 2>/dev/null || true
+    uv run python "$HELPERS_PATH" wrangler-toml "$CONFIG_PATH" 2>/dev/null || true
   )
   if [ -n "$existing_id" ]; then
     if namespace_exists "$existing_id"; then
@@ -155,14 +155,14 @@ fi
 # Helper to discover namespace ID via Wrangler CLI
 discover_namespace_id() {
   if list_json=$(uv run -- pywrangler kv namespace list 2>/dev/null); then
-    printf '%s' "$list_json" | python3 "$HELPERS_PATH" namespace-list "$STATE_NAMESPACE_NAME" || true
+    printf '%s' "$list_json" | uv run python "$HELPERS_PATH" namespace-list "$STATE_NAMESPACE_NAME" || true
   fi
 }
 
 namespace_exists() {
   local namespace_id=${1:-}
   if list_json=$(uv run -- pywrangler kv namespace list 2>/dev/null); then
-    if printf '%s' "$list_json" | python3 "$HELPERS_PATH" namespace-exists "$namespace_id" >/dev/null; then
+    if printf '%s' "$list_json" | uv run python "$HELPERS_PATH" namespace-exists "$namespace_id" >/dev/null; then
       return 0
     fi
   fi
@@ -216,7 +216,7 @@ ensure_namespace() {
     exit 1
   fi
   CLOUDFLARE_STATE_NAMESPACE=$(
-    printf "%s\n" "$output" | python3 "$HELPERS_PATH" namespace-create || true
+    printf "%s\n" "$output" | uv run python "$HELPERS_PATH" namespace-create || true
   )
   if [ -z "$CLOUDFLARE_STATE_NAMESPACE" ]; then
     echo "$output"
@@ -261,7 +261,7 @@ if [ ! -f "$TEMPLATE_PATH" ]; then
   exit 1
 fi
 
-python3 "$HELPERS_PATH" render-template "$TEMPLATE_PATH" > "$CONFIG_PATH"
+uv run python "$HELPERS_PATH" render-template "$TEMPLATE_PATH" > "$CONFIG_PATH"
 if [ -n "$WORKER_CUSTOM_DOMAIN" ]; then
   cat >> "$CONFIG_PATH" <<EOF
 

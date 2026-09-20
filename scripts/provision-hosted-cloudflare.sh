@@ -57,7 +57,7 @@ fi
 if [ -z "${CLOUDFLARE_D1_DATABASE_ID:-}" ]; then
   d1_json=$(npx --yes wrangler d1 list --json)
   CLOUDFLARE_D1_DATABASE_ID=$(
-    printf '%s' "$d1_json" | python3 -c '
+    printf '%s' "$d1_json" | uv run python -c '
 import json, sys
 for row in json.load(sys.stdin):
     if row.get("name") == "notion-caldav-sync":

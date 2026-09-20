@@ -395,7 +395,7 @@ if confirm "Configure the optional Notion webhook now?"; then
     step "Subscribe to Page, Database, and Data source events."
     pause "Press Enter after Notion sends the verification request."
     VERIFY_JSON=$(curl --fail --silent --show-error "${WORKER_URL%/}/api/webhook/setup?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}")
-    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
+    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | uv run python -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
     require_value verification_token "$VERIFY_TOKEN"
     say "Paste this verification token into Notion: $VERIFY_TOKEN"
     pause "Press Enter after Notion reports the subscription as active."
@@ -406,7 +406,7 @@ if confirm "Configure the optional Notion webhook now?"; then
     VERIFY_JSON=$(curl --fail --silent --show-error \
       --header "X-Admin-Token: $ADMIN_TOKEN" \
       "${WORKER_URL%/}/admin/settings")
-    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
+    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | uv run python -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
     require_value verification_token "$VERIFY_TOKEN"
     say "Paste this verification token into Notion: $VERIFY_TOKEN"
     pause "Press Enter after Notion reports the subscription as active."
