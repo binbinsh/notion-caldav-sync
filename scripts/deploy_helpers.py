@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from string import Template
 import sys
 from pathlib import Path
 
@@ -139,6 +141,17 @@ def cmd_namespace_exists(namespace_id: str, stdin_blob: str) -> int:
     return 1
 
 
+def cmd_render_template(path: Path) -> int:
+    """Render a Wrangler template without requiring the envsubst binary."""
+    try:
+        rendered = Template(path.read_text()).substitute(os.environ)
+    except KeyError as exc:
+        print(f"Missing environment variable for template: {exc.args[0]}", file=sys.stderr)
+        return 1
+    print(rendered, end="")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="deploy-helpers")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -154,6 +167,11 @@ def main(argv: list[str]) -> int:
     exists_parser = subparsers.add_parser("namespace-exists", help="check if a namespace id exists in list output")
     exists_parser.add_argument("namespace_id")
 
+    render_parser = subparsers.add_parser(
+        "render-template", help="render a template from environment variables"
+    )
+    render_parser.add_argument("path", type=Path)
+
     args = parser.parse_args(argv)
     if args.command == "wrangler-toml":
         return cmd_wrangler_toml(args.path)
@@ -166,6 +184,8 @@ def main(argv: list[str]) -> int:
     if args.command == "namespace-exists":
         blob = sys.stdin.read()
         return cmd_namespace_exists(args.namespace_id, blob)
+    if args.command == "render-template":
+        return cmd_render_template(args.path)
     parser.error("Unknown subcommand")
 
 

@@ -2,12 +2,8 @@ name = "notion-caldav-sync"
 main = "src/app/worker.py"
 compatibility_date = "2026-09-20"
 compatibility_flags = ["python_workers"]
-workers_dev = false
+workers_dev = ${WORKERS_DEV}
 preview_urls = false
-
-[[routes]]
-pattern = "${WORKER_CUSTOM_DOMAIN}"
-custom_domain = true
 
 [[kv_namespaces]]
 binding = "STATE"

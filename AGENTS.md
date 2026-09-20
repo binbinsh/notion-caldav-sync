@@ -14,11 +14,12 @@ Use this guide when you need to extend or operate the worker. For user-facing in
 - Hosted bindings:
   - `HOSTED_DB` – D1 database storing tenant state and encrypted credentials.
   - `SYNC_QUEUE` – Cloudflare Queue for bounded sync jobs.
-- Required secrets/env vars:
+- Personal-mode secrets:
   - `APPLE_ID`, `APPLE_APP_PASSWORD`
   - `NOTION_TOKEN`
   - `ADMIN_TOKEN` (protects `/admin/*`)
-  - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_STATE_NAMESPACE`
+- Cloudflare OAuth is the default. `CLOUDFLARE_ACCOUNT_ID` is only needed to select among multiple accounts, `CLOUDFLARE_API_TOKEN` is only needed for headless deployment, and the setup creates `CLOUDFLARE_STATE_NAMESPACE` automatically.
+- A custom domain is optional; leaving `WORKER_CUSTOM_DOMAIN` blank enables the account's free `workers.dev` hostname.
 
 ## Key Files
 | Path | Role |

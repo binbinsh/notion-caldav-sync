@@ -4,7 +4,7 @@ Thank you for helping improve Notion CalDAV Sync.
 
 ## Development setup
 
-1. Install Python 3.12+, [uv](https://docs.astral.sh/uv/), and [mise](https://mise.jdx.dev/).
+1. Install [uv](https://docs.astral.sh/uv/) and either Node.js with `npx` or [mise](https://mise.jdx.dev/). `uv` manages the compatible Python runtime; mise is only needed when you want the repository-pinned Node.js runtime.
 2. Run `uv sync --group dev`.
 3. Run the offline checks:
 

@@ -12,8 +12,8 @@ The design goal is **reliability first**. Notion remains the source of truth, ca
 
 ## Requirements
 
-- Python 3.12+, [uv](https://github.com/astral-sh/uv), and [mise](https://mise.jdx.dev/) (the setup wizard installs the pinned Node.js runtime used by Cloudflare Wrangler).
-- Cloudflare account with Workers + KV access.
+- [uv](https://github.com/astral-sh/uv), plus either Node.js with `npx` or [mise](https://mise.jdx.dev/) (the setup wizard can use mise to install the pinned Node.js runtime).
+- A free Cloudflare account. No domain is required: the default deployment uses Cloudflare's included `workers.dev` hostname and creates the required KV namespace automatically.
 - Personal mode: a Notion token shared with your task data sources, plus an Apple Account app-specific password.
 - Hosted mode: one Notion Public Connection, Clerk, D1, Queues, and a credential-vault key.
 
@@ -33,7 +33,7 @@ The managed picker shows data sources that contain at least one date property an
 Sync is one-way from Notion to Apple Calendar. Editing an event in Calendar never updates the Notion page.
 
 ## Configuration
-Create a `.env` (used locally and when running `pywrangler secret put`):
+You do not need to create `.env` by hand: the setup wizard writes it for you. For headless deployments or reference, these are the supported values:
 
 | Key | Purpose |
 | --- | --- |
@@ -41,7 +41,7 @@ Create a `.env` (used locally and when running `pywrangler secret put`):
 | `CLOUDFLARE_ACCOUNT_ID` | Optional account selector when you belong to multiple Cloudflare accounts |
 | `CLOUDFLARE_API_TOKEN` | Optional token for headless deployment; interactive deploys can use Wrangler OAuth |
 | `CLOUDFLARE_STATE_NAMESPACE` | KV namespace ID for the `STATE` binding |
-| `WORKER_CUSTOM_DOMAIN` | Required production hostname in a Cloudflare-managed zone; `workers.dev` and preview URLs remain disabled |
+| `WORKER_CUSTOM_DOMAIN` | Optional hostname in a Cloudflare-managed zone; leave blank to use the free `workers.dev` URL |
 | `NOTION_TOKEN` | Notion integration token |
 | `ADMIN_TOKEN` | Required by `/admin/*` endpoints |
 | `APPLE_ID` / `APPLE_APP_PASSWORD` | iCloud Calendar credentials |
@@ -56,9 +56,9 @@ Run the guided one-command setup. It asks whether to deploy personal or hosted m
 ./scripts/setup-cloudflare.sh
 ```
 
-The wizard remembers credentials and the custom domain in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. The selected hostname must be unused and belong to a zone in the same Cloudflare account; Cloudflare creates its DNS record and TLS certificate during deployment.
+The wizard remembers credentials and deployment settings in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. Press Enter at the custom-domain prompt to use `https://notion-caldav-sync.<your-account-subdomain>.workers.dev`; if you choose a custom hostname instead, it must be unused and belong to a zone in the same Cloudflare account.
 
-Notion connection creation and webhook registration are the remaining dashboard steps because Notion does not expose them through its public API. The English-only wizard opens the correct pages, prints the exact callback and webhook URLs, waits for the verification request, retrieves the verification token, and tells you where to paste it. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
+Notion connection creation is the remaining dashboard step because Notion does not expose it through its public API. Webhooks are optional: the Worker still reconciles changes on schedule without one. If you enable a webhook, the English-only wizard prints the exact URL, waits for verification, retrieves the token, and tells you where to paste it. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
 
 If the Worker is already deployed and only the hosted webhook remains, run:
 
@@ -94,13 +94,13 @@ Provision Cloudflare resources and deploy with:
 ./scripts/provision-hosted-cloudflare.sh
 ```
 
-Before the first hosted deployment, configure a Notion Public Connection with the exact OAuth callback:
+Before the first hosted deployment, configure a Notion Public Connection with the exact OAuth callback. A free Cloudflare hostname works; an owned domain is optional:
 
 ```text
-https://calendar.example.com/notion/callback
+https://notion-caldav-sync.<your-account-subdomain>.workers.dev/notion/callback
 ```
 
-The deployment requires `PUBLIC_BASE_URL`, `NOTION_CLIENT_ID`, Clerk's publishable key/JWKS/sign-in settings, `HOSTED_ADMIN_USER_IDS`, a D1 database, and the queue names shown in `.env-example`. Store `NOTION_CLIENT_SECRET`, `CREDENTIAL_VAULT_KEY`, and `HOSTED_WEBHOOK_SETUP_TOKEN` as encrypted Worker secrets. If the Notion client secret already exists remotely, deployment deliberately reuses it instead of requiring a plaintext local copy.
+Set `PUBLIC_BASE_URL` to the final `workers.dev` or custom URL. Hosted deployment also needs `NOTION_CLIENT_ID`, Clerk's publishable key/JWKS/sign-in settings, and `HOSTED_ADMIN_USER_IDS`; the provisioning script creates or reuses D1, KV, and Queues automatically. Store `NOTION_CLIENT_SECRET`, `CREDENTIAL_VAULT_KEY`, and `HOSTED_WEBHOOK_SETUP_TOKEN` as encrypted Worker secrets. If the Notion client secret already exists remotely, deployment deliberately reuses it instead of requiring a plaintext local copy.
 
 Clerk user IDs listed in `HOSTED_ADMIN_USER_IDS` can open `/admin` to inspect account state, last completion time, and the last error, or pause, resume, and retry a connection. Clerk remains the identity system; the application stores operational sync state in D1 because Clerk does not own provider connection or run-history data.
 
@@ -109,7 +109,7 @@ For a shared Clerk production instance, enable its allowed-subdomain list and in
 The optional hosted webhook subscription URL is:
 
 ```text
-https://calendar.example.com/webhook/notion/hosted?setup=<one-time-setup-token>
+https://<worker-url>/webhook/notion/hosted?setup=<one-time-setup-token>
 ```
 
 Treat the setup URL as a secret because it contains a one-time setup token. The token is accepted only for Notion's verification handshake. The returned verification secret is encrypted in D1, and every subsequent event must pass Notion's HMAC-SHA256 signature check. Recreate and verify the subscription to rotate the verification secret. See [the hosted architecture](docs/hosted-service-architecture.md) for the trust boundaries and data model.
@@ -141,8 +141,8 @@ STATUS_EMOJI_STYLE=symbol ./deploy.sh
    - **User information:** select *No user information*
 4. **Access**
    - Under *Page and database access*, choose the databases that should sync (make sure they’re shared with the integration inside Notion)
-5. **Webhooks**
-   - **Webhook URL:** `https://<your-custom-domain>/webhook/notion`
+5. **Webhooks (optional)**
+   - **Webhook URL:** `https://<worker-url>/webhook/notion`
    - **API version:** select `2026-03-11`
    - **Subscribed events:** select every **Page** and **Data source** event plus the non-deprecated **Database** events; leave **View**, **Comment**, and **File upload** unchecked
 6. Save the integration and copy the generated secret into `.env` as `NOTION_TOKEN`.

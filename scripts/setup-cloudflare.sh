@@ -244,16 +244,30 @@ esac
 write_env DEPLOYMENT_MODE "$DEPLOYMENT_MODE"
 export DEPLOYMENT_MODE
 
-ask WORKER_CUSTOM_DOMAIN "Custom domain in your Cloudflare account (for example calendar.example.com):"
+ask WORKER_CUSTOM_DOMAIN "Custom domain (optional; press Enter to use Cloudflare's free workers.dev URL):"
 WORKER_CUSTOM_DOMAIN=$(printf "%s" "$WORKER_CUSTOM_DOMAIN" | tr '[:upper:]' '[:lower:]' | xargs)
-require_value WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
-if [[ ! "$WORKER_CUSTOM_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+if [[ -n "$WORKER_CUSTOM_DOMAIN" && ! "$WORKER_CUSTOM_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
   warn "Enter a hostname without https:// or a path."
   exit 1
 fi
 write_env WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
 export WORKER_CUSTOM_DOMAIN
-WORKER_URL="https://$WORKER_CUSTOM_DOMAIN"
+if [[ -n "$WORKER_CUSTOM_DOMAIN" ]]; then
+  WORKER_URL="https://$WORKER_CUSTOM_DOMAIN"
+else
+  say "Cloudflare will assign a free notion-caldav-sync.<account-subdomain>.workers.dev URL."
+  if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+    ask PUBLIC_BASE_URL "Full workers.dev URL shown in Cloudflare Workers & Pages:"
+    PUBLIC_BASE_URL=${PUBLIC_BASE_URL%/}
+    if [[ ! "$PUBLIC_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+\.workers\.dev$ ]]; then
+      warn "Hosted mode needs its final https://...workers.dev URL for OAuth and Clerk callbacks."
+      exit 1
+    fi
+    WORKER_URL="$PUBLIC_BASE_URL"
+    write_env PUBLIC_BASE_URL "$PUBLIC_BASE_URL"
+    export PUBLIC_BASE_URL
+  fi
+fi
 
 for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_STATE_NAMESPACE; do
   value=$(_existing "$key" || true)
@@ -336,9 +350,11 @@ else
     write_env "$key" "${!key}"
     export "$key"
   done
-  PUBLIC_BASE_URL="$WORKER_URL"
-  write_env PUBLIC_BASE_URL "$PUBLIC_BASE_URL"
-  export PUBLIC_BASE_URL
+  if [[ -n "$WORKER_CUSTOM_DOMAIN" ]]; then
+    PUBLIC_BASE_URL="$WORKER_URL"
+    write_env PUBLIC_BASE_URL "$PUBLIC_BASE_URL"
+    export PUBLIC_BASE_URL
+  fi
 fi
 chmod 600 "$ENV_FILE"
 
@@ -361,39 +377,53 @@ else
   "$ROOT_DIR/deploy.sh" | tee "$DEPLOY_LOG"
 fi
 
+DEPLOYED_WORKER_URL=$(sed -n 's/^Worker URL: \(https:\/\/.*\)$/\1/p' "$DEPLOY_LOG" | tail -n1)
+if [[ -n "$DEPLOYED_WORKER_URL" ]]; then
+  WORKER_URL="${DEPLOYED_WORKER_URL%/}"
+fi
+require_value worker_url "$WORKER_URL"
+
 stage "Finish the Notion webhook"
-say "Notion requires webhook creation and verification in its own dashboard."
-open_url "https://www.notion.so/profile/integrations"
-if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
-  HOSTED_WEBHOOK_SETUP_TOKEN=$(_existing HOSTED_WEBHOOK_SETUP_TOKEN || true)
-  require_value HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
-  WEBHOOK_URL="${WORKER_URL%/}/webhook/notion/hosted?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}"
-  step "Create a webhook subscription with this URL: $WEBHOOK_URL"
-  step "Subscribe to Page, Database, and Data source events."
-  pause "Press Enter after Notion sends the verification request."
-  VERIFY_JSON=$(curl --fail --silent --show-error "${WORKER_URL%/}/api/webhook/setup?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}")
-  VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
-  require_value verification_token "$VERIFY_TOKEN"
-  say "Paste this verification token into Notion: $VERIFY_TOKEN"
-  pause "Press Enter after Notion reports the subscription as active."
-else
-  step "Create a webhook subscription with this URL: ${WORKER_URL%/}/webhook/notion"
-  step "Subscribe to Page, Database, and Data source events."
-  pause "Press Enter after Notion sends the verification request."
-  VERIFY_JSON=$(curl --fail --silent --show-error \
-    --header "X-Admin-Token: $ADMIN_TOKEN" \
-    "${WORKER_URL%/}/admin/settings")
-  VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
-  require_value verification_token "$VERIFY_TOKEN"
-  say "Paste this verification token into Notion: $VERIFY_TOKEN"
-  pause "Press Enter after Notion reports the subscription as active."
-  if confirm "Run one full sync now?"; then
-    curl --fail --silent --show-error \
-      --request POST \
+say "Webhooks make updates arrive faster, but they are optional; scheduled reconciliation still runs without them."
+if confirm "Configure the optional Notion webhook now?"; then
+  open_url "https://www.notion.so/profile/integrations"
+  if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+    HOSTED_WEBHOOK_SETUP_TOKEN=$(_existing HOSTED_WEBHOOK_SETUP_TOKEN || true)
+    require_value HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
+    WEBHOOK_URL="${WORKER_URL%/}/webhook/notion/hosted?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}"
+    step "Create a webhook subscription with this URL: $WEBHOOK_URL"
+    step "Subscribe to Page, Database, and Data source events."
+    pause "Press Enter after Notion sends the verification request."
+    VERIFY_JSON=$(curl --fail --silent --show-error "${WORKER_URL%/}/api/webhook/setup?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}")
+    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
+    require_value verification_token "$VERIFY_TOKEN"
+    say "Paste this verification token into Notion: $VERIFY_TOKEN"
+    pause "Press Enter after Notion reports the subscription as active."
+  else
+    step "Create a webhook subscription with this URL: ${WORKER_URL%/}/webhook/notion"
+    step "Subscribe to Page, Database, and Data source events."
+    pause "Press Enter after Notion sends the verification request."
+    VERIFY_JSON=$(curl --fail --silent --show-error \
       --header "X-Admin-Token: $ADMIN_TOKEN" \
-      "${WORKER_URL%/}/admin/full-sync" >/dev/null
-    say "Initial full sync completed."
+      "${WORKER_URL%/}/admin/settings")
+    VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("webhook_verification_token", ""))')
+    require_value verification_token "$VERIFY_TOKEN"
+    say "Paste this verification token into Notion: $VERIFY_TOKEN"
+    pause "Press Enter after Notion reports the subscription as active."
   fi
+else
+  if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+    say "Skipping webhook setup. You can run scripts/configure-notion-webhook.sh later."
+  else
+    say "Skipping webhook setup. Scheduled reconciliation remains active; re-run this wizard whenever you want to add the webhook."
+  fi
+fi
+if [[ "$DEPLOYMENT_MODE" == "personal" ]] && confirm "Run one full sync now?"; then
+  curl --fail --silent --show-error \
+    --request POST \
+    --header "X-Admin-Token: $ADMIN_TOKEN" \
+    "${WORKER_URL%/}/admin/full-sync" >/dev/null
+  say "Initial full sync completed."
 fi
 # ──────────────────────────────────────────────────────────────────────────
 

@@ -18,12 +18,19 @@ if [ -f "$ROOT_DIR/.env" ]; then
   set +a
 fi
 
-if ! command -v mise >/dev/null 2>&1; then
-  echo "mise is required so the pinned Node.js runtime is used." >&2
-  exit 1
+if ! command -v npx >/dev/null 2>&1; then
+  if command -v mise >/dev/null 2>&1; then
+    NODE_RUNTIME_DIR="$(mise where node@24.21.0 2>/dev/null || true)/bin"
+    if [ ! -x "$NODE_RUNTIME_DIR/npx" ]; then
+      echo "Node.js is not ready. Run ./scripts/setup-cloudflare.sh to install the pinned runtime." >&2
+      exit 1
+    fi
+    export PATH="$NODE_RUNTIME_DIR:$PATH"
+  else
+    echo "Node.js with npx is required. Alternatively, install mise and run ./scripts/setup-cloudflare.sh." >&2
+    exit 1
+  fi
 fi
-NODE_RUNTIME_DIR="$(mise where node@24.21.0)/bin"
-export PATH="$NODE_RUNTIME_DIR:$PATH"
 
 resolve_status_emoji_style() {
   local style=${1:-}
@@ -49,8 +56,10 @@ choose_status_emoji_style() {
   fi
 
   if [ ! -t 0 ]; then
-    echo "STATUS_EMOJI_STYLE is required in non-interactive mode (set: emoji|symbol)." >&2
-    exit 1
+    STATUS_EMOJI_STYLE="emoji"
+    export STATUS_EMOJI_STYLE
+    echo "Using default STATUS_EMOJI_STYLE=$STATUS_EMOJI_STYLE"
+    return
   fi
 
   echo "Choose status emoji style:"
@@ -72,18 +81,21 @@ choose_status_emoji_style() {
   echo "Using STATUS_EMOJI_STYLE=$STATUS_EMOJI_STYLE"
 }
 
-choose_worker_custom_domain() {
+choose_worker_endpoint() {
   local domain=${WORKER_CUSTOM_DOMAIN:-}
   domain=$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | xargs)
 
   if [ -z "$domain" ] && [ -t 0 ]; then
-    read -r -p "Worker custom domain (for example calendar.example.com): " domain
+    read -r -p "Worker custom domain (optional; press Enter for workers.dev): " domain
     domain=$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | xargs)
   fi
 
   if [ -z "$domain" ]; then
-    echo "WORKER_CUSTOM_DOMAIN is required because workers.dev is disabled." >&2
-    exit 1
+    WORKER_CUSTOM_DOMAIN=""
+    WORKERS_DEV=true
+    export WORKER_CUSTOM_DOMAIN WORKERS_DEV
+    echo "Using the free workers.dev hostname assigned by Cloudflare."
+    return
   fi
   if [[ ! "$domain" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
     echo "Invalid WORKER_CUSTOM_DOMAIN=$domain (expected a hostname without scheme or path)." >&2
@@ -91,7 +103,8 @@ choose_worker_custom_domain() {
   fi
 
   WORKER_CUSTOM_DOMAIN="$domain"
-  export WORKER_CUSTOM_DOMAIN
+  WORKERS_DEV=false
+  export WORKER_CUSTOM_DOMAIN WORKERS_DEV
   echo "Using custom domain: $WORKER_CUSTOM_DOMAIN"
 }
 
@@ -215,7 +228,7 @@ ensure_namespace() {
 
 ensure_namespace
 choose_status_emoji_style
-choose_worker_custom_domain
+choose_worker_endpoint
 DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-}
 if [ -z "$DEPLOYMENT_MODE" ]; then
   if [ -n "${CLOUDFLARE_D1_DATABASE_ID:-}" ]; then
@@ -248,11 +261,14 @@ if [ ! -f "$TEMPLATE_PATH" ]; then
   exit 1
 fi
 
-if command -v envsubst >/dev/null 2>&1; then
-  envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
-else
-  echo "envsubst is required for deployment." >&2
-  exit 1
+python3 "$HELPERS_PATH" render-template "$TEMPLATE_PATH" > "$CONFIG_PATH"
+if [ -n "$WORKER_CUSTOM_DOMAIN" ]; then
+  cat >> "$CONFIG_PATH" <<EOF
+
+[[routes]]
+pattern = "$WORKER_CUSTOM_DOMAIN"
+custom_domain = true
+EOF
 fi
 echo "Generated wrangler.toml with STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
 
@@ -282,10 +298,26 @@ else
   npx --yes wrangler d1 migrations apply notion-caldav-sync --remote --config "$CONFIG_PATH"
 fi
 
-# Deploy the Worker (creates notion-caldav-sync if missing)
-uv run -- pywrangler deploy --name notion-caldav-sync
+# Deploy the Worker (creates notion-caldav-sync if missing).
+DEPLOY_LOG=$(mktemp)
+cleanup_deploy_log() { rm -f "$DEPLOY_LOG"; }
+trap cleanup_deploy_log EXIT
+uv run -- pywrangler deploy --name notion-caldav-sync | tee "$DEPLOY_LOG"
+
+if [ -n "$WORKER_CUSTOM_DOMAIN" ]; then
+  WORKER_URL="https://$WORKER_CUSTOM_DOMAIN"
+else
+  WORKER_URL=$(grep -Eo 'https://[a-zA-Z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n1 || true)
+  if [ -z "$WORKER_URL" ] && [[ "${PUBLIC_BASE_URL:-}" == https://*.workers.dev ]]; then
+    WORKER_URL="${PUBLIC_BASE_URL%/}"
+  fi
+fi
 
 echo "Deployment complete."
 echo "Deployment mode: $DEPLOYMENT_MODE"
-echo "Worker URL: https://$WORKER_CUSTOM_DOMAIN"
-echo "Webhook URL: https://$WORKER_CUSTOM_DOMAIN/webhook/notion"
+if [ -n "$WORKER_URL" ]; then
+  echo "Worker URL: $WORKER_URL"
+  echo "Webhook URL: ${WORKER_URL%/}/webhook/notion"
+else
+  echo "Worker URL: check the deploy output above or Cloudflare Workers & Pages."
+fi
