@@ -70,6 +70,11 @@ class Default(WorkerEntrypoint):
             "/notion/callback",
             "/webhook/notion/hosted",
             "/api/webhook/setup",
+            "/calendar/connect",
+            "/sync/preferences",
+            "/sync/options",
+            "/sync/run",
+            "/admin/connections",
         }
         if path in hosted_paths and getattr(self.env, "HOSTED_DB", None) is not None:
             try:
@@ -90,17 +95,17 @@ class Default(WorkerEntrypoint):
                     return await hosted.begin_notion(request)
                 if path == "/notion/callback" and method == "GET":
                     return await hosted.complete_notion(request)
-                if path == "/api/apple" and method == "POST":
+                if path in {"/calendar/connect", "/api/apple"} and method == "POST":
                     return await hosted.connect_apple(request)
-                if path == "/api/preferences" and method == "POST":
+                if path in {"/sync/preferences", "/api/preferences"} and method == "POST":
                     return await hosted.configure_sync(request)
-                if path == "/api/options/refresh" and method == "POST":
+                if path in {"/sync/options", "/api/options/refresh"} and method == "POST":
                     return await hosted.refresh_options(request)
-                if path == "/api/sync" and method == "POST":
+                if path in {"/sync/run", "/api/sync"} and method == "POST":
                     return await hosted.manual_sync(request)
                 if path == "/admin" and method == "GET":
                     return await hosted.admin(request)
-                if path == "/api/admin/action" and method == "POST":
+                if path in {"/admin/connections", "/api/admin/action"} and method == "POST":
                     return await hosted.admin_action(request)
                 if path == "/webhook/notion/hosted" and method == "POST":
                     return await hosted.webhook(request)
@@ -263,7 +268,7 @@ class Default(WorkerEntrypoint):
             else:
                 print("[sync] scheduled run skipped (full sync interval not reached)")
 
-    async def queue(self, batch):
+    async def queue(self, batch, env, ctx):
         try:
             from app.hosted import HostedService  # type: ignore
             from app.hosted.util import to_python  # type: ignore

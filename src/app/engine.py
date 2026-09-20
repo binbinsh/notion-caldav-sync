@@ -197,7 +197,8 @@ def _uid_notion_id(
     filename = event_url.rstrip("/").split("/")[-1]
     if managed_event_prefix and filename.startswith(managed_event_prefix):
         filename = filename[len(managed_event_prefix) :]
-    return f"restored-{notion_id}" if filename.startswith("restored-") else notion_id
+    uid = f"restored-{notion_id}" if filename.startswith("restored-") else notion_id
+    return f"{managed_event_prefix}{uid}" if managed_event_prefix else uid
 
 
 def _build_ics_for_task(

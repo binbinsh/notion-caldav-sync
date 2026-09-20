@@ -294,6 +294,32 @@ def _localized_message(message: str) -> str:
     return translations.get(message, message)
 
 
+def _clerk_script(*, publishable_key: str, frontend_api: str) -> str:
+    if not publishable_key or not frontend_api:
+        return ""
+    return (
+        f'<script defer crossorigin="anonymous" data-clerk-publishable-key="{_escape(publishable_key)}" '
+        f'src="{_escape(frontend_api.rstrip("/"))}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>'
+    )
+
+
+def _clerk_session_boot(*, nonce: str, sign_in_url: str) -> str:
+    return f"""
+      <script nonce="{nonce}">
+        window.addEventListener('load',async()=>{{
+          if(!window.Clerk)return;
+          try{{
+            await Clerk.load({{
+              signInUrl:{json.dumps(sign_in_url)},
+              signUpUrl:{json.dumps(sign_in_url.replace('/sign-in', '/sign-up'))}
+            }});
+            if(!Clerk.session)location.replace(Clerk.buildSignInUrl());
+          }}catch(error){{console.warn('Clerk session initialization failed',error);}}
+        }},{{once:true}});
+      </script>
+    """
+
+
 def signed_out_page(
     *,
     base_url: str,
@@ -304,9 +330,9 @@ def signed_out_page(
     nonce = random_token(18)
     redirect = quote(base_url.rstrip("/") + "/", safe="")
     fallback_sign_in = f"{sign_in_url}?redirect_url={redirect}"
-    clerk_script = (
-        f'<script defer crossorigin="anonymous" data-clerk-publishable-key="{_escape(clerk_publishable_key)}" '
-        f'src="{_escape(clerk_frontend_api.rstrip("/"))}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>'
+    clerk_script = _clerk_script(
+        publishable_key=clerk_publishable_key,
+        frontend_api=clerk_frontend_api,
     )
     clerk_boot = f"""
       <script nonce="{nonce}">
@@ -359,7 +385,14 @@ def signed_out_page(
     )
 
 
-def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
+def dashboard_page(
+    *,
+    status: dict[str, Any],
+    message: str = "",
+    clerk_publishable_key: str = "",
+    clerk_frontend_api: str = "",
+    clerk_sign_in_url: str = "",
+) -> Response:
     nonce = random_token(18)
     notion = status.get("notion") or {}
     apple = status.get("apple") or {}
@@ -381,7 +414,7 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
     last_finished = _local_time(sync.get("last_finished_at"), "Not yet")
     next_due = _local_time(sync.get("next_due_at"), "After setup")
     apple_form = f"""
-      <form method="post" action="/api/apple">
+      <form method="post" action="/calendar/connect">
         <div class="field-grid">
           <div><label for="apple_id">Apple Account</label><input id="apple_id" name="apple_id" type="email" autocomplete="username" placeholder="name@icloud.com" aria-describedby="apple-help" required></div>
           <div><label for="app_password">App-specific password</label><input id="app_password" name="app_password" type="password" autocomplete="new-password" placeholder="xxxx-xxxx-xxxx-xxxx" aria-describedby="apple-help" required></div>
@@ -407,7 +440,7 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
     selected_calendar = str(preferences.get("apple_calendar_href") or "")
     calendar_choices = (
         f'<option value="__create__" {"selected" if not selected_calendar else ""}>'
-        "Create a dedicated “Notion” calendar</option>"
+        "Create a dedicated “Notion CalDAV Sync” calendar</option>"
         + "".join(
             f'<option value="{_escape(calendar.get("href"))}" {"selected" if str(calendar.get("href")) == selected_calendar else ""}>{_escape(calendar.get("name") or "Untitled")}</option>'
             for calendar in apple_calendars
@@ -416,17 +449,17 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
     if notion_ok and apple_ok and notion_sources and apple_calendars:
         preference_content = f"""
           <p class="connection-copy">Choose the task databases to read and the Apple calendar that should receive managed events. Existing non-managed events are left untouched.</p>
-          <form method="post" action="/api/preferences">
+          <form method="post" action="/sync/preferences">
             <fieldset><legend>Notion data sources</legend><div class="choice-list">{source_choices}</div></fieldset>
             <label class="select-label" for="apple_calendar">Apple calendar<select id="apple_calendar" name="apple_calendar" required>{calendar_choices}</select></label>
             <div class="inline-actions"><button type="submit">{"Update sync settings" if configured else "Save and start syncing"}</button></div>
           </form>
-          <form method="post" action="/api/options/refresh"><button class="secondary" type="submit">Refresh available choices</button></form>
+          <form method="post" action="/sync/options"><button class="secondary" type="submit">Refresh available choices</button></form>
         """
     elif notion_ok and apple_ok:
         preference_content = """
           <p class="connection-copy">No compatible Notion data sources or Apple calendars were found. Refresh after granting access or creating a calendar.</p>
-          <form method="post" action="/api/options/refresh"><button class="secondary" type="submit">Refresh available choices</button></form>
+          <form method="post" action="/sync/options"><button class="secondary" type="submit">Refresh available choices</button></form>
         """
     else:
         preference_content = '<p class="connection-copy">Connect Notion and Apple Calendar before choosing what to sync.</p>'
@@ -465,19 +498,42 @@ def dashboard_page(*, status: dict[str, Any], message: str = "") -> Response:
         <p class="sync-description">{"Runs every 30 minutes. You can also start a sync manually." if sync_ok else "Complete all three setup steps to start automatic sync."}</p>
         <div class="sync-bottom">
           <dl class="sync-facts"><div><dt>Last completed</dt><dd>{last_finished}</dd></div><div><dt>Next run</dt><dd>{next_due}</dd></div></dl>
-          <form method="post" action="/api/sync"><button class="secondary" type="submit" {"disabled" if not sync_ok else ""}>Sync now</button></form>
+          <form method="post" action="/sync/run"><button class="secondary" type="submit" {"disabled" if not sync_ok else ""}>Sync now</button></form>
         </div>
         {('<p class="error" role="alert">Last sync error: ' + _escape(sync.get("last_error")) + "</p>") if sync.get("last_error") else ""}
       </section>
       {_footer()}
     """
+    clerk_script = _clerk_script(
+        publishable_key=clerk_publishable_key,
+        frontend_api=clerk_frontend_api,
+    )
+    clerk_boot = (
+        _clerk_session_boot(nonce=nonce, sign_in_url=clerk_sign_in_url)
+        if clerk_script and clerk_sign_in_url
+        else ""
+    )
     return html_response(
-        _document(title="Connections and sync · Notion CalDAV Sync", content=content, nonce=nonce),
+        _document(
+            title="Connections and sync · Notion CalDAV Sync",
+            content=content,
+            nonce=nonce,
+            extra_head=clerk_script,
+            extra_body=clerk_boot,
+        ),
         nonce=nonce,
+        clerk_frontend_api=clerk_frontend_api if clerk_script else "",
     )
 
 
-def admin_page(*, accounts: list[dict[str, Any]], message: str = "") -> Response:
+def admin_page(
+    *,
+    accounts: list[dict[str, Any]],
+    message: str = "",
+    clerk_publishable_key: str = "",
+    clerk_frontend_api: str = "",
+    clerk_sign_in_url: str = "",
+) -> Response:
     nonce = random_token(18)
     notice = f'<p class="notice" role="status">{_escape(message)}</p>' if message else ""
     rows = []
@@ -489,8 +545,8 @@ def admin_page(*, accounts: list[dict[str, Any]], message: str = "") -> Response
         if connection_id:
             controls = f"""
               <div class="admin-actions">
-                <form method="post" action="/api/admin/action"><input type="hidden" name="connection_id" value="{_escape(connection_id)}"><input type="hidden" name="action" value="retry"><button type="submit">Retry</button></form>
-                <form method="post" action="/api/admin/action"><input type="hidden" name="connection_id" value="{_escape(connection_id)}"><input type="hidden" name="action" value="{action}"><button class="secondary" type="submit">{action.title()}</button></form>
+                <form method="post" action="/admin/connections"><input type="hidden" name="connection_id" value="{_escape(connection_id)}"><input type="hidden" name="action" value="retry"><button type="submit">Retry</button></form>
+                <form method="post" action="/admin/connections"><input type="hidden" name="connection_id" value="{_escape(connection_id)}"><input type="hidden" name="action" value="{action}"><button class="secondary" type="submit">{action.title()}</button></form>
               </div>
             """
         rows.append(
@@ -516,9 +572,25 @@ def admin_page(*, accounts: list[dict[str, Any]], message: str = "") -> Response
       </table>
       {_footer()}
     """
+    clerk_script = _clerk_script(
+        publishable_key=clerk_publishable_key,
+        frontend_api=clerk_frontend_api,
+    )
+    clerk_boot = (
+        _clerk_session_boot(nonce=nonce, sign_in_url=clerk_sign_in_url)
+        if clerk_script and clerk_sign_in_url
+        else ""
+    )
     return html_response(
-        _document(title="Administration · Notion CalDAV Sync", content=content, nonce=nonce),
+        _document(
+            title="Administration · Notion CalDAV Sync",
+            content=content,
+            nonce=nonce,
+            extra_head=clerk_script,
+            extra_body=clerk_boot,
+        ),
         nonce=nonce,
+        clerk_frontend_api=clerk_frontend_api if clerk_script else "",
     )
 
 

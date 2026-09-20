@@ -58,7 +58,7 @@ After signing in, each user:
 
 1. authorizes Notion through OAuth;
 2. enters an Apple app-specific password, which is validated through live CalDAV discovery before it is saved;
-3. chooses one or more compatible Notion data sources and either an existing Apple calendar or a dedicated `Notion` calendar;
+3. chooses one or more compatible Notion data sources and either an existing Apple calendar or a dedicated `Notion CalDAV Sync` calendar;
 4. receives an immediate first sync, then automatic reconciliation every 30 minutes.
 
 When an existing calendar is selected, only events whose resource names start with `notion-caldav-sync-` are managed. Other events in that calendar are never treated as sync-owned.

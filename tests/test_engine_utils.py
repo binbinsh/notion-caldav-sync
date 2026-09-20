@@ -59,7 +59,7 @@ def test_uid_notion_id_understands_managed_restored_prefix():
             "https://calendar/notion-caldav-sync-restored-page-1.ics",
             "notion-caldav-sync-",
         )
-        == "restored-page-1"
+        == "notion-caldav-sync-restored-page-1"
     )
 
 

@@ -123,6 +123,29 @@ class HostedService:
         return bool(origin and origin == self.config.public_base_url)
 
     @staticmethod
+    async def _form_values(request: Any) -> dict[str, list[str]]:
+        raw = await request.text()
+        return {
+            key: [str(value) for value in values]
+            for key, values in parse_qs(raw, keep_blank_values=True).items()
+        }
+
+    @staticmethod
+    def _first_form_value(form: dict[str, list[str]], key: str) -> str:
+        values = form.get(key) or []
+        return str(values[0]) if values else ""
+
+    def _clerk_page_config(self) -> dict[str, str]:
+        clerk_origin = urlparse(self.config.clerk_jwks_url)
+        return {
+            "clerk_publishable_key": str(
+                getattr(self.env, "CLERK_PUBLISHABLE_KEY", "") or ""
+            ),
+            "clerk_frontend_api": f"{clerk_origin.scheme}://{clerk_origin.netloc}",
+            "clerk_sign_in_url": self.config.clerk_sign_in_url,
+        }
+
+    @staticmethod
     def _redirect(location: str, status: int = 302) -> Response:
         return Response("", status=status, headers={"Location": location, "Cache-Control": "no-store"})
 
@@ -130,19 +153,17 @@ class HostedService:
         try:
             user = await self.user(request)
         except AuthenticationError:
-            clerk_origin = urlparse(self.config.clerk_jwks_url)
+            clerk_page = self._clerk_page_config()
             return signed_out_page(
                 base_url=self.config.public_base_url,
                 sign_in_url=self.config.clerk_sign_in_url,
-                clerk_publishable_key=str(
-                    getattr(self.env, "CLERK_PUBLISHABLE_KEY", "") or ""
-                ),
-                clerk_frontend_api=f"{clerk_origin.scheme}://{clerk_origin.netloc}",
+                clerk_publishable_key=clerk_page["clerk_publishable_key"],
+                clerk_frontend_api=clerk_page["clerk_frontend_api"],
             )
         status = await self.repository.account_status(user["id"])
         query = parse_qs(urlparse(str(request.url)).query)
         message = str((query.get("message") or [""])[0])[:180]
-        return dashboard_page(status=status, message=message)
+        return dashboard_page(status=status, message=message, **self._clerk_page_config())
 
     async def status(self, request: Any) -> Response:
         try:
@@ -266,9 +287,9 @@ class HostedService:
         if not self._same_origin(request):
             return json_response({"error": "Invalid request origin"}, status=403)
         user = await self.user(request)
-        form = await request.formData()
-        apple_id = str(form.get("apple_id") or "").strip()
-        app_password = str(form.get("app_password") or "").strip().replace(" ", "")
+        form = await self._form_values(request)
+        apple_id = self._first_form_value(form, "apple_id").strip()
+        app_password = self._first_form_value(form, "app_password").strip().replace(" ", "")
         if "@" not in apple_id or len(app_password) < 12:
             return json_response({"error": "Invalid Apple account or app-specific password"}, status=400)
         try:
@@ -340,13 +361,10 @@ class HostedService:
         if not self._same_origin(request):
             return json_response({"error": "Invalid request origin"}, status=403)
         user = await self.user(request)
-        form = await request.formData()
-        try:
-            raw_source_ids = form.getAll("notion_source_id")
-        except Exception:
-            raw_source_ids = []
+        form = await self._form_values(request)
+        raw_source_ids = form.get("notion_source_id") or []
         source_ids = list(dict.fromkeys(str(value) for value in raw_source_ids if str(value)))
-        calendar_value = str(form.get("apple_calendar") or "")
+        calendar_value = self._first_form_value(form, "apple_calendar")
         available_sources = await self.repository.provider_options(user["id"], "notion")
         available_calendars = await self.repository.provider_options(user["id"], "apple")
         allowed_sources = {str(item.get("id") or "") for item in available_sources}
@@ -374,7 +392,11 @@ class HostedService:
                 field="app_password",
                 ciphertext=apple["app_password_ciphertext"],
             )
-            await update_settings(state, calendar_href=None, calendar_name="Notion")
+            await update_settings(
+                state,
+                calendar_href=None,
+                calendar_name="Notion CalDAV Sync",
+            )
             settings = await ensure_calendar(
                 Bindings(
                     state=state,
@@ -386,7 +408,7 @@ class HostedService:
                 )
             )
             calendar_href = str(settings.get("calendar_href") or "")
-            calendar_name = str(settings.get("calendar_name") or "Notion")
+            calendar_name = str(settings.get("calendar_name") or "Notion CalDAV Sync")
         else:
             chosen = next(
                 (item for item in available_calendars if str(item.get("href") or "") == calendar_value),
@@ -434,15 +456,19 @@ class HostedService:
         await self.require_admin(request)
         query = parse_qs(urlparse(str(request.url)).query)
         message = str((query.get("message") or [""])[0])[:180]
-        return admin_page(accounts=await self.repository.admin_accounts(), message=message)
+        return admin_page(
+            accounts=await self.repository.admin_accounts(),
+            message=message,
+            **self._clerk_page_config(),
+        )
 
     async def admin_action(self, request: Any) -> Response:
         if not self._same_origin(request):
             return json_response({"error": "Invalid request origin"}, status=403)
         await self.require_admin(request)
-        form = await request.formData()
-        connection_id = str(form.get("connection_id") or "")
-        action = str(form.get("action") or "")
+        form = await self._form_values(request)
+        connection_id = self._first_form_value(form, "connection_id")
+        action = self._first_form_value(form, "action")
         connection = await self.repository.first(
             "SELECT * FROM sync_connections WHERE id=?", connection_id
         )

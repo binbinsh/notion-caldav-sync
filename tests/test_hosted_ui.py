@@ -109,14 +109,14 @@ def test_dashboard_preserves_forms_oauth_and_sync_availability(connected):
     )
     elements = Elements(response.body)
     assert elements.matching("a", href="/notion/connect")
-    assert elements.matching("form", method="post", action="/api/apple")
-    assert elements.matching("form", method="post", action="/api/sync")
+    assert elements.matching("form", method="post", action="/calendar/connect")
+    assert elements.matching("form", method="post", action="/sync/run")
     for name, field_type in [("apple_id", "email"), ("app_password", "password")]:
         fields = elements.matching("input", name=name, type=field_type)
         assert len(fields) == 1
         assert "required" in fields[0]
         assert "value" not in fields[0]
-    sync_form = elements.matching("form", method="post", action="/api/sync")[0]
+    sync_form = elements.matching("form", method="post", action="/sync/run")[0]
     assert sync_form
     sync_button = [
         attrs
@@ -148,12 +148,25 @@ def test_dashboard_renders_source_and_calendar_preferences():
         }
     )
     elements = Elements(response.body)
-    assert elements.matching("form", method="post", action="/api/preferences")
+    assert elements.matching("form", method="post", action="/sync/preferences")
     source = elements.matching("input", name="notion_source_id", value="source-1")[0]
     assert "checked" in source
     assert "Tasks &amp; plans" in response.body
     assert "Work &lt;Calendar&gt;" in response.body
     assert "Existing non-managed events are left untouched." in response.body
+
+
+def test_authenticated_pages_keep_clerk_session_fresh():
+    response = dashboard_page(
+        status={},
+        clerk_publishable_key="pk_live_example",
+        clerk_frontend_api="https://clerk.planner.li",
+        clerk_sign_in_url="https://accounts.planner.li/sign-in",
+    )
+    assert response.body.count("@clerk/clerk-js@6/dist/clerk.browser.js") == 1
+    assert "await Clerk.load" in response.body
+    assert "if(!Clerk.session)location.replace(Clerk.buildSignInUrl())" in response.body
+    assert "worker-src blob:" in response.headers["Content-Security-Policy"]
 
 
 def test_admin_page_escapes_account_data_and_provides_operator_actions():
@@ -174,7 +187,7 @@ def test_admin_page_escapes_account_data_and_provides_operator_actions():
     assert "user_&lt;admin&gt;" in response.body
     assert "Workspace &amp; Co" in response.body
     assert "&lt;failed&gt;" in response.body
-    assert elements.matching("form", method="post", action="/api/admin/action")
+    assert elements.matching("form", method="post", action="/admin/connections")
 
 
 def test_dashboard_escapes_remote_content_and_does_not_label_errors_as_healthy():
