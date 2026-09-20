@@ -220,6 +220,20 @@ if ! command -v uv >/dev/null 2>&1; then
   step "Install uv using the official instructions, then run this wizard again."
   exit 1
 fi
+
+if ! command -v npx >/dev/null 2>&1; then
+  if command -v mise >/dev/null 2>&1; then
+    say "Installing the project-pinned Node.js runtime with mise."
+    mise install node@24.21.0
+    PATH="$(mise where node@24.21.0)/bin:$PATH"
+    export PATH
+  else
+    warn "Node.js is required by Cloudflare Wrangler, and mise is not installed."
+    open_url "https://mise.jdx.dev/getting-started.html"
+    step "Install mise, then run this wizard again; the pinned Node.js version installs automatically."
+    exit 1
+  fi
+fi
 uv sync --group dev
 
 for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_STATE_NAMESPACE; do

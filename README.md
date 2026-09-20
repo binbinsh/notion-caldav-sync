@@ -10,7 +10,7 @@ Prefer living inside Apple Calendar but still tracking tasks in Notion? This Clo
 The design goal is **Reliability first**. every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
 
 ## Requirements
-- Python 3.12+, [uv](https://github.com/astral-sh/uv), and Cloudflare’s `pywrangler` CLI.
+- Python 3.12+, [uv](https://github.com/astral-sh/uv), and [mise](https://mise.jdx.dev/) (the setup wizard installs the pinned Node.js runtime used by Cloudflare Wrangler).
 - Cloudflare account with Workers + KV access.
 - Notion internal integration token shared with your task databases.
 - Apple ID plus app-specific password for CalDAV.
