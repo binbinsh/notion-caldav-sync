@@ -13,6 +13,7 @@ from src.app.engine import (
     _description_for_task,
     _hash_ics_payload,
     _status_for_task,
+    _uid_notion_id,
     handle_webhook_tasks,
     _collect_tasks,
     run_full_sync,
@@ -49,6 +50,17 @@ def test_description_for_task_includes_datasource_and_optional_fields():
     assert "Source: Inbox" in text
     assert "Category: Work" in text
     assert text.endswith("Do something")
+
+
+def test_uid_notion_id_understands_managed_restored_prefix():
+    assert (
+        _uid_notion_id(
+            "page-1",
+            "https://calendar/notion-caldav-sync-restored-page-1.ics",
+            "notion-caldav-sync-",
+        )
+        == "restored-page-1"
+    )
 
 
 def test_status_for_task_marks_overdue_when_due_passed():
@@ -563,6 +575,41 @@ async def test_handle_webhook_tasks_accepts_data_source_parent(monkeypatch: pyte
     await handle_webhook_tasks(bindings, [page_id])
 
     assert writes == ["DS Title"]
+
+
+@pytest.mark.asyncio
+async def test_handle_webhook_tasks_deletes_unselected_data_source(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    deleted: list[str] = []
+
+    async def _fake_calendar_ensure(_):
+        return {"calendar_href": "https://calendar", "calendar_color": "#fff"}
+
+    async def _fake_get_page(*_args, **_kwargs):
+        return {
+            "id": "abcd1234-abcd-1234-abcd-1234abcd1234",
+            "parent": {"data_source_id": "not-selected"},
+            "in_trash": False,
+        }
+
+    async def _fake_list_events(*_args, **_kwargs):
+        return []
+
+    async def _fake_delete(_bindings, _calendar_href, notion_id, **_kwargs):
+        deleted.append(notion_id)
+
+    monkeypatch.setattr("src.app.engine.calendar_ensure", _fake_calendar_ensure)
+    monkeypatch.setattr("src.app.engine.calendar_list_events", _fake_list_events)
+    monkeypatch.setattr("src.app.engine.get_page", _fake_get_page)
+    monkeypatch.setattr("src.app.engine._delete_task_event", _fake_delete)
+
+    bindings = _DummyBindings()
+    bindings.notion_source_ids = ("selected",)
+    page_id = "abcd1234-abcd-1234-abcd-1234abcd1234"
+    await handle_webhook_tasks(bindings, [page_id])
+
+    assert deleted == [page_id]
 
 
 @pytest.mark.asyncio

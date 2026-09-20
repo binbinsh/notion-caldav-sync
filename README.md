@@ -1,25 +1,27 @@
-# Notion → iCloud Calendar Sync
+# Notion CalDAV Sync
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?logo=python)](pyproject.toml)
 [![Cloudflare Workers](https://img.shields.io/badge/platform-Cloudflare%20Workers-F38020?logo=cloudflare)](https://developers.cloudflare.com/workers/)
 [![Notion API](https://img.shields.io/badge/Notion%20API-2026--03--11-black?logo=notion&logoColor=white)](https://developers.notion.com/reference/intro)
 [![iCloud Calendar](https://img.shields.io/badge/iCloud%20Calendar-CalDAV-0C7BFA?logo=icloud&logoColor=white)](src/app/calendar.py)
 
-Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker surfaces every dated Notion task inside a dedicated iCloud calendar. It supports both a private, single-user deployment and an optional hosted multi-user mode. Webhooks keep updates nearly instant, and a cron-powered reconciliation regularly heals drift.
+Prefer living inside Apple Calendar but still tracking tasks in Notion? This Cloudflare Python Worker surfaces dated Notion tasks in Apple Calendar. It supports both a private, single-user deployment and an optional hosted multi-user mode. Webhooks keep updates nearly instant, and a cron-powered reconciliation regularly heals drift.
 
 The design goal is **Reliability first**. every change pushes instantly via webhooks and the cron rewrite continually reconciles Notion → Calendar to heal drift automatically.
 
 ## Requirements
+
 - Python 3.12+, [uv](https://github.com/astral-sh/uv), and [mise](https://mise.jdx.dev/) (the setup wizard installs the pinned Node.js runtime used by Cloudflare Wrangler).
 - Cloudflare account with Workers + KV access.
-- Notion internal integration token shared with your task databases.
-- Apple ID plus app-specific password for CalDAV.
+- Personal mode: a Notion token shared with your task data sources, plus an Apple Account app-specific password.
+- Hosted mode: one Notion Public Connection, Clerk, D1, Queues, and a credential-vault key.
 
 ## Configuration
 Create a `.env` (used locally and when running `pywrangler secret put`):
 
 | Key | Purpose |
 | --- | --- |
+| `DEPLOYMENT_MODE` | `personal` for one account or `hosted` for the shared managed service |
 | `CLOUDFLARE_ACCOUNT_ID` | Optional account selector when you belong to multiple Cloudflare accounts |
 | `CLOUDFLARE_API_TOKEN` | Optional token for headless deployment; interactive deploys can use Wrangler OAuth |
 | `CLOUDFLARE_STATE_NAMESPACE` | KV namespace ID for the `STATE` binding |
@@ -32,19 +34,34 @@ Generate a strong `ADMIN_TOKEN` locally (e.g. `openssl rand -hex 32`) and keep i
 
 ## Deployment
 
-Run the guided one-command setup. It signs in to Cloudflare with OAuth, creates or reuses KV, stores Worker secrets, configures cron, and deploys the Worker:
+Run the guided one-command setup. It asks whether to deploy personal or hosted mode, signs in to Cloudflare with OAuth, creates or reuses the required resources, stores Worker secrets, configures cron, and deploys the Worker:
 
 ```bash
 ./scripts/setup-cloudflare.sh
 ```
 
-The wizard remembers credentials and the custom domain in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. You only need to approve Cloudflare OAuth and provide the Notion token and Apple app-specific password on the first run. The selected hostname must be unused and belong to a zone in the same Cloudflare account; Cloudflare creates its DNS record and TLS certificate during deployment.
+The wizard remembers credentials and the custom domain in a local, git-ignored `.env` with owner-only permissions, so later deployments use the same command. Secret input stays hidden. The selected hostname must be unused and belong to a zone in the same Cloudflare account; Cloudflare creates its DNS record and TLS certificate during deployment.
 
-Notion webhook registration is the one remaining dashboard step because Notion does not expose webhook creation through its public API. The wizard opens the correct page and prints the exact production webhook URL. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
+Notion connection creation and webhook registration are the remaining dashboard steps because Notion does not expose them through its public API. The English-only wizard opens the correct pages, prints the exact callback and webhook URLs, waits for verification, and retrieves the hosted verification token. For CI or fully headless deployment, set `CLOUDFLARE_API_TOKEN` and the required application secrets, then run `./deploy.sh` directly.
+
+If the Worker is already deployed and only the hosted webhook remains, run:
+
+```bash
+./scripts/configure-notion-webhook.sh
+```
 
 ## Hosted multi-user mode
 
 Hosted mode lets people connect their own Notion workspace through OAuth and their own Apple Calendar without deploying a Worker. It reuses the public sync engine in this repository; it does not contain Planner.li product code.
+
+After signing in, each user:
+
+1. authorizes Notion through OAuth;
+2. enters an Apple app-specific password, which is validated through live CalDAV discovery before it is saved;
+3. chooses one or more compatible Notion data sources and either an existing Apple calendar or a dedicated `Notion` calendar;
+4. receives an immediate first sync, then automatic reconciliation every 30 minutes.
+
+When an existing calendar is selected, only events whose resource names start with `notion-caldav-sync-` are managed. Other events in that calendar are never treated as sync-owned.
 
 The hosted runtime uses:
 
@@ -67,7 +84,9 @@ Before the first hosted deployment, configure a Notion Public Connection with th
 https://calendar.example.com/notion/callback
 ```
 
-The deployment requires `PUBLIC_BASE_URL`, `NOTION_CLIENT_ID`, Clerk's publishable key/JWKS/sign-in settings, a D1 database, and the queue names shown in `.env-example`. Store `NOTION_CLIENT_SECRET`, `CREDENTIAL_VAULT_KEY`, and `HOSTED_WEBHOOK_SETUP_TOKEN` as encrypted Worker secrets. If the Notion client secret already exists remotely, deployment deliberately reuses it instead of requiring a plaintext local copy.
+The deployment requires `PUBLIC_BASE_URL`, `NOTION_CLIENT_ID`, Clerk's publishable key/JWKS/sign-in settings, `HOSTED_ADMIN_USER_IDS`, a D1 database, and the queue names shown in `.env-example`. Store `NOTION_CLIENT_SECRET`, `CREDENTIAL_VAULT_KEY`, and `HOSTED_WEBHOOK_SETUP_TOKEN` as encrypted Worker secrets. If the Notion client secret already exists remotely, deployment deliberately reuses it instead of requiring a plaintext local copy.
+
+Clerk user IDs listed in `HOSTED_ADMIN_USER_IDS` can open `/admin` to inspect account state, last completion time, and the last error, or pause, resume, and retry a connection. Clerk remains the identity system; the application stores operational sync state in D1 because Clerk does not own provider connection or run-history data.
 
 For a shared Clerk production instance, enable its allowed-subdomain list and include the hosted calendar hostname. The hosted Worker accepts only JWTs whose authorized party appears in `CLERK_AUTHORIZED_PARTIES`.
 
@@ -77,7 +96,7 @@ The optional hosted webhook endpoint is:
 https://calendar.example.com/webhook/notion/hosted?setup=<one-time-setup-token>
 ```
 
-The setup token is accepted only for the initial Notion verification handshake. The returned verification secret is encrypted in D1 and cannot be replaced by later unsigned requests. See [the hosted architecture](docs/hosted-service-architecture.md) for the trust boundaries and data model.
+The setup token is accepted only for a Notion verification handshake. The returned verification secret is encrypted in D1 and can be rotated only by repeating the handshake with the private setup token. See [the hosted architecture](docs/hosted-service-architecture.md) for the trust boundaries and data model.
 
 ## Status emoji style
 The worker supports two status emoji styles for event titles:

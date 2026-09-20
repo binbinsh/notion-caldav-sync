@@ -91,6 +91,11 @@ ensure_default HOSTED_SYNC_INTERVAL_MINUTES "30"
 ensure_default HOSTED_CRON_BATCH_LIMIT "10"
 ensure_default HOSTED_BETA_USER_LIMIT "100"
 
+if [ -z "${HOSTED_ADMIN_USER_IDS:-}" ]; then
+  echo "HOSTED_ADMIN_USER_IDS is required. Find your Clerk user ID in Clerk Dashboard → Users." >&2
+  exit 1
+fi
+
 if [ -z "${CREDENTIAL_VAULT_KEY:-}" ]; then
   CREDENTIAL_VAULT_KEY=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
   upsert_env CREDENTIAL_VAULT_KEY "$CREDENTIAL_VAULT_KEY"
@@ -103,6 +108,7 @@ if [ -z "${NOTION_CLIENT_SECRET:-}" ]; then
   echo "NOTION_CLIENT_SECRET is not local; deploy.sh will reuse the existing encrypted Worker secret."
 fi
 
+export DEPLOYMENT_MODE=hosted
 "$ROOT_DIR/deploy.sh"
 
 echo "Hosted service deployed at ${PUBLIC_BASE_URL}"

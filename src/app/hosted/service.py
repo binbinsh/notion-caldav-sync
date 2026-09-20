@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import asyncio
 import hashlib
 import hmac
 import json
@@ -12,14 +13,22 @@ from workers import Response
 
 try:
     from ..config import Bindings
-    from ..engine import run_full_sync
+    from ..constants import CALDAV_ORIGIN, is_task_properties
+    from ..discovery import discover_calendar_home, discover_principal, list_calendars
+    from ..engine import ensure_calendar, run_full_sync
+    from ..notion import get_database_properties, list_databases
+    from ..stores import update_settings
 except ImportError:  # Cloudflare uploads worker.py and app modules at the bundle root.
     from config import Bindings  # type: ignore
-    from engine import run_full_sync  # type: ignore
+    from constants import CALDAV_ORIGIN, is_task_properties  # type: ignore
+    from discovery import discover_calendar_home, discover_principal, list_calendars  # type: ignore
+    from engine import ensure_calendar, run_full_sync  # type: ignore
+    from notion import get_database_properties, list_databases  # type: ignore
+    from stores import update_settings  # type: ignore
 from .identity import AuthenticationError, Identity, authenticate
 from .notion_oauth import NotionOAuthClient, authorization_url, token_expiry
 from .repository import D1StateNamespace, HostedRepository
-from .ui import dashboard_page, json_response, signed_out_page
+from .ui import admin_page, dashboard_page, json_response, signed_out_page
 from .util import iso_now, random_token, token_hash, utc_now
 from .vault import CredentialVault
 
@@ -32,6 +41,7 @@ class HostedConfig:
     clerk_jwks_url: str
     clerk_sign_in_url: str
     clerk_authorized_parties: tuple[str, ...]
+    admin_user_ids: tuple[str, ...]
     sync_interval_minutes: int
     cron_batch_limit: int
     beta_user_limit: int
@@ -44,6 +54,11 @@ class HostedConfig:
         parties = tuple(
             item.strip().rstrip("/")
             for item in str(getattr(env, "CLERK_AUTHORIZED_PARTIES", "") or "").split(",")
+            if item.strip()
+        )
+        admin_user_ids = tuple(
+            item.strip()
+            for item in str(getattr(env, "HOSTED_ADMIN_USER_IDS", "") or "").split(",")
             if item.strip()
         )
         return cls(
@@ -59,6 +74,7 @@ class HostedConfig:
                 or "https://accounts.planner.li/sign-in"
             ).rstrip("/"),
             clerk_authorized_parties=parties,
+            admin_user_ids=admin_user_ids,
             sync_interval_minutes=max(15, int(getattr(env, "HOSTED_SYNC_INTERVAL_MINUTES", 30))),
             cron_batch_limit=max(1, min(20, int(getattr(env, "HOSTED_CRON_BATCH_LIMIT", 10)))),
             beta_user_limit=max(1, int(getattr(env, "HOSTED_BETA_USER_LIMIT", 100))),
@@ -96,6 +112,12 @@ class HostedService:
         identity = await self.identity(request)
         return await self.repository.user_for_clerk(identity.subject)
 
+    async def require_admin(self, request: Any) -> Identity:
+        identity = await self.identity(request)
+        if identity.subject not in self.config.admin_user_ids:
+            raise AuthenticationError("Administrator access is required")
+        return identity
+
     def _same_origin(self, request: Any) -> bool:
         origin = str(request.headers.get("Origin") or "").rstrip("/")
         return bool(origin and origin == self.config.public_base_url)
@@ -123,6 +145,48 @@ class HostedService:
         except AuthenticationError as exc:
             return json_response({"error": str(exc)}, status=401)
         return json_response(await self.repository.account_status(user["id"]))
+
+    async def _discover_notion_sources(
+        self, token: str, *, max_parallel: int = 4
+    ) -> list[dict[str, str]]:
+        databases = await list_databases(token, "2026-03-11")
+        slots = asyncio.Semaphore(max_parallel)
+
+        async def inspect(database: dict[str, Any]) -> dict[str, str] | None:
+            source_id = str(database.get("id") or "")
+            if not source_id:
+                return None
+            try:
+                async with slots:
+                    properties = await get_database_properties(token, "2026-03-11", source_id)
+            except RuntimeError:
+                return None
+            if not is_task_properties(properties):
+                return None
+            return {"id": source_id, "name": str(database.get("title") or "Untitled")}
+
+        inspected = await asyncio.gather(*(inspect(database) for database in databases))
+        return sorted(
+            (item for item in inspected if item is not None),
+            key=lambda item: item["name"].casefold(),
+        )
+
+    async def _discover_apple_calendars(
+        self, apple_id: str, app_password: str
+    ) -> list[dict[str, str]]:
+        principal = await discover_principal(CALDAV_ORIGIN, apple_id, app_password)
+        home = await discover_calendar_home(CALDAV_ORIGIN, principal, apple_id, app_password)
+        calendars = await list_calendars(CALDAV_ORIGIN, home, apple_id, app_password)
+        options = [
+            {
+                "id": str(calendar.get("id") or ""),
+                "name": str(calendar.get("displayName") or "Untitled"),
+                "href": str(calendar.get("href") or ""),
+            }
+            for calendar in calendars
+            if calendar.get("href")
+        ]
+        return sorted(options, key=lambda item: item["name"].casefold())
 
     async def begin_notion(self, request: Any) -> Response:
         user = await self.user(request)
@@ -185,10 +249,13 @@ class HostedService:
             ),
             token_expires_at=token_expiry(payload),
         )
-        connection = await self.repository.ensure_sync_connection(user_id)
-        if connection:
-            await self.enqueue(connection["id"], "notion-connected", f"notion:{user_id}:{iso_now()}")
-        return self._redirect("/?message=" + quote("Notion connected successfully."))
+        sources = await self._discover_notion_sources(access_token)
+        await self.repository.set_provider_options(user_id, "notion", sources)
+        await self.repository.ensure_sync_connection(user_id)
+        await self.repository.reset_sync_setup(user_id)
+        return self._redirect(
+            "/?message=" + quote("Notion is connected. Choose what to sync below.")
+        )
 
     async def connect_apple(self, request: Any) -> Response:
         if not self._same_origin(request):
@@ -199,6 +266,15 @@ class HostedService:
         app_password = str(form.get("app_password") or "").strip().replace(" ", "")
         if "@" not in apple_id or len(app_password) < 12:
             return json_response({"error": "Invalid Apple account or app-specific password"}, status=400)
+        try:
+            calendars = await self._discover_apple_calendars(apple_id, app_password)
+        except Exception:
+            return json_response(
+                {"error": "Apple rejected these credentials. Check the account and app-specific password."},
+                status=400,
+            )
+        if not calendars:
+            return json_response({"error": "No Apple calendars are available for this account"}, status=400)
         await self.repository.upsert_apple_connection(
             user_id=user["id"],
             apple_id_ciphertext=await self.vault.seal(
@@ -211,10 +287,130 @@ class HostedService:
                 plaintext=app_password,
             ),
         )
+        await self.repository.set_provider_options(user["id"], "apple", calendars)
+        await self.repository.ensure_sync_connection(user["id"])
+        await self.repository.reset_sync_setup(user["id"])
+        return self._redirect(
+            "/?message=" + quote("Apple Calendar is connected. Choose what to sync below."),
+            303,
+        )
+
+    async def refresh_options(self, request: Any) -> Response:
+        if not self._same_origin(request):
+            return json_response({"error": "Invalid request origin"}, status=403)
+        user = await self.user(request)
+        installation = await self.repository.first(
+            "SELECT * FROM notion_installations WHERE user_id=? AND status='active'", user["id"]
+        )
+        apple = await self.repository.first(
+            "SELECT * FROM apple_connections WHERE user_id=? AND status='active'", user["id"]
+        )
+        if not installation or not apple:
+            return json_response({"error": "Connect Notion and Apple first"}, status=409)
+        notion_context = dict(installation)
+        notion_context["user_id"] = user["id"]
+        notion_context["notion_installation_id"] = installation["id"]
+        notion_token = await self._notion_access_token(notion_context)
+        apple_id = await self.vault.open(
+            user_id=user["id"],
+            provider="apple",
+            field="apple_id",
+            ciphertext=apple["apple_id_ciphertext"],
+        )
+        app_password = await self.vault.open(
+            user_id=user["id"],
+            provider="apple",
+            field="app_password",
+            ciphertext=apple["app_password_ciphertext"],
+        )
+        sources, calendars = await asyncio.gather(
+            self._discover_notion_sources(notion_token),
+            self._discover_apple_calendars(apple_id, app_password),
+        )
+        await self.repository.set_provider_options(user["id"], "notion", sources)
+        await self.repository.set_provider_options(user["id"], "apple", calendars)
+        return self._redirect("/?message=" + quote("Available sources and calendars refreshed."), 303)
+
+    async def configure_sync(self, request: Any) -> Response:
+        if not self._same_origin(request):
+            return json_response({"error": "Invalid request origin"}, status=403)
+        user = await self.user(request)
+        form = await request.formData()
+        try:
+            raw_source_ids = form.getAll("notion_source_id")
+        except Exception:
+            raw_source_ids = []
+        source_ids = list(dict.fromkeys(str(value) for value in raw_source_ids if str(value)))
+        calendar_value = str(form.get("apple_calendar") or "")
+        available_sources = await self.repository.provider_options(user["id"], "notion")
+        available_calendars = await self.repository.provider_options(user["id"], "apple")
+        allowed_sources = {str(item.get("id") or "") for item in available_sources}
+        if not source_ids or any(source_id not in allowed_sources for source_id in source_ids):
+            return json_response({"error": "Choose at least one available Notion data source"}, status=400)
+
         connection = await self.repository.ensure_sync_connection(user["id"])
-        if connection:
-            await self.enqueue(connection["id"], "apple-connected", f"apple:{user['id']}:{iso_now()}")
-        return self._redirect("/?message=" + quote("Apple connection saved. The first sync is queued."), 303)
+        if not connection:
+            return json_response({"error": "Connect Notion and Apple first"}, status=409)
+        state = D1StateNamespace(self.repository, connection["id"])
+        calendar_href = ""
+        calendar_name = ""
+        if calendar_value == "__create__":
+            apple = await self.repository.first(
+                "SELECT * FROM apple_connections WHERE user_id=? AND status='active'", user["id"]
+            )
+            if not apple:
+                return json_response({"error": "Apple connection is unavailable"}, status=409)
+            apple_id = await self.vault.open(
+                user_id=user["id"], provider="apple", field="apple_id", ciphertext=apple["apple_id_ciphertext"]
+            )
+            app_password = await self.vault.open(
+                user_id=user["id"],
+                provider="apple",
+                field="app_password",
+                ciphertext=apple["app_password_ciphertext"],
+            )
+            await update_settings(state, calendar_href=None, calendar_name="Notion")
+            settings = await ensure_calendar(
+                Bindings(
+                    state=state,
+                    apple_id=apple_id,
+                    apple_app_password=app_password,
+                    notion_token="",
+                    status_emoji_style=self.config.status_emoji_style,
+                    managed_event_prefix="notion-caldav-sync-",
+                )
+            )
+            calendar_href = str(settings.get("calendar_href") or "")
+            calendar_name = str(settings.get("calendar_name") or "Notion")
+        else:
+            chosen = next(
+                (item for item in available_calendars if str(item.get("href") or "") == calendar_value),
+                None,
+            )
+            if not chosen:
+                return json_response({"error": "Choose an available Apple calendar"}, status=400)
+            calendar_href = str(chosen["href"])
+            calendar_name = str(chosen.get("name") or "Apple Calendar")
+            await update_settings(
+                state,
+                calendar_href=calendar_href,
+                calendar_name=calendar_name,
+                event_hashes={},
+                last_full_sync=None,
+            )
+
+        configured = await self.repository.configure_sync(
+            user_id=user["id"],
+            notion_source_ids=source_ids,
+            apple_calendar_href=calendar_href,
+            apple_calendar_name=calendar_name,
+        )
+        await self.enqueue(
+            configured["id"],
+            "configuration-saved",
+            f"configuration:{configured['id']}:{iso_now()}",
+        )
+        return self._redirect("/?message=" + quote("Sync settings saved. The first sync is queued."), 303)
 
     async def manual_sync(self, request: Any) -> Response:
         if not self._same_origin(request):
@@ -228,6 +424,42 @@ class HostedService:
         bucket = int(datetime.now(timezone.utc).timestamp() // 60)
         await self.enqueue(connection["id"], "manual", f"manual:{connection['id']}:{bucket}")
         return self._redirect("/?message=" + quote("Sync queued."), 303)
+
+    async def admin(self, request: Any) -> Response:
+        await self.require_admin(request)
+        query = parse_qs(urlparse(str(request.url)).query)
+        message = str((query.get("message") or [""])[0])[:180]
+        return admin_page(accounts=await self.repository.admin_accounts(), message=message)
+
+    async def admin_action(self, request: Any) -> Response:
+        if not self._same_origin(request):
+            return json_response({"error": "Invalid request origin"}, status=403)
+        await self.require_admin(request)
+        form = await request.formData()
+        connection_id = str(form.get("connection_id") or "")
+        action = str(form.get("action") or "")
+        connection = await self.repository.first(
+            "SELECT * FROM sync_connections WHERE id=?", connection_id
+        )
+        if not connection:
+            return json_response({"error": "Connection not found"}, status=404)
+        if action == "pause":
+            await self.repository.set_connection_status(connection_id, "paused")
+            message = "Connection paused."
+        elif action == "resume":
+            await self.repository.set_connection_status(connection_id, "active")
+            message = "Connection resumed."
+        elif action == "retry":
+            await self.repository.set_connection_status(connection_id, "active")
+            await self.enqueue(
+                connection_id,
+                "admin-retry",
+                f"admin-retry:{connection_id}:{iso_now()}",
+            )
+            message = "Retry queued."
+        else:
+            return json_response({"error": "Unsupported administrator action"}, status=400)
+        return self._redirect("/admin?message=" + quote(message), 303)
 
     async def enqueue(self, connection_id: str, reason: str, idempotency_key: str) -> dict[str, Any]:
         job = await self.repository.create_job(
@@ -311,8 +543,21 @@ class HostedService:
             return True
         try:
             user_id = context["user_id"]
+            try:
+                notion_source_ids = json.loads(str(context.get("notion_source_ids") or "[]"))
+            except (TypeError, ValueError):
+                notion_source_ids = []
+            calendar_href = str(context.get("apple_calendar_href") or "")
+            if not notion_source_ids or not calendar_href:
+                raise RuntimeError("Sync setup is incomplete")
+            state = D1StateNamespace(self.repository, context["connection_id"])
+            await update_settings(
+                state,
+                calendar_href=calendar_href,
+                calendar_name=str(context.get("apple_calendar_name") or "Apple Calendar"),
+            )
             bindings = Bindings(
-                state=D1StateNamespace(self.repository, context["connection_id"]),
+                state=state,
                 apple_id=await self.vault.open(
                     user_id=user_id,
                     provider="apple",
@@ -327,6 +572,8 @@ class HostedService:
                 ),
                 notion_token=await self._notion_access_token(context),
                 status_emoji_style=self.config.status_emoji_style,
+                notion_source_ids=tuple(str(item) for item in notion_source_ids if item),
+                managed_event_prefix="notion-caldav-sync-",
             )
             await run_full_sync(bindings)
             await self.repository.finish_job(
@@ -361,7 +608,7 @@ class HostedService:
                 field="webhook_secret",
                 plaintext=str(payload["verification_token"]),
             )
-            await self.repository.set_config_once("notion_webhook_secret", sealed)
+            await self.repository.set_config("notion_webhook_secret", sealed)
             return json_response({"verification_token": payload["verification_token"]})
         webhook_secret = self.config.webhook_secret
         if not webhook_secret:
@@ -392,3 +639,21 @@ class HostedService:
         for connection in connections:
             await self.enqueue(connection["id"], "webhook", f"webhook:{event_id}:{connection['id']}")
         return json_response({"ok": True, "queued": len(connections)})
+
+    async def webhook_setup_status(self, request: Any) -> Response:
+        query = parse_qs(urlparse(str(request.url)).query)
+        supplied_setup = str((query.get("setup") or [""])[0])
+        if not self.config.webhook_setup_token or not hmac.compare_digest(
+            supplied_setup, self.config.webhook_setup_token
+        ):
+            return Response("Unauthorized", status=401)
+        sealed = await self.repository.get_config("notion_webhook_secret")
+        if not sealed:
+            return json_response({"ready": False}, status=404)
+        token = await self.vault.open(
+            user_id="system",
+            provider="notion",
+            field="webhook_secret",
+            ciphertext=sealed,
+        )
+        return json_response({"ready": True, "verification_token": token})

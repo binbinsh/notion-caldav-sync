@@ -4,11 +4,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 CONFIG_PATH="$ROOT_DIR/wrangler.toml"
-TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
+HOSTED_TEMPLATE_PATH="$ROOT_DIR/wrangler.toml-example"
+PERSONAL_TEMPLATE_PATH="$ROOT_DIR/wrangler.personal.toml-example"
 HELPERS_PATH="$ROOT_DIR/scripts/deploy_helpers.py"
 STATE_NAMESPACE_NAME="notion-caldav-sync-STATE"  # Change if you prefer a different namespace title.
 
 cd "$ROOT_DIR"
+
+if [ -f "$ROOT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
 
 if ! command -v mise >/dev/null 2>&1; then
   echo "mise is required so the pinned Node.js runtime is used." >&2
@@ -92,7 +100,7 @@ require_hosted_config() {
     CLOUDFLARE_D1_DATABASE_ID CLOUDFLARE_SYNC_QUEUE CLOUDFLARE_SYNC_DLQ
     PUBLIC_BASE_URL NOTION_CLIENT_ID CLERK_PUBLISHABLE_KEY CLERK_JWKS_URL
     CLERK_SIGN_IN_URL CLERK_AUTHORIZED_PARTIES HOSTED_SYNC_INTERVAL_MINUTES
-    HOSTED_CRON_BATCH_LIMIT HOSTED_BETA_USER_LIMIT
+    HOSTED_CRON_BATCH_LIMIT HOSTED_BETA_USER_LIMIT HOSTED_ADMIN_USER_IDS
   )
   local key
   for key in "${required[@]}"; do
@@ -208,7 +216,33 @@ ensure_namespace() {
 ensure_namespace
 choose_status_emoji_style
 choose_worker_custom_domain
-require_hosted_config
+DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-}
+if [ -z "$DEPLOYMENT_MODE" ]; then
+  if [ -n "${CLOUDFLARE_D1_DATABASE_ID:-}" ]; then
+    DEPLOYMENT_MODE=hosted
+  else
+    DEPLOYMENT_MODE=personal
+  fi
+fi
+case "$DEPLOYMENT_MODE" in
+  personal)
+    TEMPLATE_PATH="$PERSONAL_TEMPLATE_PATH"
+    for key in NOTION_TOKEN APPLE_ID APPLE_APP_PASSWORD ADMIN_TOKEN; do
+      if [ -z "${!key:-}" ]; then
+        echo "$key is required for personal deployment." >&2
+        exit 1
+      fi
+    done
+    ;;
+  hosted)
+    TEMPLATE_PATH="$HOSTED_TEMPLATE_PATH"
+    require_hosted_config
+    ;;
+  *)
+    echo "DEPLOYMENT_MODE must be personal or hosted." >&2
+    exit 1
+    ;;
+esac
 if [ ! -f "$TEMPLATE_PATH" ]; then
   echo "Missing wrangler template at $TEMPLATE_PATH" >&2
   exit 1
@@ -217,7 +251,7 @@ fi
 if command -v envsubst >/dev/null 2>&1; then
   envsubst < "$TEMPLATE_PATH" > "$CONFIG_PATH"
 else
-  echo "envsubst is required for hosted deployment." >&2
+  echo "envsubst is required for deployment." >&2
   exit 1
 fi
 echo "Generated wrangler.toml with STATE namespace id: $CLOUDFLARE_STATE_NAMESPACE"
@@ -236,21 +270,22 @@ put_secret_if_present() {
   fi
 }
 
-# Personal-mode secrets remain optional for a hosted-only deployment. Existing
-# remote values are preserved when they are intentionally absent from .env.
-put_secret_if_present APPLE_ID
-put_secret_if_present APPLE_APP_PASSWORD
-put_secret_if_present NOTION_TOKEN
-put_secret_if_present ADMIN_TOKEN
-put_secret_if_present NOTION_CLIENT_SECRET
-printf "%s" "${CREDENTIAL_VAULT_KEY:?CREDENTIAL_VAULT_KEY must be set}" | uv run -- pywrangler secret put CREDENTIAL_VAULT_KEY
-printf "%s" "${HOSTED_WEBHOOK_SETUP_TOKEN:?HOSTED_WEBHOOK_SETUP_TOKEN must be set}" | uv run -- pywrangler secret put HOSTED_WEBHOOK_SETUP_TOKEN
-
-npx --yes wrangler d1 migrations apply notion-caldav-sync --remote --config "$CONFIG_PATH"
+if [ "$DEPLOYMENT_MODE" = "personal" ]; then
+  put_secret_if_present APPLE_ID
+  put_secret_if_present APPLE_APP_PASSWORD
+  put_secret_if_present NOTION_TOKEN
+  put_secret_if_present ADMIN_TOKEN
+else
+  put_secret_if_present NOTION_CLIENT_SECRET
+  printf "%s" "${CREDENTIAL_VAULT_KEY:?CREDENTIAL_VAULT_KEY must be set}" | uv run -- pywrangler secret put CREDENTIAL_VAULT_KEY
+  printf "%s" "${HOSTED_WEBHOOK_SETUP_TOKEN:?HOSTED_WEBHOOK_SETUP_TOKEN must be set}" | uv run -- pywrangler secret put HOSTED_WEBHOOK_SETUP_TOKEN
+  npx --yes wrangler d1 migrations apply notion-caldav-sync --remote --config "$CONFIG_PATH"
+fi
 
 # Deploy the Worker (creates notion-caldav-sync if missing)
 uv run -- pywrangler deploy --name notion-caldav-sync
 
 echo "Deployment complete."
+echo "Deployment mode: $DEPLOYMENT_MODE"
 echo "Worker URL: https://$WORKER_CUSTOM_DOMAIN"
 echo "Webhook URL: https://$WORKER_CUSTOM_DOMAIN/webhook/notion"

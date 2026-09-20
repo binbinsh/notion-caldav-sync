@@ -184,7 +184,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=4
+TOTAL_STAGES=5
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -209,10 +209,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-banner "Notion → Apple Calendar on Cloudflare"
+banner "Notion CalDAV Sync on Cloudflare"
 
-# ── Example stage: replace with your real steps ───────────────────────────
-stage "Prepare tools and sign in to Cloudflare"
+stage "Choose a deployment and prepare Cloudflare"
 say "The wizard will install project dependencies and use Cloudflare OAuth."
 if ! command -v uv >/dev/null 2>&1; then
   warn "uv is not installed yet."
@@ -236,6 +235,26 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 uv sync --group dev
 
+ask DEPLOYMENT_MODE "Deployment mode (personal or hosted) [personal]:"
+DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-personal}
+case "$DEPLOYMENT_MODE" in
+  personal|hosted) ;;
+  *) warn "Deployment mode must be personal or hosted."; exit 1 ;;
+esac
+write_env DEPLOYMENT_MODE "$DEPLOYMENT_MODE"
+export DEPLOYMENT_MODE
+
+ask WORKER_CUSTOM_DOMAIN "Custom domain in your Cloudflare account (for example calendar.example.com):"
+WORKER_CUSTOM_DOMAIN=$(printf "%s" "$WORKER_CUSTOM_DOMAIN" | tr '[:upper:]' '[:lower:]' | xargs)
+require_value WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
+if [[ ! "$WORKER_CUSTOM_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+  warn "Enter a hostname without https:// or a path."
+  exit 1
+fi
+write_env WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
+export WORKER_CUSTOM_DOMAIN
+WORKER_URL="https://$WORKER_CUSTOM_DOMAIN"
+
 for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_STATE_NAMESPACE; do
   value=$(_existing "$key" || true)
   if [[ -n "$value" ]]; then
@@ -253,53 +272,77 @@ else
   say "Cloudflare authentication succeeded."
 fi
 
-stage "Connect Notion"
-say "Create or open an internal integration, grant it read access to the pages you want to sync, and copy its token."
-open_url "https://www.notion.so/my-integrations"
-ask_secret NOTION_TOKEN "Paste the Notion integration token:"
-require_value NOTION_TOKEN "$NOTION_TOKEN"
-write_env NOTION_TOKEN "$NOTION_TOKEN"
-export NOTION_TOKEN
-
-stage "Connect Apple Calendar"
-say "Use an app-specific password. Your normal Apple Account password will not work."
-open_url "https://account.apple.com/"
-step "Open Sign-In and Security → App-Specific Passwords and create one for notion-caldav-sync."
-ask APPLE_ID "Apple Account email:"
-require_value APPLE_ID "$APPLE_ID"
-ask_secret APPLE_APP_PASSWORD "Paste the app-specific password:"
-require_value APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
-write_env APPLE_ID "$APPLE_ID"
-write_env APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
-export APPLE_ID APPLE_APP_PASSWORD
-
-ADMIN_TOKEN=$(_existing ADMIN_TOKEN || true)
-if [[ -z "$ADMIN_TOKEN" ]]; then
-  if ! command -v openssl >/dev/null 2>&1; then
-    warn "openssl is required to generate ADMIN_TOKEN."
-    exit 1
-  fi
-  ADMIN_TOKEN=$(openssl rand -hex 32)
-  write_env ADMIN_TOKEN "$ADMIN_TOKEN"
-  say "Generated a private admin token."
+stage "Configure Notion"
+open_url "https://www.notion.so/profile/integrations"
+if [[ "$DEPLOYMENT_MODE" == "personal" ]]; then
+  say "Create a personal access token or an internal connection for the workspace you own."
+  step "Grant it access to every page or data source you want to sync."
+  step "Use Notion API version 2026-03-11."
+  ask_secret NOTION_TOKEN "Paste the Notion token:"
+  require_value NOTION_TOKEN "$NOTION_TOKEN"
+  write_env NOTION_TOKEN "$NOTION_TOKEN"
+  export NOTION_TOKEN
 else
-  say "Keeping the existing admin token."
+  say "Create a public connection. Notion does not expose connection creation through its API."
+  step "Set the OAuth redirect URI to: ${WORKER_URL%/}/notion/callback"
+  step "Choose Any workspace for a public service, or Selected workspaces only for a private deployment."
+  step "Use Notion API version 2026-03-11 and enable read-content access."
+  ask NOTION_CLIENT_ID "Notion OAuth client ID:"
+  require_value NOTION_CLIENT_ID "$NOTION_CLIENT_ID"
+  ask_secret NOTION_CLIENT_SECRET "Notion OAuth client secret:"
+  require_value NOTION_CLIENT_SECRET "$NOTION_CLIENT_SECRET"
+  write_env NOTION_CLIENT_ID "$NOTION_CLIENT_ID"
+  write_env NOTION_CLIENT_SECRET "$NOTION_CLIENT_SECRET"
+  export NOTION_CLIENT_ID NOTION_CLIENT_SECRET
 fi
-export ADMIN_TOKEN
+
+stage "Configure account access"
+if [[ "$DEPLOYMENT_MODE" == "personal" ]]; then
+  say "Use an app-specific password. Your normal Apple Account password will not work."
+  open_url "https://account.apple.com/"
+  step "Open Sign-In and Security → App-Specific Passwords and create one named notion-caldav-sync."
+  ask APPLE_ID "Apple Account email:"
+  require_value APPLE_ID "$APPLE_ID"
+  ask_secret APPLE_APP_PASSWORD "Paste the app-specific password:"
+  require_value APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
+  write_env APPLE_ID "$APPLE_ID"
+  write_env APPLE_APP_PASSWORD "$APPLE_APP_PASSWORD"
+  export APPLE_ID APPLE_APP_PASSWORD
+
+  ADMIN_TOKEN=$(_existing ADMIN_TOKEN || true)
+  if [[ -z "$ADMIN_TOKEN" ]]; then
+    ADMIN_TOKEN=$(openssl rand -hex 32)
+    write_env ADMIN_TOKEN "$ADMIN_TOKEN"
+    say "Generated a private admin token."
+  else
+    say "Keeping the existing admin token."
+  fi
+  export ADMIN_TOKEN
+else
+  say "The hosted service uses Clerk for user and administrator identity."
+  open_url "https://dashboard.clerk.com/"
+  ask CLERK_PUBLISHABLE_KEY "Clerk publishable key:"
+  require_value CLERK_PUBLISHABLE_KEY "$CLERK_PUBLISHABLE_KEY"
+  ask CLERK_JWKS_URL "Clerk JWKS URL:"
+  require_value CLERK_JWKS_URL "$CLERK_JWKS_URL"
+  ask CLERK_SIGN_IN_URL "Clerk sign-in URL:"
+  require_value CLERK_SIGN_IN_URL "$CLERK_SIGN_IN_URL"
+  ask CLERK_AUTHORIZED_PARTIES "Allowed origins, comma-separated [${WORKER_URL}]:"
+  CLERK_AUTHORIZED_PARTIES=${CLERK_AUTHORIZED_PARTIES:-$WORKER_URL}
+  step "Open Clerk Dashboard → Users → your account and copy its user ID."
+  ask HOSTED_ADMIN_USER_IDS "Administrator Clerk user IDs, comma-separated:"
+  require_value HOSTED_ADMIN_USER_IDS "$HOSTED_ADMIN_USER_IDS"
+  for key in CLERK_PUBLISHABLE_KEY CLERK_JWKS_URL CLERK_SIGN_IN_URL CLERK_AUTHORIZED_PARTIES HOSTED_ADMIN_USER_IDS; do
+    write_env "$key" "${!key}"
+    export "$key"
+  done
+  PUBLIC_BASE_URL="$WORKER_URL"
+  write_env PUBLIC_BASE_URL "$PUBLIC_BASE_URL"
+  export PUBLIC_BASE_URL
+fi
 chmod 600 "$ENV_FILE"
 
-stage "Create and deploy the Worker"
-ask WORKER_CUSTOM_DOMAIN "Custom domain in your Cloudflare account (for example calendar.example.com):"
-WORKER_CUSTOM_DOMAIN=$(printf "%s" "$WORKER_CUSTOM_DOMAIN" | tr '[:upper:]' '[:lower:]' | xargs)
-require_value WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
-if [[ ! "$WORKER_CUSTOM_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
-  warn "Enter a hostname without https:// or a path."
-  exit 1
-fi
-write_env WORKER_CUSTOM_DOMAIN "$WORKER_CUSTOM_DOMAIN"
-export WORKER_CUSTOM_DOMAIN
-WORKER_URL="https://$WORKER_CUSTOM_DOMAIN"
-
+stage "Provision and deploy Cloudflare"
 ask STATUS_EMOJI_STYLE "Status style (emoji or symbol) [emoji]:"
 STATUS_EMOJI_STYLE=${STATUS_EMOJI_STYLE:-emoji}
 case "$STATUS_EMOJI_STYLE" in
@@ -310,25 +353,48 @@ write_env STATUS_EMOJI_STYLE "$STATUS_EMOJI_STYLE"
 chmod 600 "$ENV_FILE"
 export STATUS_EMOJI_STYLE
 
-say "Creating or reusing KV, uploading secrets, configuring cron, and deploying the Worker."
+say "Creating or reusing Cloudflare resources, uploading secrets, applying migrations, and deploying the Worker."
 DEPLOY_LOG=$(mktemp)
-"$ROOT_DIR/deploy.sh" | tee "$DEPLOY_LOG"
+if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+  "$ROOT_DIR/scripts/provision-hosted-cloudflare.sh" | tee "$DEPLOY_LOG"
+else
+  "$ROOT_DIR/deploy.sh" | tee "$DEPLOY_LOG"
+fi
 
-say "One Notion-side step remains because Notion does not expose webhook creation through its public API."
-open_url "https://www.notion.so/my-integrations"
-step "Set the webhook URL to: ${WORKER_URL%/}/webhook/notion"
-step "Choose API version 2026-03-11 and subscribe to Page, Database, and Data source events."
-pause "Press Enter after saving the webhook."
-
-if confirm "Run one full sync now?"; then
-  curl --fail --silent --show-error \
-    --request POST \
-    --header "X-Admin-Token: $ADMIN_TOKEN" \
-    "${WORKER_URL%/}/admin/full-sync" >/dev/null
-  say "Initial full sync completed."
+stage "Finish the Notion webhook"
+say "Notion requires webhook creation and verification in its own dashboard."
+open_url "https://www.notion.so/profile/integrations"
+if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+  HOSTED_WEBHOOK_SETUP_TOKEN=$(_existing HOSTED_WEBHOOK_SETUP_TOKEN || true)
+  require_value HOSTED_WEBHOOK_SETUP_TOKEN "$HOSTED_WEBHOOK_SETUP_TOKEN"
+  WEBHOOK_URL="${WORKER_URL%/}/webhook/notion/hosted?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}"
+  step "Create a webhook subscription with this URL: $WEBHOOK_URL"
+  step "Subscribe to Page, Database, and Data source events."
+  pause "Press Enter after Notion sends the verification request."
+  VERIFY_JSON=$(curl --fail --silent --show-error "${WORKER_URL%/}/api/webhook/setup?setup=${HOSTED_WEBHOOK_SETUP_TOKEN}")
+  VERIFY_TOKEN=$(printf '%s' "$VERIFY_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("verification_token", ""))')
+  require_value verification_token "$VERIFY_TOKEN"
+  say "Paste this verification token into Notion: $VERIFY_TOKEN"
+  pause "Press Enter after Notion reports the subscription as active."
+else
+  step "Create a webhook subscription with this URL: ${WORKER_URL%/}/webhook/notion"
+  step "Subscribe to Page, Database, and Data source events."
+  pause "Press Enter after saving and verifying the webhook."
+  if confirm "Run one full sync now?"; then
+    curl --fail --silent --show-error \
+      --request POST \
+      --header "X-Admin-Token: $ADMIN_TOKEN" \
+      "${WORKER_URL%/}/admin/full-sync" >/dev/null
+    say "Initial full sync completed."
+  fi
 fi
 # ──────────────────────────────────────────────────────────────────────────
 
 finish
 say "Worker: $WORKER_URL"
-say "Webhook: ${WORKER_URL%/}/webhook/notion"
+if [[ "$DEPLOYMENT_MODE" == "hosted" ]]; then
+  say "OAuth callback: ${WORKER_URL%/}/notion/callback"
+  say "Administrator console: ${WORKER_URL%/}/admin"
+else
+  say "Webhook: ${WORKER_URL%/}/webhook/notion"
+fi

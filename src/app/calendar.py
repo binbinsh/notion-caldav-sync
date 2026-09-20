@@ -215,19 +215,28 @@ def _client_for(resource_url: str, apple_id: str, apple_app_password: str) -> DA
     return DAVClient(base, username=apple_id, password=apple_app_password)
 
 
-def _notion_id_from_href(href: Optional[str]) -> Optional[str]:
+def _notion_id_from_href(href: Optional[str], managed_event_prefix: str = "") -> Optional[str]:
     if not href:
         return None
     last = href.rstrip("/").split("/")[-1]
     if last.endswith(".ics"):
         notion_id = last[:-4]
+        if managed_event_prefix:
+            if not notion_id.startswith(managed_event_prefix):
+                return None
+            notion_id = notion_id[len(managed_event_prefix) :]
         if notion_id.startswith("restored-"):
             notion_id = notion_id[len("restored-") :]
         return notion_id
     return None
 
 
-async def _list_events_via_caldav(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
+async def _list_events_via_caldav(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    managed_event_prefix: str = "",
+) -> List[Dict[str, str]]:
     calendar = CalDavCalendar(_client_for(calendar_href, apple_id, apple_app_password), url=calendar_href)
     try:
         response = calendar._query_properties(props=[dav.GetEtag()], depth=1)
@@ -247,13 +256,18 @@ async def _list_events_via_caldav(calendar_href: str, apple_id: str, apple_app_p
             {
                 "href": calendar.url.join(href),
                 "etag": etag,
-                "notion_id": _notion_id_from_href(href),
+                "notion_id": _notion_id_from_href(href, managed_event_prefix),
             }
         )
     return events
 
 
-async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
+async def _list_events_via_webdav(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    managed_event_prefix: str = "",
+) -> List[Dict[str, str]]:
     target = calendar_href if calendar_href.endswith("/") else f"{calendar_href}/"
     body = (
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
@@ -307,19 +321,28 @@ async def _list_events_via_webdav(calendar_href: str, apple_id: str, apple_app_p
             {
                 "href": full_href,
                 "etag": etag,
-                "notion_id": _notion_id_from_href(href_text),
+                "notion_id": _notion_id_from_href(href_text, managed_event_prefix),
                 "ics": calendar_data,
             }
         )
     return events
 
 
-async def list_events(calendar_href: str, apple_id: str, apple_app_password: str) -> List[Dict[str, str]]:
+async def list_events(
+    calendar_href: str,
+    apple_id: str,
+    apple_app_password: str,
+    managed_event_prefix: str = "",
+) -> List[Dict[str, str]]:
     if HAS_NATIVE_WEBDAV:
-        return await _list_events_via_webdav(calendar_href, apple_id, apple_app_password)
+        return await _list_events_via_webdav(
+            calendar_href, apple_id, apple_app_password, managed_event_prefix
+        )
     if not HAS_CALDAV:
         raise RuntimeError("caldav library unavailable; cannot list events without WebDAV runtime")
-    return await _list_events_via_caldav(calendar_href, apple_id, apple_app_password)
+    return await _list_events_via_caldav(
+        calendar_href, apple_id, apple_app_password, managed_event_prefix
+    )
 
 
 async def put_event(event_url: str, ics: str, apple_id: str, apple_app_password: str) -> None:
@@ -381,12 +404,17 @@ async def remove_missing_events(
     apple_id: str,
     apple_app_password: str,
     existing_events: Optional[List[Dict[str, str]]] = None,
+    managed_event_prefix: str = "",
 ) -> None:
     keep_set = set(keep_ids)
-    events = existing_events or await list_events(calendar_href, apple_id, apple_app_password)
+    events = existing_events or await list_events(
+        calendar_href, apple_id, apple_app_password, managed_event_prefix
+    )
     for event in events:
         href = event.get("href") or ""
-        notion_id = event.get("notion_id") or _notion_id_from_href(href)
+        notion_id = event.get("notion_id") or _notion_id_from_href(
+            href, managed_event_prefix
+        )
         if notion_id and notion_id not in keep_set:
             await delete_event(href, apple_id, apple_app_password)
 

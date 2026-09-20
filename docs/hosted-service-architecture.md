@@ -9,7 +9,8 @@ Worker. The default onboarding path is:
 1. Open the hosted app and connect Notion.
 2. Select pages during Notion's OAuth flow.
 3. Enter an Apple Account and an app-specific password.
-4. Watch the first sync complete.
+4. Choose compatible Notion data sources and an Apple calendar.
+5. Watch the first sync complete.
 
 The hosted release reuses Planner.li's Clerk application for sign-in. Clerk is
 the tenant identity authority; Notion OAuth authorizes workspace access but does
@@ -130,6 +131,11 @@ sync_jobs(
 )
 webhook_receipts(event_id, received_at)
 hosted_config(key, value, created_at, updated_at)
+provider_options(user_id, provider, value, updated_at)
+sync_preferences(
+  connection_id, notion_source_ids, apple_calendar_href,
+  apple_calendar_name, updated_at
+)
 ```
 
 All important relations include tenant ownership constraints. Authorization
@@ -150,14 +156,17 @@ is insufficient.
   iCloud hosts. Never forward Basic credentials to an arbitrary discovered host.
 - Accepted work is persisted before returning success. Queue delivery is at
   least once, so sync writes and receipts are idempotent.
-- Each tenant receives its own dedicated `Notion` calendar and D1 state
-  namespace. An explicit event ownership ledger and incomplete-snapshot guard
-  remain required before opening the beta without an account cap.
+- Each tenant receives its own D1 state namespace. A user may choose a dedicated
+  `Notion` calendar or an existing calendar; the hosted service manages only
+  event resources carrying its `notion-caldav-sync-` prefix. An explicit event
+  ownership ledger and incomplete-snapshot guard remain required before opening
+  the beta without an account cap.
 - Notion webhooks are verified before routing. Route using the verified
   `subscription_id`, `integration_id`, `workspace_id`, and `accessible_by` bot
   identity; `authors` describes the actor and is not a tenant key.
-- Webhook verification material is initialized through a controlled setup flow
-  and then locked. An unsigned public request must never replace the trust root.
+- Webhook verification material is initialized and rotated only through a
+  controlled setup flow protected by a private setup token. An unsigned public
+  request must never replace the trust root.
 
 ## Reliability model
 
@@ -189,16 +198,18 @@ results is not proof that a Notion task was deleted.
 
 ## Closed-beta limitations
 
-The tenant boundary, encrypted credential storage, bounded queue consumer, and
-durable cron path are implemented. Before an unrestricted public launch, the
-remaining hardening work is:
+The tenant boundary, encrypted credential storage, bounded queue consumer,
+source/calendar selection, live Apple credential validation, operator view,
+and durable cron path are implemented. Before an unrestricted public launch,
+the remaining hardening work is:
 
 1. Add an explicit event ownership ledger instead of relying on the dedicated
    per-user `Notion` calendar plus stable managed paths.
 2. Record complete/incomplete snapshot state so a partial source scan can never
    authorize cleanup.
-3. Add per-user quotas, provider-call telemetry, and operator controls before
-   raising the closed-beta limit.
+3. Add per-user quotas and provider-call telemetry before raising the
+   closed-beta limit. The current operator view supports inspection, retry,
+   pause, and resume.
 4. Add recovery/revocation UI for Notion and Apple connections.
 5. Exercise OAuth refresh rotation, Queue retries, and two users in the same
    Notion workspace in live integration tests.

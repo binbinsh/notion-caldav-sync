@@ -60,10 +60,15 @@ class Default(WorkerEntrypoint):
             "/",
             "/api/status",
             "/api/apple",
+            "/api/preferences",
+            "/api/options/refresh",
             "/api/sync",
+            "/admin",
+            "/api/admin/action",
             "/oauth/notion/start",
             "/notion/callback",
             "/webhook/notion/hosted",
+            "/api/webhook/setup",
         }
         if path in hosted_paths and getattr(self.env, "HOSTED_DB", None) is not None:
             try:
@@ -86,10 +91,20 @@ class Default(WorkerEntrypoint):
                     return await hosted.complete_notion(request)
                 if path == "/api/apple" and method == "POST":
                     return await hosted.connect_apple(request)
+                if path == "/api/preferences" and method == "POST":
+                    return await hosted.configure_sync(request)
+                if path == "/api/options/refresh" and method == "POST":
+                    return await hosted.refresh_options(request)
                 if path == "/api/sync" and method == "POST":
                     return await hosted.manual_sync(request)
+                if path == "/admin" and method == "GET":
+                    return await hosted.admin(request)
+                if path == "/api/admin/action" and method == "POST":
+                    return await hosted.admin_action(request)
                 if path == "/webhook/notion/hosted" and method == "POST":
                     return await hosted.webhook(request)
+                if path == "/api/webhook/setup" and method == "GET":
+                    return await hosted.webhook_setup_status(request)
                 return Response("Method Not Allowed", status=405)
             except AuthenticationError as exc:
                 return json_response({"error": str(exc)}, status=401)

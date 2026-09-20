@@ -7,6 +7,7 @@ from app.hosted.ui import (
     SOURCE_URL,
     _csp,
     _document,
+    admin_page,
     dashboard_page,
     signed_out_page,
 )
@@ -102,9 +103,65 @@ def test_dashboard_preserves_forms_oauth_and_sync_availability(connected):
         assert len(fields) == 1
         assert "required" in fields[0]
         assert "value" not in fields[0]
-    sync_button = elements.matching("button", type="submit", **{"class": "secondary"})[0]
+    sync_form = elements.matching("form", method="post", action="/api/sync")[0]
+    assert sync_form
+    sync_button = [
+        attrs
+        for tag, attrs in elements.elements
+        if tag == "button" and attrs.get("type") == "submit" and attrs.get("class") == "secondary"
+    ][-1]
     assert ("disabled" in sync_button) is not connected
     assert bool(elements.matching("details")) is connected
+
+
+def test_dashboard_renders_source_and_calendar_preferences():
+    response = dashboard_page(
+        status={
+            "notion": {"status": "active"},
+            "apple": {"status": "active"},
+            "sync": {"status": "active"},
+            "preferences": {
+                "notion_source_ids": ["source-1"],
+                "apple_calendar_href": "https://caldav.example/calendar-1/",
+            },
+            "notion_sources": [{"id": "source-1", "name": "Tasks & plans"}],
+            "apple_calendars": [
+                {
+                    "id": "calendar-1",
+                    "name": "Work <Calendar>",
+                    "href": "https://caldav.example/calendar-1/",
+                }
+            ],
+        }
+    )
+    elements = Elements(response.body)
+    assert elements.matching("form", method="post", action="/api/preferences")
+    source = elements.matching("input", name="notion_source_id", value="source-1")[0]
+    assert "checked" in source
+    assert "Tasks &amp; plans" in response.body
+    assert "Work &lt;Calendar&gt;" in response.body
+    assert "Existing non-managed events are left untouched." in response.body
+
+
+def test_admin_page_escapes_account_data_and_provides_operator_actions():
+    response = admin_page(
+        accounts=[
+            {
+                "clerk_user_id": "user_<admin>",
+                "workspace_name": "Workspace & Co",
+                "notion_status": "active",
+                "apple_status": "active",
+                "connection_id": "sync-1",
+                "sync_status": "active",
+                "last_error": "<failed>",
+            }
+        ]
+    )
+    elements = Elements(response.body)
+    assert "user_&lt;admin&gt;" in response.body
+    assert "Workspace &amp; Co" in response.body
+    assert "&lt;failed&gt;" in response.body
+    assert elements.matching("form", method="post", action="/api/admin/action")
 
 
 def test_dashboard_escapes_remote_content_and_does_not_label_errors_as_healthy():

@@ -125,6 +125,10 @@ def _resolve_database_title(db: Dict) -> str:
 
 async def _collect_tasks(bindings: Bindings) -> List[TaskInfo]:
     databases = await list_databases(bindings.notion_token, NOTION_VERSION)
+    selected_source_ids = getattr(bindings, "notion_source_ids", None)
+    if selected_source_ids:
+        selected = set(selected_source_ids)
+        databases = [database for database in databases if database.get("id") in selected]
     task_dbs = await _filter_task_databases(bindings, databases)
     tasks: List[TaskInfo] = []
     for db in task_dbs:
@@ -172,13 +176,27 @@ def _description_for_task(task: TaskInfo) -> str:
     return "\n".join(parts)
 
 
-def _event_url(calendar_href: str, notion_id: str, *, restored: bool = False) -> str:
+def _event_url(
+    calendar_href: str,
+    notion_id: str,
+    *,
+    restored: bool = False,
+    managed_event_prefix: str = "",
+) -> str:
     filename = f"restored-{notion_id}.ics" if restored else f"{notion_id}.ics"
+    if managed_event_prefix:
+        filename = f"{managed_event_prefix}{filename}"
     return calendar_href.rstrip("/") + f"/{filename}"
 
 
-def _uid_notion_id(notion_id: str, event_url: str) -> str:
+def _uid_notion_id(
+    notion_id: str,
+    event_url: str,
+    managed_event_prefix: str = "",
+) -> str:
     filename = event_url.rstrip("/").split("/")[-1]
+    if managed_event_prefix and filename.startswith(managed_event_prefix):
+        filename = filename[len(managed_event_prefix) :]
     return f"restored-{notion_id}" if filename.startswith("restored-") else notion_id
 
 
@@ -356,13 +374,18 @@ async def _write_task_event(
         calendar_href,
         task.notion_id,
         restored=True,
+        managed_event_prefix=getattr(bindings, "managed_event_prefix", ""),
     )
     ics = _build_ics_for_task(
         task,
         calendar_color,
         date_only_tz=date_only_tz,
         status_emoji_style=bindings.status_emoji_style,
-        uid_notion_id=_uid_notion_id(task.notion_id, resolved_event_url),
+        uid_notion_id=_uid_notion_id(
+            task.notion_id,
+            resolved_event_url,
+            getattr(bindings, "managed_event_prefix", ""),
+        ),
     )
     await calendar_put_event(
         resolved_event_url,
@@ -380,8 +403,17 @@ async def _delete_task_event(
     event_url: Optional[str] = None,
 ) -> None:
     targets = [event_url] if event_url else [
-        _event_url(calendar_href, notion_id),
-        _event_url(calendar_href, notion_id, restored=True),
+        _event_url(
+            calendar_href,
+            notion_id,
+            managed_event_prefix=getattr(bindings, "managed_event_prefix", ""),
+        ),
+        _event_url(
+            calendar_href,
+            notion_id,
+            restored=True,
+            managed_event_prefix=getattr(bindings, "managed_event_prefix", ""),
+        ),
     ]
     for target in targets:
         if target:
@@ -416,6 +448,7 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
         calendar_href,
         bindings.apple_id,
         bindings.apple_app_password,
+        getattr(bindings, "managed_event_prefix", ""),
     )
     previous_hashes = settings.get("event_hashes")
     if not isinstance(previous_hashes, dict):
@@ -452,13 +485,18 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
             calendar_href,
             task.notion_id,
             restored=True,
+            managed_event_prefix=getattr(bindings, "managed_event_prefix", ""),
         )
         ics = _build_ics_for_task(
             task,
             calendar_color,
             date_only_tz=date_only_tz,
             status_emoji_style=bindings.status_emoji_style,
-            uid_notion_id=_uid_notion_id(task.notion_id, event_url),
+            uid_notion_id=_uid_notion_id(
+                task.notion_id,
+                event_url,
+                getattr(bindings, "managed_event_prefix", ""),
+            ),
         )
         payload_hash = _hash_ics_payload(ics)
         remote_hash = existing_content_hashes.get(task.notion_id)
@@ -494,6 +532,7 @@ async def run_full_sync(bindings: Bindings) -> Dict[str, any]:
         bindings.apple_id,
         bindings.apple_app_password,
         existing_events=existing_events,
+        managed_event_prefix=getattr(bindings, "managed_event_prefix", ""),
     )
     now = datetime.now(timezone.utc).isoformat()
     settings = await update_settings(
@@ -523,6 +562,7 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
         calendar_href,
         bindings.apple_id,
         bindings.apple_app_password,
+        getattr(bindings, "managed_event_prefix", ""),
     )
     existing_event_urls = {
         event["notion_id"]: event["href"]
@@ -558,6 +598,16 @@ async def handle_webhook_tasks(bindings: Bindings, page_ids: List[str]) -> None:
                 event_url=existing_event_urls.get(pid),
             )
             log(f"[sync] deleted event for {pid} (missing parent database)")
+            continue
+        selected_source_ids = getattr(bindings, "notion_source_ids", None)
+        if selected_source_ids and database_id not in set(selected_source_ids):
+            await _delete_task_event(
+                bindings,
+                calendar_href,
+                pid,
+                event_url=existing_event_urls.get(pid),
+            )
+            log(f"[sync] deleted event for {pid} (data source is not selected)")
             continue
         task = parse_page_to_task(page)
         if page.get("in_trash") or not task.start_date:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import json
 from typing import Any, Optional
 
 from .util import iso_now, stable_id, to_python, utc_now
@@ -238,12 +239,10 @@ class HostedRepository:
             INSERT INTO sync_connections(
               id, user_id, notion_installation_id, apple_connection_id,
               status, next_due_at, created_at, updated_at
-            ) VALUES(?, ?, ?, ?, 'active', ?, ?, ?)
+            ) VALUES(?, ?, ?, ?, 'setup', ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
               notion_installation_id=excluded.notion_installation_id,
               apple_connection_id=excluded.apple_connection_id,
-              status='active',
-              next_due_at=excluded.next_due_at,
               updated_at=excluded.updated_at
             """,
             connection_id,
@@ -255,6 +254,106 @@ class HostedRepository:
             now,
         )
         return await self.first("SELECT * FROM sync_connections WHERE user_id=?", user_id)
+
+    async def reset_sync_setup(self, user_id: str) -> None:
+        connection = await self.first("SELECT id FROM sync_connections WHERE user_id=?", user_id)
+        if not connection:
+            return
+        await self.run("DELETE FROM sync_preferences WHERE connection_id=?", connection["id"])
+        await self.run(
+            "UPDATE sync_connections SET status='setup', last_error=NULL, updated_at=? WHERE id=?",
+            iso_now(),
+            connection["id"],
+        )
+
+    async def set_provider_options(
+        self, user_id: str, provider: str, options: list[dict[str, Any]]
+    ) -> None:
+        now = iso_now()
+        await self.run(
+            """
+            INSERT INTO provider_options(user_id, provider, value, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(user_id, provider) DO UPDATE SET
+              value=excluded.value, updated_at=excluded.updated_at
+            """,
+            user_id,
+            provider,
+            json.dumps(options, ensure_ascii=False, separators=(",", ":")),
+            now,
+        )
+
+    async def provider_options(self, user_id: str, provider: str) -> list[dict[str, Any]]:
+        row = await self.first(
+            "SELECT value FROM provider_options WHERE user_id=? AND provider=?",
+            user_id,
+            provider,
+        )
+        if not row:
+            return []
+        try:
+            value = json.loads(str(row["value"]))
+        except (TypeError, ValueError):
+            return []
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    async def configure_sync(
+        self,
+        *,
+        user_id: str,
+        notion_source_ids: list[str],
+        apple_calendar_href: str,
+        apple_calendar_name: str,
+    ) -> dict[str, Any]:
+        connection = await self.ensure_sync_connection(user_id)
+        if not connection:
+            raise RepositoryError("Connect Notion and Apple before choosing sync sources")
+        now = iso_now()
+        await self.run(
+            """
+            INSERT INTO sync_preferences(
+              connection_id, notion_source_ids, apple_calendar_href,
+              apple_calendar_name, updated_at
+            ) VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(connection_id) DO UPDATE SET
+              notion_source_ids=excluded.notion_source_ids,
+              apple_calendar_href=excluded.apple_calendar_href,
+              apple_calendar_name=excluded.apple_calendar_name,
+              updated_at=excluded.updated_at
+            """,
+            connection["id"],
+            json.dumps(notion_source_ids, separators=(",", ":")),
+            apple_calendar_href,
+            apple_calendar_name,
+            now,
+        )
+        await self.run(
+            """
+            UPDATE sync_connections
+            SET status='active', next_due_at=?, last_error=NULL, updated_at=?
+            WHERE id=?
+            """,
+            now,
+            now,
+            connection["id"],
+        )
+        return await self.first("SELECT * FROM sync_connections WHERE id=?", connection["id"])
+
+    async def preferences_for_user(self, user_id: str) -> Optional[dict[str, Any]]:
+        row = await self.first(
+            """
+            SELECT p.* FROM sync_preferences p
+            JOIN sync_connections c ON c.id=p.connection_id
+            WHERE c.user_id=?
+            """,
+            user_id,
+        )
+        if row:
+            try:
+                row["notion_source_ids"] = json.loads(str(row.get("notion_source_ids") or "[]"))
+            except (TypeError, ValueError):
+                row["notion_source_ids"] = []
+        return row
 
     async def account_status(self, user_id: str) -> dict[str, Any]:
         notion = await self.first(
@@ -269,7 +368,14 @@ class HostedRepository:
             """,
             user_id,
         )
-        return {"notion": notion, "apple": apple, "sync": sync}
+        return {
+            "notion": notion,
+            "apple": apple,
+            "sync": sync,
+            "preferences": await self.preferences_for_user(user_id),
+            "notion_sources": await self.provider_options(user_id, "notion"),
+            "apple_calendars": await self.provider_options(user_id, "apple"),
+        }
 
     async def create_job(
         self, *, connection_id: str, reason: str, idempotency_key: str
@@ -316,11 +422,13 @@ class HostedRepository:
               c.id AS connection_id, c.user_id AS user_id, c.status AS connection_status,
               n.id AS notion_installation_id, n.access_token_ciphertext,
               n.refresh_token_ciphertext, n.token_expires_at,
-              a.apple_id_ciphertext, a.app_password_ciphertext
+              a.apple_id_ciphertext, a.app_password_ciphertext,
+              p.notion_source_ids, p.apple_calendar_href, p.apple_calendar_name
             FROM sync_jobs j
             JOIN sync_connections c ON c.id=j.connection_id
             JOIN notion_installations n ON n.id=c.notion_installation_id
             JOIN apple_connections a ON a.id=c.apple_connection_id
+            LEFT JOIN sync_preferences p ON p.connection_id=c.id
             WHERE j.id=?
             """,
             job_id,
@@ -431,6 +539,49 @@ class HostedRepository:
         )
         meta = to_python(getattr(result, "meta", None))
         return not (isinstance(meta, dict) and meta.get("changes") == 0)
+
+    async def set_config(self, key: str, value: str) -> None:
+        now = iso_now()
+        await self.run(
+            """
+            INSERT INTO hosted_config(key, value, created_at, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            key,
+            value,
+            now,
+            now,
+        )
+
+    async def admin_accounts(self) -> list[dict[str, Any]]:
+        return await self.all(
+            """
+            SELECT
+              u.id, u.clerk_user_id, u.created_at, u.updated_at,
+              n.workspace_name, n.workspace_id, n.status AS notion_status,
+              a.status AS apple_status,
+              c.id AS connection_id, c.status AS sync_status,
+              c.last_started_at, c.last_finished_at, c.last_error, c.next_due_at,
+              p.apple_calendar_name, p.notion_source_ids
+            FROM hosted_users u
+            LEFT JOIN notion_installations n ON n.user_id=u.id
+            LEFT JOIN apple_connections a ON a.user_id=u.id
+            LEFT JOIN sync_connections c ON c.user_id=u.id
+            LEFT JOIN sync_preferences p ON p.connection_id=c.id
+            ORDER BY COALESCE(c.last_finished_at, u.updated_at) DESC
+            """
+        )
+
+    async def set_connection_status(self, connection_id: str, status: str) -> None:
+        if status not in {"active", "paused"}:
+            raise RepositoryError("Unsupported connection status")
+        await self.run(
+            "UPDATE sync_connections SET status=?, updated_at=? WHERE id=?",
+            status,
+            iso_now(),
+            connection_id,
+        )
 
 
 class D1StateNamespace:

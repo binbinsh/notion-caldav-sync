@@ -37,6 +37,17 @@ def test_notion_id_from_href_supports_recovered_resources() -> None:
     assert _notion_id_from_href(f"/calendar/restored-{notion_id}.ics") == notion_id
 
 
+def test_notion_id_from_href_only_claims_prefixed_managed_events() -> None:
+    notion_id = "363067f5-6067-8004-95b2-f5c088ab40e2"
+
+    assert _notion_id_from_href(
+        f"/calendar/notion-caldav-sync-{notion_id}.ics", "notion-caldav-sync-"
+    ) == notion_id
+    assert _notion_id_from_href(
+        "/calendar/personal-event.ics", "notion-caldav-sync-"
+    ) is None
+
+
 @pytest.mark.asyncio
 async def test_ensure_calendar_preserves_webhook_verification_token(monkeypatch: pytest.MonkeyPatch) -> None:
     state = FakeState()
