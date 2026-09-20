@@ -232,8 +232,8 @@ class Default(WorkerEntrypoint):
 
     async def scheduled(self, controller, env, ctx):
         """
-        Handle scheduled cron triggers (runs every 30 minutes).
-        Performs a full Notion → Calendar rewrite.
+        Poll for due hosted connections every five minutes.
+        Each connection keeps its own full-sync interval.
         """
         # Lazy import to avoid startup CPU limit
         try:

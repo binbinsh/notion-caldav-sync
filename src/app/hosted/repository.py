@@ -482,7 +482,12 @@ class HostedRepository:
             connection_id,
         )
 
-    async def due_connections(self, limit: int) -> list[dict[str, Any]]:
+    async def due_connections(
+        self, limit: int, *, active_job_timeout_minutes: int = 60
+    ) -> list[dict[str, Any]]:
+        active_job_cutoff = (
+            utc_now() - timedelta(minutes=active_job_timeout_minutes)
+        ).isoformat()
         return await self.all(
             """
             SELECT c.id, c.user_id
@@ -490,12 +495,15 @@ class HostedRepository:
             WHERE c.status='active' AND c.next_due_at<=?
               AND NOT EXISTS (
                 SELECT 1 FROM sync_jobs j
-                WHERE j.connection_id=c.id AND j.status IN ('queued', 'running', 'retry')
+                WHERE j.connection_id=c.id
+                  AND j.status IN ('queued', 'running', 'retry')
+                  AND COALESCE(j.started_at, j.created_at)>=?
               )
             ORDER BY c.next_due_at ASC
             LIMIT ?
             """,
             iso_now(),
+            active_job_cutoff,
             limit,
         )
 
