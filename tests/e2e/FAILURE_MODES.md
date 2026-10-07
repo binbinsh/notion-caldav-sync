@@ -18,6 +18,8 @@ Failure modes to cover before implementation:
 - A stale CalDAV ETag is bypassed by an unconditional or freshly read ETag write.
 - A partial write or ledger failure advances the sync clock and loses retry work.
 - Legacy Python restored-/managed-prefix identities are treated as new pages.
+- Legacy derived Overdue descriptions overwrite Todo or In progress in Notion;
+  overdue metadata also masks a deliberate Completed edit in the calendar.
 - A legacy upgrade or a calendar/source configuration change reuses a stale ledger.
 - Duplicate or unknown events are deleted without a verified ownership boundary.
 - A scan cursor skips edits made during a scan.

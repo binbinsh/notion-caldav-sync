@@ -20,6 +20,8 @@ is single-user; AgentMQ owns private multi-user connections and PostgreSQL state
 Legacy UIDs `notion-{page}@sync`, `notion-restored-{page}@sync`, and
 `notion-notion-caldav-sync-restored-{page}@sync` are recognized. Hrefs and UIDs remain
 stable. Unknown events remain untouched; duplicate identities block that page.
+Legacy `Status: Overdue` is treated as derived display metadata, retaining the
+current Notion status rather than writing Overdue back into Notion.
 
 Python had no bidirectional merge base. The preview shows the initial timestamp
 decision for existing pairs without a ledger. Review divergences before adoption;

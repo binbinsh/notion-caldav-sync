@@ -179,7 +179,9 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
     // If there's no body and no explicit Description header, the description
     // was purely metadata — return null to match Notion's empty description.
     description = parsed.body || parsed.headers.Description || null;
-    status = headerStatus || status;
+    // Old Python events stored the derived overdue display in this header.
+    // It carries no underlying status and must not mask raw status or an edit.
+    status = headerStatus === 'Overdue' ? null : headerStatus;
   }
 
   // A changed summary glyph is an intentional status edit in Apple Calendar.

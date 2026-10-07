@@ -38,7 +38,9 @@ export function calendarSyncPayload(
   return {
     ...canonicalPayload({
       title: task.title,
-      status: task.status,
+      // Legacy events lack X-NOTION-STATUS. Overdue is derived display metadata;
+      // recover the real status from the scoped Notion page before merging.
+      status: task.status === 'Overdue' && notionTask ? notionTask.status : task.status,
       startDate: task.startDate,
       endDate: task.endDate,
       reminder: task.reminder,

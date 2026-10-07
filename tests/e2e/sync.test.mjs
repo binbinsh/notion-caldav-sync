@@ -4,6 +4,37 @@ import { createHmac } from 'node:crypto';
 import { harness } from './harness.mjs';
 import { PAGE_ID, SOURCE_ID, CALENDAR_HREF } from './providers.mjs';
 
+for (const option of [{id:'todo',name:'Not started'}, {id:'doing',name:'Doing'}]) {
+  test(`Legacy derived Overdue preserves the ${option.name} status during migration`, async t => {
+    const h = await harness(t);
+    const page = h.providers.seedPage();
+    page.properties.Status.status = option;
+    page.properties['Due date'].date = {start:'2026-01-10',end:null};
+    const href = CALENDAR_HREF + 'legacy-overdue.ics';
+    h.providers.events.set(href, {etag:'"legacy"',ics:[
+      'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Legacy//EN','BEGIN:VEVENT',
+      `UID:notion-${PAGE_ID}@sync`,'DTSTART;VALUE=DATE:20260110',
+      'DTEND;VALUE=DATE:20260111','SUMMARY:⚠️ Draft task',
+      'DESCRIPTION:Source: Tasks\\nStatus: Overdue\\n\\nOriginal notes',
+      `URL:https://www.notion.so/${PAGE_ID}`,'LAST-MODIFIED:20261007T020000Z',
+      'END:VEVENT','END:VCALENDAR','',
+    ].join('\r\n')});
+    const preview = await h.request('/admin/preview');
+    assert.equal(preview.status,200,await preview.clone().text());
+    assert.equal((await preview.json()).decisions[0].operations.notion,'none');
+    const response = await h.sync();
+    assert.equal(response.status,200,await response.text());
+    assert.equal(page.properties.Status.status.id,option.id);
+    assert.equal(h.providers.trace.some(r => r.method==='PATCH'),false);
+    // A deliberate completion still propagates after adopting the old event.
+    h.providers.editEvent(href,[['SUMMARY:⚠️ Draft task','SUMMARY:✅ Draft task']]);
+    const completed = await h.sync();
+    assert.equal(completed.status,200,await completed.text());
+    assert.equal(page.properties.Status.status.id,'done');
+    assert.equal(h.providers.events.size,1);
+  });
+}
+
 test('PostgreSQL service propagates Notion creation and calendar edits in both directions', async t => {
   const h = await harness(t);
   h.providers.seedPage();
