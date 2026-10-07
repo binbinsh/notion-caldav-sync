@@ -52,7 +52,7 @@ Notion 不提供条件 PATCH。服务写入前复核版本，发现变化便停�
 
 设置 `TEST_DATABASE_URL` 为本机独立的 `_test` 数据库后，`pnpm check` 运行类型检查和真实 Node.js／PostgreSQL HTTP 入口测试，外部协议使用固定数据；`pnpm build` 验证打包。每次 E2E 的命令、结果、TAP 和协议 trace 保存在 `artifacts/e2e/`。
 
-本地测试已覆盖 PostgreSQL 重启、跨进程锁、账号绑定、条件写入及删除保护。真实 Notion／iCloud 的临时资源互测也已通过创建、双向字段修改、日历删除、重新设日期和 Notion 归档。报告保存在本机，发布时附上验收记录。0.9.0 尚未发布。
+本地测试已覆盖 PostgreSQL 重启、跨进程锁、账号绑定、条件写入及删除保护。真实 Notion／iCloud 的临时资源互测覆盖创建、双向字段修改、日历删除、重新设日期和 Notion 归档。版本发布状态及验收记录见 [GitHub Releases](https://github.com/binbinsh/notion-caldav-sync/releases)。
 
 容器验证使用 `docker build -t notion-caldav-sync:0.9.0-test .`，再运行 `node tests/docker/check.mjs`。它创建并清理自己的临时 PostgreSQL 和服务容器，保存镜像 ID、命令及结果到 `artifacts/docker/`。使用其他 Docker context 时设置 `TEST_DOCKER_CONTEXT`。
 
