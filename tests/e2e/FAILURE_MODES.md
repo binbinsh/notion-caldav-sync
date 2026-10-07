@@ -1,8 +1,8 @@
 # 0.9.0 synchronization failure specification
 
-The public interface under test is the real Cloudflare Worker HTTP entry point,
-its verified Notion webhook and its scheduled endpoint. Tests run workerd with
-real Durable Object storage. Only external Notion and CalDAV HTTP endpoints are
+The public interface under test is the real Node.js HTTP entry point,
+its verified Notion webhook and its scheduled synchronization entry. Tests run
+with a real PostgreSQL database. Only external Notion and CalDAV HTTP endpoints are
 replaced with deterministic protocol fixtures. No sync class is mocked.
 
 Failure modes to cover before implementation:
@@ -30,3 +30,11 @@ Failure modes to cover before implementation:
 Each vertical slice adds a failing E2E case before its implementation. The test
 runner stores a transcript, JSON protocol trace, results and its exact command.
 Live release verification uses dedicated disposable provider resources.
+
+PostgreSQL failure specification (before the adapter): process restart loses merge bases or replay receipts; two processes race; plaintext task data leaks; wrong encryption key silently resets state; failed later pairs roll back acknowledged earlier pairs.
+
+Deletion evidence: Notion 404 can mean revoked sharing, and CalDAV GET 200 with a changed/removed owner marker is not a missing event. Neither may authorize deletion or clearing a task schedule.
+
+Live regressions: iCloud collection metadata is not an event; equivalent UTC
+offsets must compare equally; Notion can reuse an edit timestamp when rescheduling
+after an acknowledged clear. Production Notion calls must respect its rate budget.

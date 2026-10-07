@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { harness } from './harness.mjs';
-import { PAGE_ID, CALENDAR_HREF } from './providers.mjs';
+import { PAGE_ID, SOURCE_ID, CALENDAR_HREF } from './providers.mjs';
 
-test('Worker propagates Notion creation and calendar edits in both directions', async t => {
+test('PostgreSQL service propagates Notion creation and calendar edits in both directions', async t => {
   const h = await harness(t);
   h.providers.seedPage();
   let response = await h.sync();
@@ -19,6 +19,30 @@ test('Worker propagates Notion creation and calendar edits in both directions', 
   assert.equal(page.properties.Title.title[0].text.content, 'Edited in Apple');
   assert.equal(page.properties['Due date'].date.start, '2099-04-10T11:00:00.000Z');
   assert.equal(h.providers.events.size, 1);
+});
+
+test('Source selection supports the existing account and deduplicates provider calls', async t => {
+  const h = await harness(t);
+  h.providers.seedPage();
+  const ids = [SOURCE_ID, ...Array.from({length:21},(_,i) => `${i.toString(16).padStart(8,'0')}-2222-4222-8222-000000000000`)];
+  for (const id of ids.slice(1)) h.providers.extraSources.add(id);
+  await h.reconfigure({NOTION_SOURCE_IDS:[...ids,...ids].join(',')});
+  const response = await h.sync();
+  assert.equal(response.status,200,await response.text());
+  assert.equal(h.providers.trace.filter(r => r.method==='POST' && r.url.endsWith('/query')).length,22);
+});
+
+test('VTIMEZONE calendar edits preserve the actual UTC instant', async t => {
+  const h = await harness(t);
+  h.providers.seedPage();
+  assert.equal((await h.sync()).status,200);
+  const [href] = [...h.providers.events][0];
+  h.providers.editEvent(href,[['BEGIN:VEVENT','BEGIN:VTIMEZONE\r\nTZID:Asia/Taipei\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:+0800\r\nTZOFFSETTO:+0800\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT'],
+    ['DTSTART:20990410T090000Z','DTSTART;TZID=Asia/Taipei:20990410T180000'],
+    ['DTEND:20990410T100000Z','DTEND;TZID=Asia/Taipei:20990410T190000']]);
+  const response = await h.sync();
+  assert.equal(response.status,200,await response.text());
+  assert.equal(h.providers.pages.get(PAGE_ID).properties['Due date'].date.start,'2099-04-10T10:00:00.000Z');
 });
 
 test('A Notion edit after the scan is preserved and reported as a conflict', async t => {
@@ -57,8 +81,7 @@ test('Partial two-provider writes keep the old merge base and recover on retry',
 test('Legacy webhook verification is imported without rotating the token', async t => {
   const h = await harness(t);
   h.providers.seedPage();
-  const kv = await h.mf.getKVNamespace('STATE');
-  await kv.put('settings:value:webhook_verification_token', JSON.stringify('old-verification'));
+  await h.reconfigure({WEBHOOK_VERIFICATION_TOKEN:'old-verification'});
   const body = JSON.stringify({ id: 'legacy-event', entity: { type: 'page', id: PAGE_ID } });
   const signature = 'sha256=' + createHmac('sha256', 'old-verification').update(body).digest('hex');
   const response = await h.request('/webhook/notion', { method: 'POST', body, headers: { 'X-Notion-Signature': signature } });
@@ -138,7 +161,7 @@ test('Verified webhook, replay protection and scheduled entry share serialized s
   const replay = await h.request('/webhook/notion', { method: 'POST', body, headers: { 'X-Notion-Signature': sign(body) } });
   assert.equal(replay.status, 200);
   assert.equal(h.providers.trace.length, count);
-  const result = await h.request('/cdn-cgi/handler/scheduled?cron=*+*+*+*+*');
+  const result = await h.scheduled();
   assert.equal(result.status, 200, await result.text());
   await Promise.all([h.sync(), h.sync(), h.sync()]);
   assert.equal(h.providers.events.size, 1);
@@ -280,4 +303,77 @@ test('Calendar deletion clears the date and survives repeated full scans', async
   h.providers.editPage(PAGE_ID, { 'Due date': { type: 'date', date: { start: '2099-04-11', end: null } } });
   assert.equal((await h.sync()).status, 200);
   assert.equal(h.providers.events.size, 1);
+});
+
+
+test('PostgreSQL retains encrypted merge bases and webhook receipts after a process restart',async t=>{
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  const [href]=[...h.providers.events.keys()];await h.restart();
+  h.providers.editEvent(href,[['Draft task','After restart']]);
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.pages.get(PAGE_ID).properties.Title.title[0].text.content,'After restart');
+  const stored=await h.pool.query(`SELECT envelope::text FROM "${h.schema}".state`);
+  for(const plaintext of ['Original notes','After restart','fixture-password'])assert.equal(JSON.stringify(stored.rows).includes(plaintext),false);
+  h.providers.events.clear();await h.restart();assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.pages.get(PAGE_ID).properties['Due date'].date,null);
+  await h.restart();assert.equal((await h.sync()).status,200);assert.equal(h.providers.events.size,0);
+});
+
+test('A second process holding the PostgreSQL lock prevents any provider calls',async t=>{
+  const h=await harness(t);h.providers.seedPage();const client=await h.pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))',[`${h.schema}:single-user`]);
+    assert.equal((await h.sync()).status,409);assert.equal(h.providers.trace.length,0);
+  } finally {await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[`${h.schema}:single-user`]);client.release();}
+  assert.equal((await h.sync()).status,200);
+});
+
+test('A wrong encryption key cannot silently discard or recreate the old ledger',async t=>{
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  const count=h.providers.trace.length;await h.reconfigure({DATA_ENCRYPTION_KEY:'02'.repeat(32)});
+  assert.equal((await h.sync()).status,502);assert.equal(h.providers.trace.length,count);assert.equal(h.providers.events.size,1);
+});
+
+test('A missing Notion page is not proof of deletion when access may have been revoked',async t=>{
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  h.providers.pages.delete(PAGE_ID);const start=h.providers.trace.length;
+  assert.equal((await h.sync()).status,409);assert.equal(h.providers.events.size,1);
+  assert.equal(h.providers.trace.slice(start).some(r=>['DELETE','PATCH','PUT'].includes(r.method)),false);
+});
+
+test('An existing event with changed ownership cannot be treated as a calendar deletion',async t=>{
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  const [href,event]=[...h.providers.events.entries()][0];
+  h.providers.events.set(href,{...event,ics:event.ics.replaceAll(PAGE_ID,'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'),etag:'\"new-owner\"'});
+  const start=h.providers.trace.length;assert.equal((await h.sync()).status,409);
+  assert.equal(h.providers.pages.get(PAGE_ID).properties['Due date'].date.start,'2099-04-10T09:00:00.000Z');
+  assert.equal(h.providers.trace.slice(start).some(r=>['DELETE','PATCH','PUT'].includes(r.method)),false);
+});
+
+test('iCloud REPORT collection metadata with a missing calendar-data property is not an unreadable event',async t=>{
+  const h=await harness(t);h.providers.seedPage();
+  h.providers.failures.push({method:'REPORT',path:'/calendar/',status:207,body:'<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/calendar/</d:href><d:propstat><d:prop><d:getetag>collection-etag</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop><c:calendar-data/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>'});
+  const r=await h.sync();assert.equal(r.status,200,await r.text());assert.equal(h.providers.events.size,1);
+});
+
+
+test('Provider calls respect the Notion rate budget through the HTTP entry',async t=>{
+ const h=await harness(t,{notionIntervalMs:350});h.providers.seedPage();const times=[];
+ h.providers.onRequest=(method,url)=>{if(url.hostname==='api.notion.com')times.push(Date.now());};
+ assert.equal((await h.sync()).status,200);assert.ok(times.length>=2);
+ for(let i=1;i<times.length;i++)assert.ok(times[i]-times[i-1]>=330,'Notion requests should be spaced');
+});
+
+
+test('Equivalent Notion timezone spellings do not block a confirmed calendar deletion',async t=>{
+ const h=await harness(t);const page=h.providers.seedPage();assert.equal((await h.sync()).status,200);
+ page.properties['Due date'].date.start='2099-04-10T09:00:00.000+00:00';page.properties['Due date'].date.end='2099-04-10T10:00:00.000+00:00';
+ h.providers.events.clear();const response=await h.sync();assert.equal(response.status,200,await response.text());assert.equal(page.properties['Due date'].date,null);
+});
+
+test('Rescheduling after an acknowledged deletion works even when Notion reuses the edit timestamp',async t=>{
+ const h=await harness(t);const page=h.providers.seedPage();assert.equal((await h.sync()).status,200);
+ h.providers.events.clear();assert.equal((await h.sync()).status,200);assert.equal(page.properties['Due date'].date,null);
+ page.properties['Due date'].date={start:'2099-04-10T09:00:00.000Z',end:'2099-04-10T10:00:00.000Z'};
+ const r=await h.sync();assert.equal(r.status,200,await r.text());assert.equal(h.providers.events.size,1);assert.ok(page.properties['Due date'].date);
 });

@@ -25,13 +25,17 @@ export class Providers implements SyncProvider {
   private sources = new Map<string, Json>();
   private events = new Map<string, { task: CalendarTask; ics: string }>();
   private profile;
+  private lastNotionRequest = 0;
   readonly settings: Record<string, unknown>;
-  constructor(private connection: Connection, private fetcher: typeof fetch = (...args) => fetch(...args)) {
+  constructor(private connection: Connection, private fetcher: typeof fetch = (...args) => fetch(...args), private options: {notionIntervalMs?:number} = {}) {
     this.profile = buildSyncProfile({ descriptionProperty: connection.DESCRIPTION_PROPERTY || 'Description' });
     this.settings = { calendar_timezone: connection.CALENDAR_TIMEZONE || 'UTC' };
   }
 
   private async notion(path: string, method = 'GET', body?: Json, allowMissing = false): Promise<Json> {
+    const pause = Math.max(0, (this.options.notionIntervalMs ?? 350) - (Date.now() - this.lastNotionRequest));
+    if (pause) await new Promise(resolve => setTimeout(resolve, pause));
+    this.lastNotionRequest = Date.now();
     const response = await this.fetcher('https://api.notion.com/v1/' + path, {
       method, headers: { Authorization: 'Bearer ' + this.connection.NOTION_TOKEN,
         'Notion-Version': '2025-09-03', 'Content-Type': 'application/json' },
@@ -43,8 +47,8 @@ export class Providers implements SyncProvider {
   }
 
   async listNotionTasks(): Promise<NotionTask[]> {
-    const ids = this.connection.NOTION_SOURCE_IDS.split(',').map(s => s.trim()).filter(Boolean);
-    if (!ids.length || ids.length > 20) throw new Error('Configure between 1 and 20 Notion data sources.');
+    const ids = [...new Set(this.connection.NOTION_SOURCE_IDS.split(',').map(s => s.trim()).filter(Boolean))];
+    if (!ids.length || ids.length > 100) throw new Error('Configure between 1 and 100 Notion data sources.');
     const tasks: NotionTask[] = [];
     for (const id of ids) {
       const schema = await this.notion('data_sources/' + id);
@@ -67,7 +71,9 @@ export class Providers implements SyncProvider {
 
   async getNotionTask(pageId: string): Promise<NotionTask | null> {
     const page = await this.notion('pages/' + pageId, 'GET', undefined, true);
-    if (page.missing) return null;
+    // Notion returns 404 for both a removed page and revoked sharing. Only an
+    // explicitly archived/trash page can authorize deletion of its calendar pair.
+    if (page.missing) throw new Error('Notion page is missing or inaccessible; calendar event preserved.');
     const sourceId = page.parent?.data_source_id;
     if (!this.sources.has(sourceId)) throw new Error('Notion page moved outside the configured sources; calendar event preserved.');
     return this.task(page, sourceId);
@@ -140,13 +146,18 @@ export class Providers implements SyncProvider {
     const tasks: CalendarTask[] = [];
     for (const row of rows) {
       const stats = array(row.propstat);
+      const href = new URL(row.href, this.connection.CALENDAR_HREF).href;
+      // iCloud includes the collection itself: it has an ETag but no VEVENT data.
+      // Only this exact collection metadata is exempt; failed members stay fatal.
+      if (href === this.connection.CALENDAR_HREF && !row.status && stats.every(p =>
+        / 200 /.test(p.status || '') || (/ 404 /.test(p.status || '') &&
+          Object.keys(p.prop || {}).length === 1 && Object.hasOwn(p.prop || {}, 'calendar-data')))) continue;
       if (row.status || stats.some(p => !/ 200 /.test(p.status || ''))) throw new Error('CalDAV listing contains an unreadable member.');
       const prop = stats.find(p => / 200 /.test(p.status || ''))?.prop;
       if (!prop?.['calendar-data']) {
         if (String(row.href).endsWith('.ics')) throw new Error('Missing CalDAV member data.');
         continue;
       }
-      const href = new URL(row.href, this.connection.CALENDAR_HREF).href;
       const task = this.parseEvent(href, prop.getetag || null, prop['calendar-data']);
       if (task) { this.events.set(href, { task, ics: prop['calendar-data'] }); tasks.push(task); }
     }
@@ -170,7 +181,8 @@ export class Providers implements SyncProvider {
     if (response.status === 404) return null;
     const ics = await response.text();
     const task = this.parseEvent(href, response.headers.get('etag'), ics);
-    if (task) this.events.set(href, { task, ics });
+    if (!task) throw new Error('Calendar event exists but its managed identity changed; resolve ownership explicitly.');
+    this.events.set(href, { task, ics });
     return task;
   }
 

@@ -60,6 +60,7 @@ export class SyncEngine {
         const previous = known.get(id);
         if (previous?.eventHref && !calendar.has(id)) {
           const readback = await this.provider.getCalendarTask(previous.eventHref, {});
+          if (readback && readback.pageId !== id) throw new Error('Calendar event ownership changed; existing data preserved.');
           if (readback) calendar.set(id, readback);
           else {
             const task = notion.get(id) || null;

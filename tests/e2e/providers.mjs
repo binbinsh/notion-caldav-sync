@@ -9,6 +9,7 @@ export class Providers {
   etag = 0;
   clock = 0;
   failures = [];
+  extraSources = new Set();
   onRequest;
   schema = {
     Title: { type: 'title', title: {} },
@@ -51,6 +52,8 @@ export class Providers {
       if (path === 'search') return Response.json({ results: [{ object: 'data_source', id: SOURCE_ID, title: [{ plain_text: 'Tasks' }] }], has_more: false });
       if (path === `data_sources/${SOURCE_ID}`) return Response.json({ id: SOURCE_ID, object: 'data_source', title: [{ plain_text: 'Tasks' }], properties: this.schema });
       if (path === `data_sources/${SOURCE_ID}/query`) return Response.json({ results: [...this.pages.values()].filter(p => !p.archived && !p.in_trash && p.parent.data_source_id === SOURCE_ID), has_more: false });
+      const source = path.match(/^data_sources\/([^/]+)(\/query)?$/);
+      if (source && this.extraSources.has(source[1])) return source[2] ? Response.json({results:[],has_more:false}) : Response.json({id:source[1],object:'data_source',title:[],properties:this.schema});
       if (path.startsWith('pages/')) {
         const page = this.pages.get(path.slice(6));
         if (!page) return Response.json({ object: 'error', code: 'object_not_found' }, { status: 404 });

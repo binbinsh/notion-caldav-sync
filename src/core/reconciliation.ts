@@ -953,6 +953,10 @@ export class SyncReconciler {
   }
 
   private shouldHonorRecentCalendarDelete(notionTask: NotionTask, record: LedgerRecord): boolean {
+    const acknowledged = parseSyncedPayload(record.lastSyncedPayload);
+    // Notion may reuse one edit timestamp for multiple changes. A date added
+    // after the acknowledged clear is an explicit reschedule regardless of clock.
+    if (record.clearedDueInNotionAt && acknowledged && !acknowledged.startDate && notionTask.startDate) return false;
     // Once the cleared state was acknowledged, any later provider edit can reschedule.
     // Comparing provider versions avoids clock skew between Notion and the worker.
     if (record.clearedDueInNotionAt && notionTask.lastEditedTime !== record.lastNotionEditedTime) return false;

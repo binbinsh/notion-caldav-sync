@@ -54,12 +54,12 @@ export function parsePageToTask(
 
   const dateProp = schema.dateProperty ? asRecord(props[schema.dateProperty]) : null;
   const dateValue = asRecord(dateProp?.date) || {};
-  const startDate = normalizeText(dateValue.start);
-  const endDate = normalizeText(dateValue.end);
+  const startDate = normalizeNotionDate(dateValue.start);
+  const endDate = normalizeNotionDate(dateValue.end);
 
   const reminderProp = schema.reminderProperty ? asRecord(props[schema.reminderProperty]) : null;
   const reminderValue = asRecord(reminderProp?.date) || {};
-  const reminder = normalizeText(reminderValue.start);
+  const reminder = normalizeNotionDate(reminderValue.start);
 
   const descriptionProp = schema.descriptionProperty ? asRecord(props[schema.descriptionProperty]) : null;
   let description: string | null = null;
@@ -83,6 +83,17 @@ export function parsePageToTask(
     url: normalizeText(page.url),
     databaseName: "",
   };
+}
+
+function normalizeNotionDate(value: unknown): string | null {
+  const text = normalizeText(value);
+  if (!text || /^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  // Equivalent offsets must share a merge base. Never interpret a floating
+  // timestamp in the server's timezone: the instant would change on deployment.
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(text)) throw new Error('Notion timed dates require an explicit UTC offset.');
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) throw new Error('Invalid Notion date.');
+  return date.toISOString();
 }
 
 function resolvePageStatus(input: {

@@ -1,0 +1,8 @@
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!src/
+!src/**
+!scripts/
+!scripts/build.mjs
