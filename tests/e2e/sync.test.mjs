@@ -531,3 +531,45 @@ test('Unchanged scheduled sync preserves the acknowledged encrypted ledger bytes
   assert.deepEqual(await stored(),before);
   assert.equal(h.providers.trace.slice(calls).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
 });
+
+// Failure specification: a successful PUT followed by an unreadable, missing,
+// or newly foreign event must not acknowledge an unverified merge base.
+for (const status of [500,404]) test(`Calendar readback HTTP ${status} retains the last acknowledged merge base`, async t => {
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  const stored=async()=>(await h.pool.query(`SELECT envelope FROM "${h.schema}".state WHERE key=$1`,['ledger:'+PAGE_ID])).rows[0].envelope;
+  const baseline=await stored();
+  h.providers.editPage(PAGE_ID,{Title:{type:'title',title:[{text:{content:'New Notion title'}}]}});
+  h.providers.failures.push({method:'GET',path:'.ics',status});
+  const failed=await h.sync();assert.equal(failed.status,409,await failed.text());
+  assert.deepEqual(await stored(),baseline);
+  const writes=h.providers.trace.filter(r=>r.method==='PUT').length;
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.trace.filter(r=>r.method==='PUT').length,writes);
+  assert.equal(h.providers.events.size,1);
+});
+
+test('Calendar ownership changes during readback cannot acknowledge a foreign event', async t => {
+  const h=await harness(t);h.providers.seedPage();
+  h.providers.onRequest=(method,url)=>{if(method==='GET'&&url.pathname.endsWith('.ics')){
+    h.providers.onRequest=undefined;
+    const event=h.providers.events.get(url.href);
+    event.ics=event.ics.replaceAll(PAGE_ID,'99999999-9999-4999-8999-999999999999');
+  }};
+  const failed=await h.sync();assert.equal(failed.status,409,await failed.text());
+  const rows=(await h.pool.query(`SELECT key FROM "${h.schema}".state WHERE key=$1`,['ledger:'+PAGE_ID])).rows;
+  assert.equal(rows.length,0);
+  assert.equal(h.providers.events.size,1);
+  assert.equal(h.providers.trace.filter(r=>r.method==='PUT').length,1);
+});
+
+test('A concurrent calendar edit during readback retains the old merge base', async t => {
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  const baseline=(await h.pool.query(`SELECT envelope FROM "${h.schema}".state WHERE key=$1`,['ledger:'+PAGE_ID])).rows[0].envelope;
+  h.providers.editPage(PAGE_ID,{Title:{type:'title',title:[{text:{content:'New Notion title'}}]}});
+  h.providers.onRequest=(method,url)=>{if(method==='GET'&&url.pathname.endsWith('.ics')){
+    h.providers.onRequest=undefined;h.providers.editEvent(url.href,[['New Notion title','Concurrent Apple title']]);
+  }};
+  const failed=await h.sync();assert.equal(failed.status,409,await failed.text());
+  assert.deepEqual((await h.pool.query(`SELECT envelope FROM "${h.schema}".state WHERE key=$1`,['ledger:'+PAGE_ID])).rows[0].envelope,baseline);
+  assert.match([...h.providers.events.values()][0].ics,/Concurrent Apple title/);
+});

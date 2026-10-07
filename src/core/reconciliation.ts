@@ -1008,22 +1008,21 @@ export class SyncReconciler {
     etag: string | null,
     settings: Record<string, unknown>,
     notionTask: NotionTask,
-  ): Promise<string | null> {
-    try {
-      const calTask = await effects.getCalendarTask(eventHref, { etag });
-      if (calTask) {
-        if (!calTask.displayStatus) {
-          return canonicalHash({
-            ...this.calendarSyncPayload(calTask, notionTask),
-            displayStatus: deriveDisplayStatus(calTask, settings),
-          });
-        }
-        return this.calendarHashForTask(calTask, notionTask);
-      }
-    } catch {
-      // Non-critical: if readback fails, fall back to notion hash.
+  ): Promise<string> {
+    const calTask = await effects.getCalendarTask(eventHref, { etag });
+    if (!calTask || calTask.pageId !== notionTask.pageId || calTask.eventHref !== eventHref) {
+      throw new Error("Calendar write readback could not confirm event ownership; merge base retained.");
     }
-    return null;
+    if (etag && calTask.etag !== etag) {
+      throw new Error("Calendar changed during write readback; merge base retained.");
+    }
+    if (!calTask.displayStatus) {
+      return canonicalHash({
+        ...this.calendarSyncPayload(calTask, notionTask),
+        displayStatus: deriveDisplayStatus(calTask, settings),
+      });
+    }
+    return this.calendarHashForTask(calTask, notionTask);
   }
 
   private resolveRelation(
