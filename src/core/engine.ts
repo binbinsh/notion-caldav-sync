@@ -31,8 +31,14 @@ export class SyncEngine {
       putCalendarTask: (n,o) => this.provider.putCalendarTask(n,o),
       deleteCalendarEvent: h => this.provider.deleteCalendarEvent(h),
       getCalendarTask: (h,o) => this.provider.getCalendarTask(h,o),
-      putLedgerRecord: r => this.ledger.putRecord(r),
-      deleteLedgerRecord: id => this.ledger.deleteRecord(id),
+      putLedgerRecord: async r => {
+        const previous = known.get(r.pageId);
+        if (previous && JSON.stringify(previous.toJSON()) === JSON.stringify(r.toJSON())) return r;
+        const saved = await this.ledger.putRecord(r);
+        known.set(r.pageId, r);
+        return saved;
+      },
+      deleteLedgerRecord: async id => { await this.ledger.deleteRecord(id); known.delete(id); },
     };
     const reconciler = new SyncReconciler();
     const entries: SyncResultEntry[] = [];

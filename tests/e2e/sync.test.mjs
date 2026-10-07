@@ -502,3 +502,32 @@ test('An implicit timed duration is preserved across title edits and deliberate 
   assert.equal((await h.sync()).status,200);
   assert.equal(h.providers.trace.slice(before).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
 });
+
+// Failure specification: Notion edit timestamps can be reused. A concurrent
+// edit to the very field about to be patched must never be overwritten merely
+// because last_edited_time did not change.
+test('Reused Notion edit timestamps do not authorize overwriting a concurrent field edit', async t => {
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  const [href]=[...h.providers.events][0];h.providers.editEvent(href,[['Draft task','Apple title']]);
+  h.providers.onRequest=(method,url)=>{if(method==='GET'&&url.pathname.includes('/pages/')){
+    h.providers.onRequest=undefined;const page=h.providers.pages.get(PAGE_ID),version=page.last_edited_time;
+    h.providers.editPage(PAGE_ID,{Title:{type:'title',title:[{text:{content:'Concurrent Notion title with reused timestamp'}}]}});
+    page.last_edited_time=version;
+  }};
+  const before=h.providers.trace.length;const response=await h.sync();assert.equal(response.status,409,await response.text());
+  assert.equal(h.providers.pages.get(PAGE_ID).properties.Title.title[0].text.content,'Concurrent Notion title with reused timestamp');
+  assert.equal(h.providers.trace.slice(before).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+  assert.match(h.providers.events.get(href).ics,/Apple title/);
+});
+
+// Failure specification: scheduled no-op reconciliation repeatedly re-encrypts
+// and rewrites every acknowledged merge base, multiplying PostgreSQL writes.
+test('Unchanged scheduled sync preserves the acknowledged encrypted ledger bytes', async t => {
+  const h=await harness(t);h.providers.seedPage();assert.equal((await h.sync()).status,200);
+  assert.equal((await h.sync()).status,200);
+  const stored=async()=>(await h.pool.query(`SELECT envelope FROM "${h.schema}".state WHERE key=$1`,['ledger:'+PAGE_ID])).rows[0].envelope;
+  const before=await stored(),calls=h.providers.trace.length;
+  assert.equal((await h.scheduled()).status,200);
+  assert.deepEqual(await stored(),before);
+  assert.equal(h.providers.trace.slice(calls).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+});

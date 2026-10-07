@@ -4,7 +4,7 @@ import { CalendarTask, NotionTask, TaskSchema } from './core/models';
 import { parsePageToTask } from './core/notion';
 import { buildSyncProfile, statusToEmoji, normalizeStatusName, normalizeNotionStatusGroupName } from './core/constants';
 import { parseIcsMinimal } from './core/ics';
-import { projectNotionTaskToCalendarEvent } from './core/projection';
+import { notionSyncPayload, projectNotionTaskToCalendarEvent } from './core/projection';
 import type { CalendarPutOptions } from './core/reconciliation';
 import type { SyncProvider } from './core/engine';
 
@@ -116,7 +116,8 @@ export class Providers implements SyncProvider {
 
   private async assertNotionVersion(task: NotionTask): Promise<void> {
     const current = await this.getNotionTask(task.pageId);
-    if (!current || !task.lastEditedTime || current.lastEditedTime !== task.lastEditedTime || current.archived !== task.archived) {
+    if (!current || !task.lastEditedTime || current.lastEditedTime !== task.lastEditedTime || current.archived !== task.archived
+        || JSON.stringify(notionSyncPayload(current, this.settings)) !== JSON.stringify(notionSyncPayload(task, this.settings))) {
       throw new Error('Notion changed after the scan; retry before writing.');
     }
   }
