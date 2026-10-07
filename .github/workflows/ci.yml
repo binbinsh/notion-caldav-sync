@@ -1,23 +1,46 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: sync
+          POSTGRES_PASSWORD: fixture
+          POSTGRES_DB: notion_sync_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://sync:fixture@127.0.0.1:5432/notion_sync_test
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: pnpm/action-setup@v4
         with:
-          python-version: "3.12"
-          enable-cache: true
-      - run: uv sync --group dev
-      - run: uv run ruff check src tests
-      - run: uv run pytest -m "not integration"
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: docker build -t notion-caldav-sync:0.9.0-test .
+      - run: node tests/docker/check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results
+          retention-days: 14
+          path: |
+            artifacts/e2e/
+            artifacts/docker/

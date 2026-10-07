@@ -1,0 +1,36 @@
+{
+  "name": "notion-caldav-sync",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Standalone two-way Notion and CalDAV synchronization with PostgreSQL",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --env-file=.env --watch dist/main.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-e2e.mjs",
+    "check": "pnpm typecheck && pnpm test",
+    "build": "node scripts/build.mjs",
+    "start": "node dist/main.mjs"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.9.3",
+    "ical-generator": "10.1.0",
+    "ical.js": "2.2.1",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.5.2",
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3",
+    "@types/pg": "8.15.5"
+  },
+  "exports": {
+    "./core": "./src/core/index.ts",
+    "./providers": "./src/providers.ts"
+  }
+}

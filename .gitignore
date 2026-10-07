@@ -1,13 +1,16 @@
-.venv*/
 .env
+.dev.vars*
 .DS_Store
-uv.lock
-__pycache__/
-.mf/
-.ruff_cache/
-.pytest_cache/
 .wrangler/
 node_modules/
-python_modules/
 dist/
+artifacts/
 wrangler.toml
+wrangler.local.jsonc
+# Existing checkout caches from versions before 0.9.0
+.venv*/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+python_modules/
+uv.lock
