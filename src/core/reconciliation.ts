@@ -209,7 +209,7 @@ export class SyncReconciler {
           notion,
           { ifNoneMatch: !record.eventHref },
         );
-        const readbackHash = await this.readbackCalendarHash(effects, eventHref, newEtag, settings);
+        const readbackHash = await this.readbackCalendarHash(effects, eventHref, newEtag, settings, notion);
         const syncedPayload = this.syncedPayloadJson(notionPayload, plan.notionNotesFingerprint);
         await effects.putLedgerRecord(
           record.with({
@@ -263,7 +263,7 @@ export class SyncReconciler {
           notion,
           { eventHref: calendar.eventHref, ifMatch: calendar.etag },
         );
-        const notesReadbackHash = await this.readbackCalendarHash(effects, notesHref, notesEtag, settings);
+        const notesReadbackHash = await this.readbackCalendarHash(effects, notesHref, notesEtag, settings, notion);
         const syncedPayload = this.syncedPayloadJson(notionPayload, plan.notionNotesFingerprint);
         await effects.putLedgerRecord(
           record.with({
@@ -329,7 +329,7 @@ export class SyncReconciler {
             mergedNotionTask,
             { eventHref: calendar.eventHref, ifMatch: calendar.etag },
           );
-          const mergedReadbackHash = await this.readbackCalendarHash(effects, mergedHref, mergedEtag, settings);
+          const mergedReadbackHash = await this.readbackCalendarHash(effects, mergedHref, mergedEtag, settings, updated);
           await effects.putLedgerRecord(
             record.with({
               eventHref: mergedHref,
@@ -377,7 +377,7 @@ export class SyncReconciler {
           mergedNotionTask,
           { eventHref: calendar.eventHref, ifMatch: calendar.etag },
         );
-        const winnerReadbackHash = await this.readbackCalendarHash(effects, winnerHref, winnerEtag, settings);
+        const winnerReadbackHash = await this.readbackCalendarHash(effects, winnerHref, winnerEtag, settings, notion);
         await effects.putLedgerRecord(
           record.with({
             eventHref: winnerHref,
@@ -1007,17 +1007,18 @@ export class SyncReconciler {
     eventHref: string,
     etag: string | null,
     settings: Record<string, unknown>,
+    notionTask: NotionTask,
   ): Promise<string | null> {
     try {
       const calTask = await effects.getCalendarTask(eventHref, { etag });
       if (calTask) {
         if (!calTask.displayStatus) {
           return canonicalHash({
-            ...this.calendarSyncPayload(calTask),
+            ...this.calendarSyncPayload(calTask, notionTask),
             displayStatus: deriveDisplayStatus(calTask, settings),
           });
         }
-        return this.calendarHashForTask(calTask);
+        return this.calendarHashForTask(calTask, notionTask);
       }
     } catch {
       // Non-critical: if readback fails, fall back to notion hash.

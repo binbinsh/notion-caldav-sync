@@ -408,3 +408,97 @@ test('Rescheduling after an acknowledged deletion works even when Notion reuses 
  page.properties['Due date'].date={start:'2099-04-10T09:00:00.000Z',end:'2099-04-10T10:00:00.000Z'};
  const r=await h.sync();assert.equal(r.status,200,await r.text());assert.equal(h.providers.events.size,1);assert.ok(page.properties['Due date'].date);
 });
+
+// Failure specification: a generated default reminder is not a writable Notion
+// field; removing/changing an Apple alarm must not create endless two-provider
+// updates, reset Apple-owned alarms, or prevent unrelated title/notes edits.
+test('Calendar-owned alarms do not trigger migration writes or repeated sync loops', async t => {
+  const h = await harness(t);
+  h.providers.seedPage();
+  assert.equal((await h.sync()).status,200);
+  const [href,event] = [...h.providers.events][0];
+  assert.match(event.ics,/BEGIN:VALARM/);
+  event.ics = event.ics.replace(/BEGIN:VALARM[\s\S]*?END:VALARM\r?\n/,'');
+  const before = h.providers.trace.length;
+  const preview = await h.request('/admin/preview');
+  assert.equal(preview.status,200);
+  assert.equal((await preview.json()).decisions[0].operations.calendar,'none');
+  assert.equal((await h.sync()).status,200);
+  await h.restart();
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.trace.slice(before).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+  h.providers.editPage(PAGE_ID,{Title:{type:'title',title:[{text:{content:'Notion title without alarm reset'}}]}});
+  assert.equal((await h.sync()).status,200);
+  assert.match(h.providers.events.get(href).ics,/Notion title without alarm reset/);
+  assert.doesNotMatch(h.providers.events.get(href).ics,/BEGIN:VALARM/);
+  h.providers.editEvent(href,[['Original notes','Apple notes with own alarm'],['END:VEVENT','BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Personal\r\nTRIGGER:-PT30M\r\nEND:VALARM\r\nEND:VEVENT']]);
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.pages.get(PAGE_ID).properties.Description.rich_text.map(r=>r.text.content).join(''),'Apple notes with own alarm');
+  const settled = h.providers.trace.length;
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.trace.slice(settled).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+  assert.match(h.providers.events.get(href).ics,/TRIGGER:-PT30M/);
+});
+
+// Failure specification: Notion can change while a full snapshot or migration
+// batch is being applied; no calendar PUT may use the obsolete Notion version.
+test('Notion changes before a calendar write preserve both live versions', async t => {
+  const h = await harness(t);
+  h.providers.seedPage();
+  assert.equal((await h.sync()).status,200);
+  const [href,event]=[...h.providers.events][0];
+  const original=event.ics;
+  h.providers.editPage(PAGE_ID,{Title:{type:'title',title:[{text:{content:'Scanned title'}}]}});
+  h.providers.onRequest=(method,url)=>{
+    if(method==='GET'&&url.pathname.includes('/pages/')){
+      h.providers.onRequest=undefined;
+      h.providers.editPage(PAGE_ID,{Title:{type:'title',title:[{text:{content:'Concurrent title'}}]}});
+    }
+  };
+  const before=h.providers.trace.length;
+  const response=await h.sync();
+  assert.equal(response.status,409,await response.text());
+  assert.equal(h.providers.events.get(href).ics,original);
+  assert.equal(h.providers.pages.get(PAGE_ID).properties.Title.title[0].text.content,'Concurrent title');
+  assert.equal(h.providers.trace.slice(before).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+  assert.equal((await h.sync()).status,200);
+  assert.match(h.providers.events.get(href).ics,/Concurrent title/);
+});
+
+// Failure specification: legacy events have no notes-hash marker; an already
+// identical DESCRIPTION must be adopted without rewriting the event or alarms.
+test('Matching legacy notes are adopted without adding metadata through a provider write', async t => {
+  const h=await harness(t);h.providers.seedPage();
+  const href=CALENDAR_HREF+'legacy-matching.ics';
+  const original=['BEGIN:VCALENDAR','VERSION:2.0','BEGIN:VEVENT',`UID:notion-${PAGE_ID}@sync`,
+    'DTSTART:20990410T090000Z','DTEND:20990410T100000Z','SUMMARY:⬜ Draft task',
+    'DESCRIPTION:Source: Tasks\\nStatus: Todo\\n\\nOriginal notes',`URL:https://www.notion.so/${PAGE_ID}`,
+    'LAST-MODIFIED:20261007T000000Z','END:VEVENT','END:VCALENDAR',''].join('\r\n');
+  h.providers.events.set(href,{etag:'"legacy"',ics:original});
+  const before=h.providers.trace.length;
+  const preview=await h.request('/admin/preview');assert.equal(preview.status,200);
+  assert.equal((await preview.json()).decisions[0].operations.calendar,'none');
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.events.get(href).ics,original);
+  assert.equal(h.providers.trace.slice(before).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+});
+
+// Failure specification: the display duration added to a point-in-time Notion
+// task is not a user-specified end date; only a deliberate Calendar resize may
+// add an end date in Notion, while a title-only edit must preserve the null end.
+test('An implicit timed duration is preserved across title edits and deliberate resize', async t => {
+  const h=await harness(t);const page=h.providers.seedPage();
+  page.properties['Due date'].date.end=null;
+  assert.equal((await h.sync()).status,200);
+  const [href]=[...h.providers.events][0];
+  h.providers.editEvent(href,[['Draft task','Apple point-in-time title']]);
+  assert.equal((await h.sync()).status,200);
+  assert.equal(page.properties['Due date'].date.end,null);
+  assert.equal(page.properties.Title.title[0].text.content,'Apple point-in-time title');
+  h.providers.editEvent(href,[['DTEND:20990410T100000Z','DTEND:20990410T110000Z']]);
+  assert.equal((await h.sync()).status,200);
+  assert.equal(page.properties['Due date'].date.end,'2099-04-10T11:00:00.000Z');
+  const before=h.providers.trace.length;
+  assert.equal((await h.sync()).status,200);
+  assert.equal(h.providers.trace.slice(before).some(r=>['PUT','PATCH','DELETE'].includes(r.method)),false);
+});

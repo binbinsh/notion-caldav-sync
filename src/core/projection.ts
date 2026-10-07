@@ -23,7 +23,10 @@ export function notionSyncPayload(
       status: task.status,
       startDate: task.startDate,
       endDate: task.endDate,
-      reminder: reminderForTask(task, settings),
+      // Notion exposes no writable reminder field in the supported schema.
+      // Defaults apply when creating an event; existing Apple alarms belong to
+      // Calendar and must not masquerade as a field that can round-trip.
+      reminder: task.schema.reminderProperty ? task.reminder : null,
       description: task.schema.descriptionProperty ? task.description : null,
       pageUrl: task.pageUrl,
     }),
@@ -43,7 +46,7 @@ export function calendarSyncPayload(
       status: task.status === 'Overdue' && notionTask ? notionTask.status : task.status,
       startDate: task.startDate,
       endDate: task.endDate,
-      reminder: task.reminder,
+      reminder: notionTask && !notionTask.schema.reminderProperty ? null : task.reminder,
       description: notionTask && !notionTask.schema.descriptionProperty ? null : task.description,
       pageUrl: task.pageUrl,
     }),

@@ -187,6 +187,7 @@ export class Providers implements SyncProvider {
   }
 
   async putCalendarTask(task: NotionTask, options: CalendarPutOptions) {
+    await this.assertNotionVersion(task);
     const projected = projectNotionTaskToCalendarEvent({ calendarHref: this.connection.CALENDAR_HREF,
       calendarColor: '#FF7F00', notionTask: task, settings: this.settings,
       statusEmojiForStatus: status => statusToEmoji(status, this.connection.STATUS_EMOJI_STYLE || 'emoji') || '' });
@@ -223,7 +224,7 @@ function mergeManagedEvent(previous: string, projected: string): string {
   const event = root.getFirstSubcomponent('vevent')!;
   const fresh = new ICAL.Component(ICAL.parse(projected)).getFirstSubcomponent('vevent')!;
   for (const name of ['summary','description','dtstart','dtend','url','status','last-modified','dtstamp',
-    'x-notion-page-id','x-notion-status','x-notion-notes-hash']) {
+    'x-notion-page-id','x-notion-status','x-notion-notes-hash','x-notion-end-implicit']) {
     event.removeAllProperties(name);
     for (const property of fresh.getAllProperties(name)) event.addProperty(property);
   }

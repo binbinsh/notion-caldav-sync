@@ -1,6 +1,7 @@
 // Derived from CalDAVKit, MIT © 2025 Grid Heap Inc. See THIRD_PARTY_NOTICES.md.
 import ICAL from "ical.js";
 import ical from "ical-generator";
+import { notesFingerprint as fingerprintNotes } from "./rendering";
 import {
   normalizeStatusName,
   STATUS_CANONICAL_VARIANTS,
@@ -139,9 +140,10 @@ export function buildEvent(input: {
   // X-NOTION-STATUS preserves the raw Notion status even when the summary uses
   // a derived display state like Overdue.
   const rawStatus = normalizeStatusName(input.rawStatusName || input.statusName);
+  const implicitEnd = input.startIso?.includes("T") && !input.endIso;
   output = output.replace(
     /(UID:[^\r\n]+\r\n)/,
-    `$1X-NOTION-PAGE-ID:${input.notionId}\r\n${rawStatus ? `X-NOTION-STATUS:${rawStatus}\r\n` : ""}${input.notesFingerprint ? `X-NOTION-NOTES-HASH:${input.notesFingerprint}\r\n` : ""}`,
+    `$1X-NOTION-PAGE-ID:${input.notionId}\r\n${implicitEnd ? "X-NOTION-END-IMPLICIT:1\r\n" : ""}${rawStatus ? `X-NOTION-STATUS:${rawStatus}\r\n` : ""}${input.notesFingerprint ? `X-NOTION-NOTES-HASH:${input.notesFingerprint}\r\n` : ""}`,
   );
   if (input.color) {
     output = output.replace(/(SUMMARY:[^\r\n]+\r\n)/, `$1COLOR:${input.color}\r\n`);
@@ -162,12 +164,15 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   let status: string | null = null;
   let displayStatus = summaryStatus;
   const customStatus = normalizeStatusName(normalizeText(vevent.getFirstPropertyValue("x-notion-status")));
-  const notesFingerprint = normalizeText(vevent.getFirstPropertyValue("x-notion-notes-hash"));
   const category = null;
   const color = normalizeText(event.component.getFirstPropertyValue("color"));
   const rawDescription = normalizeText(event.description);
   // Normalize whitespace: CalDAV servers may add \r\n; canonicalize to \n.
   const descriptionValue = rawDescription ? rawDescription.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : null;
+  // Legacy Python events have no hash marker. Their actual notes are sufficient
+  // to acknowledge an identical pair without rewriting provider-owned fields.
+  const notesFingerprint = normalizeText(vevent.getFirstPropertyValue("x-notion-notes-hash"))
+    || fingerprintNotes(descriptionValue);
   let description: string | null = null;
   let url = normalizeText(event.component.getFirstPropertyValue("url"));
 
@@ -212,6 +217,13 @@ export function parseIcsMinimal(icsText: string): ParsedIcs {
   // original event was a single-day event with no explicit end. Return null
   // to match Notion's representation and avoid hash mismatches.
   if (endDate && startDate && event.startDate?.isDate && endDate === startDate) {
+    endDate = null;
+  }
+  // A title edit or a move must not turn our default display duration into a
+  // Notion end date. A changed duration is an intentional Calendar resize.
+  if (endDate && startDate && !event.startDate?.isDate
+      && vevent.getFirstPropertyValue("x-notion-end-implicit") === "1"
+      && Date.parse(endDate) - Date.parse(startDate) === DEFAULT_TIMED_EVENT_DURATION_MS) {
     endDate = null;
   }
 
