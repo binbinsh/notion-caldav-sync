@@ -17,6 +17,14 @@ is single-user; AgentMQ owns private multi-user connections and PostgreSQL state
 6. Reconcile and compare against the backup. Verify no new duplicates or unintended
    deletion before enabling the new schedule.
 
+Each public run has a 200-request/180-second ceiling. Large initial adoptions may
+return HTTP 409 after acknowledging earlier pairs. Those pairs remain in
+PostgreSQL; do not clear the ledger or replay writes blindly. Inspect the response
+and a current preview, resolve provider conflicts, and continue only the remaining
+reviewed work. Calendar writes require a successful ownership/version readback
+before the merge base advances. A failed readback preserves the old base so the
+next reconciliation can observe a write that already succeeded.
+
 Legacy UIDs `notion-{page}@sync`, `notion-restored-{page}@sync`, and
 `notion-notion-caldav-sync-restored-{page}@sync` are recognized. Hrefs and UIDs remain
 stable. Unknown events remain untouched; duplicate identities block that page.

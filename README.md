@@ -25,7 +25,7 @@ Apple Calendar 的状态可以通过标题前图标或备注的 `Status:` 修改
 
 需要 Node.js 24、pnpm 10.33.0 和 PostgreSQL 17+。公开版不依赖 Cloudflare、D1、Clerk 或 AgentMQ 私有代码，可在服务器或 Docker 中独立运行；也可连接自己的 AWS RDS PostgreSQL。
 
-1. `mise install`，`pnpm install --frozen-lockfile`，`pnpm build`。
+1. `mise install`，`corepack enable`，`pnpm install --frozen-lockfile`，`pnpm build`。
 2. 创建自己的 Notion integration，开启读取及更新权限，把所需数据源分享给它。自部署无需公共 OAuth integration 审核。
 3. 为 Apple ID 创建 App 专用密码，找到要同步的日历集合 URL。
 4. 复制 `.env.example` 到 `.env`，填写凭据、`NOTION_SOURCE_IDS`（逗号分隔 data source ID）、`CALENDAR_HREF`（以 `/` 结尾的 HTTPS 地址）和 `DATABASE_URL`。用 `openssl rand -hex 32` 生成 `DATA_ENCRYPTION_KEY`，独立生成管理及 webhook setup token。
