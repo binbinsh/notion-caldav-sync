@@ -7,6 +7,11 @@ replaced with deterministic protocol fixtures. No sync class is mocked.
 
 Failure modes to cover before implementation:
 
+The separate Docker packaging gate must detect an unavailable image, absent
+runtime dependencies, failed PostgreSQL initialization, incorrect version,
+enabled-by-default scheduling and an unauthenticated admin endpoint. It stores
+its exact container commands/result and removes only its own test containers.
+
 - A calendar-only edit fails to reach Notion or is overwritten by a subsequent run.
 - A Notion webhook edit fails to reach the calendar, loops, or duplicates events.
 - Independent field edits on both sides lose either change; simultaneous edits
