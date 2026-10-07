@@ -11,6 +11,9 @@ The separate Docker packaging gate must detect an unavailable image, absent
 runtime dependencies, failed PostgreSQL initialization, incorrect version,
 enabled-by-default scheduling and an unauthenticated admin endpoint. It stores
 its exact container commands/result and removes only its own test containers.
+PostgreSQL's temporary initialization server accepts Unix-socket connections
+before the final TCP server starts. The packaging gate must wait for TCP readiness,
+including during a slow initialization script, and save both container logs on failure.
 
 - A calendar-only edit fails to reach Notion or is overwritten by a subsequent run.
 - A Notion webhook edit fails to reach the calendar, loops, or duplicates events.
