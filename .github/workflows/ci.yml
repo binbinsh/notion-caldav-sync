@@ -40,6 +40,7 @@ jobs:
         if: always()
         with:
           name: e2e-results
+          retention-days: 14
           path: |
             artifacts/e2e/
             artifacts/docker/
