@@ -1,0 +1,37 @@
+{
+  "name": "notion-caldav-sync",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Standalone two-way Notion and CalDAV synchronization Worker",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.jsonc",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-e2e.mjs",
+    "check": "pnpm typecheck && pnpm test",
+    "build": "wrangler deploy --config wrangler.jsonc --dry-run --outdir dist",
+    "deploy": "./deploy.sh"
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.9.3",
+    "ical-generator": "10.1.0",
+    "ical.js": "2.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260710.1",
+    "@types/node": "24.5.2",
+    "esbuild": "0.28.1",
+    "miniflare": "4.20260708.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.110.0"
+  },
+  "exports": {
+    "./core": "./src/core/index.ts",
+    "./providers": "./src/providers.ts"
+  }
+}

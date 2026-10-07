@@ -1,64 +1,26 @@
-# Configuration and operations
+# Configuration
 
-The setup wizard writes `.env` with owner-only permissions. You do not need to create it by hand. Use `.env.example` only for headless deployment or as a reference.
+Use Notion API version `2025-09-03` data source IDs. Retrieve shared data sources
+using `/v1/search` with `filter: {property: "object", value: "data_source"}`. Choose
+only the task sources you intend to synchronize and keep their sharing active.
 
-## Common values
+Discover the CalDAV principal using PROPFIND on `https://caldav.icloud.com/`, then
+its `calendar-home-set`, then its collections. Set `CALENDAR_HREF` to the exact
+existing calendar's HTTPS collection URL including trailing `/`. An explicit
+calendar prevents accidental creation or management of an unrelated collection.
 
-| Key | Purpose |
-| --- | --- |
-| `DEPLOYMENT_MODE` | `personal` or `hosted` |
-| `WORKER_CUSTOM_DOMAIN` | Optional hostname; blank uses `workers.dev` |
-| `CLOUDFLARE_ACCOUNT_ID` | Optional selector when your login has multiple accounts |
-| `CLOUDFLARE_API_TOKEN` | Optional for headless deployment; interactive setup uses OAuth |
-| `CLOUDFLARE_STATE_NAMESPACE` | Created or discovered automatically |
-| `STATUS_EMOJI_STYLE` | `emoji` (default) or `symbol` |
+`DESCRIPTION_PROPERTY` defaults to `Description`; only this rich text field is
+eligible for a notes round trip. Date detection follows Due date, Due, Date,
+Deadline, then the first date. Status follows Status, Task Status, Progress, then
+status/select. Confirm mapping in the read-only preview before first sync.
 
-Personal mode also uses `NOTION_TOKEN`, `APPLE_ID`, `APPLE_APP_PASSWORD`, `ADMIN_TOKEN`, and the private `WEBHOOK_SETUP_TOKEN` used only to authorize Notion's verification handshake.
+`CALENDAR_TIMEZONE` controls date-only overdue display and default reminders.
+All-day ranges convert Notion inclusive ends to iCalendar exclusive ends. Timed
+dates represent UTC instants; existing calendar timezone components remain.
 
-Hosted mode uses `PUBLIC_BASE_URL`, Notion OAuth values, Clerk values, D1 and Queue identifiers, `HOSTED_ADMIN_USER_IDS`, `CREDENTIAL_VAULT_KEY`, and `HOSTED_WEBHOOK_SETUP_TOKEN`. The last three provider secrets are uploaded as encrypted Worker secrets.
+An optional `STATE` KV binding imports a Python webhook verification token. Worker
+sync state uses `SYNC` Durable Objects; AgentMQ uses AWS PostgreSQL. Existing
+ledgers reject a change of account, calendar or source selection.
 
-## Headless deployment
-
-Fill `.env` from `.env.example`, authenticate Cloudflare with `CLOUDFLARE_API_TOKEN`, then run:
-
-```bash
-./deploy.sh
-```
-
-For hosted resource provisioning:
-
-```bash
-./scripts/provision-hosted-cloudflare.sh
-```
-
-Interactive users should prefer `./scripts/setup-cloudflare.sh` because it also guides provider setup and webhook verification.
-
-## Personal admin endpoints
-
-```bash
-curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/full-sync
-curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/settings
-curl -H "X-Admin-Token: $ADMIN_TOKEN" https://<worker-url>/admin/debug
-```
-
-`ADMIN_TOKEN` protects every `/admin/*` endpoint. Keep it private.
-
-## Title status style
-
-The default is `emoji`:
-
-| Style | Todo | In progress | Completed | Overdue | Cancelled |
-| --- | --- | --- | --- | --- | --- |
-| `emoji` | ⬜ | ⚙️ | ✅ | ⚠️ | ❌ |
-| `symbol` | ○ | ⊖ | ✓⃝ | ⊜ | ⊗ |
-
-Set `STATUS_EMOJI_STYLE=symbol` in `.env` and redeploy to use symbols.
-
-## Operational behavior
-
-- `/health` is public and returns Worker reachability only.
-- Webhooks drive real-time updates; scheduled reconciliation repairs drift.
-- Cron runs every five minutes. A connection normally becomes due 30–35 minutes after its previous successful run.
-- Notion may aggregate webhook events. The Worker fetches current page data before writing Calendar changes.
-- Renaming or recoloring the Apple calendar is safe; the Worker reuses its recorded calendar identity.
-- Changing or resetting the main Apple Account password revokes app-specific passwords and requires reconnection.
+Admin tokens must be random secrets. Previews and traces include task details:
+keep them private even though they omit provider credentials.
