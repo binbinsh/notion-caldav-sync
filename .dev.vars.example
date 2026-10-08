@@ -1,0 +1,9 @@
+# Copy to .dev.vars for local Workers development only. Never commit .dev.vars.
+NOTION_TOKEN=
+NOTION_SOURCE_IDS=
+APPLE_ID=
+APPLE_APP_PASSWORD=
+CALENDAR_HREF=
+DATA_ENCRYPTION_KEY=
+ADMIN_TOKEN=
+WEBHOOK_SETUP_TOKEN=

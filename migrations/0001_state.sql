@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS sync_state (
+  key TEXT PRIMARY KEY,
+  envelope TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_lock (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  owner TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);

@@ -1,0 +1,11 @@
+import {spawn} from 'node:child_process';
+import {mkdir,writeFile} from 'node:fs/promises';
+const args=['--test','--test-concurrency=1','--test-reporter=tap','tests/workers/sync.test.mjs'],startedAt=new Date().toISOString();
+await mkdir('artifacts/workers',{recursive:true});let transcript='';
+const child=spawn(process.execPath,args,{stdio:['ignore','pipe','pipe'],timeout:120000});
+for(const stream of [child.stdout,child.stderr])stream.on('data',d=>{transcript+=d;process.stdout.write(d);});
+const exitCode=await new Promise(r=>child.on('close',r));
+const command=[process.execPath,...args].join(' ');
+await writeFile('artifacts/workers/command.txt',command+'\n');await writeFile('artifacts/workers/transcript.tap',transcript);
+await writeFile('artifacts/workers/result.json',JSON.stringify({command,startedAt,completedAt:new Date().toISOString(),exitCode,passed:Number(transcript.match(/# pass (\d+)/)?.[1]||0),failed:Number(transcript.match(/# fail (\d+)/)?.[1]||0),runtime:'workerd HTTP and scheduled handlers with real D1 SQLite',externalServices:'deterministic HTTP protocol fixtures',liveProviderCalls:0},null,2)+'\n');
+process.exitCode=exitCode??1;
