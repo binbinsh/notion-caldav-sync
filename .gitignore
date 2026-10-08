@@ -1,5 +1,6 @@
 .env
 .dev.vars*
+!.dev.vars.example
 .DS_Store
 .wrangler/
 node_modules/

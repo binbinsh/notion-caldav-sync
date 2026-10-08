@@ -41,6 +41,16 @@ Each vertical slice adds a failing E2E case before its implementation. The test
 runner stores a transcript, JSON protocol trace, results and its exact command.
 Live release verification uses dedicated disposable provider resources.
 
+Workers/D1 public seams: the bundled Worker HTTP and scheduled handlers, real
+local D1, and external Notion/CalDAV HTTP protocol fixtures. Before implementation:
+restart must retain encrypted merge bases and webhook receipts; simultaneous
+isolates must not write together; a crashed/expired owner must not acknowledge
+new state; unavailable D1 and the wrong key must fail closed; partial provider
+effects must retain prior acknowledgements; cron must be disabled by default;
+all request sources must share the same lease and bounded provider/query budget;
+legacy deployment identifiers, commercial platform configuration and non-English
+source text must not appear in the distributable repository.
+
 PostgreSQL failure specification (before the adapter): process restart loses merge bases or replay receipts; two processes race; plaintext task data leaks; wrong encryption key silently resets state; failed later pairs roll back acknowledged earlier pairs.
 
 Deletion evidence: Notion 404 can mean revoked sharing, and CalDAV GET 200 with a changed/removed owner marker is not a missing event. Neither may authorize deletion or clearing a task schedule.

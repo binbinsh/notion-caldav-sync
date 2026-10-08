@@ -150,7 +150,7 @@ test('Calendar notes round trip long Unicode text and preserve calendar-owned fi
   h.providers.seedPage();
   assert.equal((await h.sync()).status, 200);
   const [href, event] = [...h.providers.events][0];
-  const longNotes = '中文🙂'.repeat(650);
+  const longNotes = 'café🙂'.repeat(650);
   h.providers.editEvent(href, [['Original notes', longNotes], ['END:VEVENT', 'LOCATION:Private room\r\nCATEGORIES:Personal\r\nX-APPLE-CUSTOM:keep\r\nEND:VEVENT']]);
   const response = await h.sync();
   assert.equal(response.status, 200, await response.text());
@@ -274,10 +274,10 @@ test('Python restored events are adopted without changing their href or UID', as
   assert.equal(response.status, 200, await response.text());
   assert.equal(h.providers.events.size, 1);
   assert.match(h.providers.events.get(href).ics.replace(/\r?\n[ \t]/g, ""), new RegExp(`UID:${uid}`));
-  h.providers.editPage(PAGE_ID, { Title: { type: 'title', title: [{ text: { content: '升级后标题' } }] } });
+  h.providers.editPage(PAGE_ID, { Title: { type: 'title', title: [{ text: { content: 'Upgraded title' } }] } });
   assert.equal((await h.sync()).status, 200);
   assert.equal(h.providers.events.size, 1);
-  assert.match(h.providers.events.get(href).ics, /升级后标题/);
+  assert.match(h.providers.events.get(href).ics, /Upgraded title/);
   assert.match(h.providers.events.get(href).ics.replace(/\r?\n[ \t]/g, ""), new RegExp(`UID:${uid}`));
 });
 
@@ -300,7 +300,7 @@ test('Unknown events remain untouched and duplicate managed events block writes'
 
 test('Apple status edits use existing Notion options and preserve independent field edits', async t => {
   const h = await harness(t);
-  h.providers.schema.Status.status.options[2].name = '已完成啦';
+  h.providers.schema.Status.status.options[2].name = 'Finished successfully';
   h.providers.seedPage();
   assert.equal((await h.sync()).status, 200);
   const [href, event] = [...h.providers.events][0];

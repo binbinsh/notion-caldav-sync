@@ -34,7 +34,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm build
-      - run: docker build -t notion-caldav-sync:0.9.0-test .
+      - run: pnpm deploy:check
+      - run: docker build -t notion-caldav-sync:0.9.1-test .
       - run: node tests/docker/check.mjs
       - uses: actions/upload-artifact@v4
         if: always()
@@ -44,3 +45,5 @@ jobs:
           path: |
             artifacts/e2e/
             artifacts/docker/
+            artifacts/workers/
+            artifacts/worker-deploy/

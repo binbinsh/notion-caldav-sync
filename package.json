@@ -1,10 +1,10 @@
 {
   "name": "notion-caldav-sync",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Standalone two-way Notion and CalDAV synchronization with PostgreSQL",
+  "description": "Self-hosted two-way Notion and CalDAV synchronization on Workers/D1 or Node/PostgreSQL",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24.0.0"
@@ -13,9 +13,12 @@
     "dev": "node --env-file=.env --watch dist/main.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test-e2e.mjs",
-    "check": "pnpm typecheck && pnpm test",
+    "check": "pnpm check:repository && pnpm typecheck && pnpm test && pnpm test:workers",
     "build": "node scripts/build.mjs",
-    "start": "node dist/main.mjs"
+    "start": "node dist/main.mjs",
+    "check:repository": "node scripts/check-repository.mjs",
+    "test:workers": "node scripts/test-workers.mjs",
+    "deploy:check": "wrangler deploy --dry-run --config wrangler.jsonc --outdir artifacts/worker-deploy"
   },
   "dependencies": {
     "fast-xml-parser": "5.9.3",
@@ -25,9 +28,11 @@
   },
   "devDependencies": {
     "@types/node": "24.5.2",
+    "@types/pg": "8.15.5",
     "esbuild": "0.28.1",
+    "miniflare": "5.20261006.0-alpha",
     "typescript": "5.9.3",
-    "@types/pg": "8.15.5"
+    "wrangler": "4.148.0"
   },
   "exports": {
     "./core": "./src/core/index.ts",

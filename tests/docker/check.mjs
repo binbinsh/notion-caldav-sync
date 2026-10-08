@@ -5,7 +5,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
 
-const execute=promisify(execFile),image=process.env.TEST_DOCKER_IMAGE||'notion-caldav-sync:0.9.0-test';
+const execute=promisify(execFile),image=process.env.TEST_DOCKER_IMAGE||'notion-caldav-sync:0.9.1-test';
 const context=process.env.TEST_DOCKER_CONTEXT||'default';
 const prefix='notion-sync-test-'+randomUUID().slice(0,8),pg=prefix+'-pg',app=prefix+'-app',network=prefix+'-net';
 const commands=[],checks=[],startedAt=new Date().toISOString();
@@ -37,7 +37,7 @@ try {
   try{const r=await fetch(origin+'/health',{signal:AbortSignal.timeout(1000)});if(r.ok){health=await r.json();break;}}catch{}
   await new Promise(r=>setTimeout(r,500));
  }
- assert.equal(health?.version,'0.9.0');checks.push('Packaged HTTP service starts');
+ assert.equal(health?.version,'0.9.1');checks.push('Packaged HTTP service starts');
  assert.equal((await fetch(origin+'/admin/preview')).status,401);
  assert.equal((await fetch(origin+'/admin/full-sync',{method:'POST'})).status,401);checks.push('Admin endpoints require authentication');
  assert.match(await docker('logs',app),/"scheduleEnabled":false/);checks.push('Scheduling remains disabled by default');

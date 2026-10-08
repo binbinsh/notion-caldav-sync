@@ -18,7 +18,7 @@ status/select. Confirm mapping in the read-only preview before first sync.
 All-day ranges convert Notion inclusive ends to iCalendar exclusive ends. Timed
 dates represent UTC instants; existing calendar timezone components remain.
 
-Both deployments use PostgreSQL. Set `DATABASE_URL` to a dedicated PostgreSQL 17+
+For Node.js deployments, set `DATABASE_URL` to a dedicated PostgreSQL 17+
 database; the public single-user service creates `notion_caldav_sync.state`.
 For AWS use TLS with hostname/certificate verification (`sslmode=verify-full`)
 and the AWS RDS CA bundle through `NODE_EXTRA_CA_CERTS`. Keep the database private.
@@ -29,14 +29,18 @@ bases and webhook receipts use AES-256-GCM. Keep this key with database backups;
 restoring a database without its key fails closed. Preserve the schema name when
 restoring because it is part of the authenticated encryption context.
 Credentials stay in environment variables and are never stored in the public DB.
-AgentMQ uses its existing envelope encryption for private connections and ledgers.
+Workers deployments store encrypted state in the `DB` D1 binding.
+Use the bundled SQL migrations and keep the encryption key with D1 backups.
 
 `WEBHOOK_VERIFICATION_TOKEN` can import the Python token after exporting it from
 old settings; it does not query D1. Existing ledgers reject a change of account,
 calendar, description property or source selection. Use a separate deployment
 and an explicit reviewed migration for a changed binding.
 
-`SYNC_INTERVAL_SECONDS=0` disables scheduling (default). Enable a minimum of 60
+Workers use `SCHEDULE_ENABLED=false` by default, with D1 lease coordination and
+explicit provider/query ceilings. See [Workers deployment](workers.md).
+
+For Node.js, `SYNC_INTERVAL_SECONDS=0` disables scheduling (default). Enable a minimum of 60
 seconds only after preview and verification. Runs have a 200-request and 180-second
 budget, with no automatic provider write retries. PostgreSQL advisory locking also
 prevents another instance from writing at the same time.

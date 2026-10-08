@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notion-caldav-sync",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "notion-caldav-sync",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "migrations"
+  }],
+  "vars": {
+    "SCHEDULE_ENABLED": "false",
+    "MAX_PROVIDER_CALLS": "20",
+    "MAX_D1_QUERIES": "40",
+    "CALENDAR_TIMEZONE": "UTC",
+    "DESCRIPTION_PROPERTY": "Description",
+    "STATUS_EMOJI_STYLE": "emoji"
+  },
+  "triggers": {"crons": ["*/30 * * * *"]}
+}

@@ -1,7 +1,9 @@
-# Migrating to 0.9.0
+# Migrating from Python to TypeScript
 
-0.9.0 removes Python, the hosted UI and hosted D1/Queue bindings. Public deployment
-is single-user; AgentMQ owns private multi-user connections and PostgreSQL state.
+The TypeScript service replaces Python and supports a single account per
+deployment. Version 0.9.0 provides Node.js + PostgreSQL; version 0.9.1 also provides
+Cloudflare Workers + D1.
+Legacy multi-user tables, queues and identity-provider bindings are not required.
 
 1. Export old settings, encrypted connection records and calendar ICS with ETags.
    Save these outside Git with restricted permissions. Record the old deployment.
@@ -17,9 +19,11 @@ is single-user; AgentMQ owns private multi-user connections and PostgreSQL state
 6. Reconcile and compare against the backup. Verify no new duplicates or unintended
    deletion before enabling the new schedule.
 
-Each public run has a 200-request/180-second ceiling. Large initial adoptions may
+Node runs have a 200-provider-request/180-second ceiling. Workers default to
+20 provider requests and 40 D1 queries with the same deadline; see
+[Worker limits](workers.md#coordination-and-limits). Large initial adoptions may
 return HTTP 409 after acknowledging earlier pairs. Those pairs remain in
-PostgreSQL; do not clear the ledger or replay writes blindly. Inspect the response
+the selected database; do not clear the ledger or replay writes blindly. Inspect the response
 and a current preview, resolve provider conflicts, and continue only the remaining
 reviewed work. Calendar writes require a successful ownership/version readback
 before the merge base advances. A failed readback preserves the old base so the

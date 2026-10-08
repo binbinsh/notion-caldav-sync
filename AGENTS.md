@@ -1,11 +1,11 @@
 # notion-caldav-sync
 
-0.9.0 is a standalone single-user TypeScript service. AgentMQ embeds this core and
-owns private multi-user management. Both deployments persist in PostgreSQL.
+This repository is an independently deployable, single-user TypeScript service.
+Support both Cloudflare Workers with D1 and Node.js with PostgreSQL.
 
 - Sync policy belongs in `src/core/`; provider HTTP/schema translation belongs in
   `src/providers.ts`; runtime bindings belong in the corresponding entry point.
-  Keep the core usable without Node.js hosting or AgentMQ.
+  Keep the core usable independent of its runtime or database adapter.
 - Write a failing test through the real entry point before changing behavior.
   `pnpm test` saves its command, TAP and protocol traces under `artifacts/e2e/`.
   Specify failures in `tests/e2e/FAILURE_MODES.md` before isolated implementation.
